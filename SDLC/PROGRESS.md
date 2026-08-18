@@ -14,9 +14,9 @@ This tracker is the persistent state for humans, AIs, and team members.
 
 **Current Phase:** Phase 1 — Product Discovery
 
-**Current Status:** IN PROGRESS — 1.4 USER PERSONAS APPROVED; NEXT IS 1.5 USER JOURNEYS
+**Current Status:** IN PROGRESS — 1.5 USER JOURNEYS APPROVED; NEXT IS 1.6 CORE USE CASES
 
-**Next allowed action:** Begin Phase 1.5 only.
+**Next allowed action:** Begin Phase 1.6 only.
 
 **Blocked phases:** Phase 2 and all later phases remain locked until Phase 1 is fully completed and approved.
 
@@ -28,8 +28,8 @@ This tracker is the persistent state for humans, AIs, and team members.
 - [x] **1.2 — Product Vision** — COMPLETE
 - [x] **1.3 — Target Users** — COMPLETE
 - [x] **1.4 — User Personas** — COMPLETE — PROJECT OWNER APPROVED
-- [ ] **1.5 — User Journeys** — CURRENT / NEXT
-- [ ] 1.6 — Core Use Cases — LOCKED
+- [x] **1.5 — User Journeys** — COMPLETE — PROJECT OWNER APPROVED
+- [ ] **1.6 — Core Use Cases** — CURRENT / NEXT
 - [ ] 1.7 — Value Proposition — LOCKED
 - [ ] 1.8 — MVP Scope — LOCKED
 - [ ] 1.9 — Market & Competitor Research — LOCKED
@@ -149,14 +149,14 @@ Next phase unlocked:
 
 ```text
 Current phase: Phase 1 — Product Discovery
-Current step: 1.5 — User Journeys
+Current step: 1.6 — Core Use Cases
 Status: READY TO START
-Completed: 1.1 Problem Definition; 1.2 Product Vision; 1.3 Target Users; 1.4 User Personas
-Incomplete: 1.5 through 1.16
+Completed: 1.1 Problem Definition; 1.2 Product Vision; 1.3 Target Users; 1.4 User Personas; 1.5 User Journeys
+Incomplete: 1.6 through 1.16
 Blockers: None currently recorded
-Decision: Project owner approved Phase 1.4 User Personas
-Files changed in latest transition: SDLC/01-product-discovery/user-personas/personas.md; SDLC/PROGRESS.md
-Next exact task: Execute Phase 1.5 — User Journeys
+Decisions: Project owner approved Phase 1.5 User Journeys
+Files changed in latest transition: SDLC/01-product-discovery/user-journeys/user-journeys.md; SDLC/PROGRESS.md
+Next exact task: Execute Phase 1.6 — Core Use Cases
 ```
 
 ## IMPORTANT
