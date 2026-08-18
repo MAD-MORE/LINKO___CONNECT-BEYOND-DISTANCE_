@@ -2,196 +2,167 @@
 
 ## Status
 
-**CURRENT — IN PROGRESS**
+**REVIEW — READY FOR PROJECT-OWNER APPROVAL**
 
 ## Persona methodology
 
-These personas are initial working hypotheses derived from the target-user definition. They are not claims that these exact individuals exist. They must be validated through interviews, surveys, prototype testing, and beta evidence before being treated as research-validated personas. Research-backed personas are intended to represent meaningful user patterns and guide product decisions. citeturn0search1turn0search3
+These personas are initial working hypotheses derived from the target-user definition. They are not claims that these exact individuals exist. They must be validated through interviews, surveys, prototype testing, and beta evidence before being treated as research-validated personas.
 
 ## Persona 1 — Kwame, the Connectivity-Seeking Student
 
-**Type:** Primary Receiver persona  
+**Type:** Primary Receiver  
 **Priority:** P0
 
 ### Profile
-
 - University student
 - Heavy smartphone user
 - Depends on mobile Internet for schoolwork and communication
-- Often operates within a student budget
+- Student-budget conscious
 - Comfortable with Android applications
 - Has a trusted network of friends
 
 ### Situation
+Mobile data can run out unexpectedly while he still needs Internet access for an assignment, communication, online payment, navigation, or another important task.
 
-Kwame's mobile data can run out unexpectedly while he still needs Internet access for an assignment, communication, online payment, navigation, or another important task.
-
-### Primary goal
-
+### Goal
 Get temporary Internet access from someone he trusts without requiring that person to be physically nearby.
 
 ### Motivations
-
 - Continue important online activities
-- Avoid unnecessary interruption
+- Avoid interruption
 - Get help quickly
-- Use a trusted person rather than an unknown public network
+- Prefer a trusted person over an unknown public network
 
 ### Pain points
-
-- Data finishes at inconvenient times
-- Buying more data may not always be immediately possible
+- Data finishes unexpectedly
+- Buying more data may not be immediately possible
 - Conventional hotspot sharing requires physical proximity
 - Public Wi-Fi may be unavailable or untrusted
-- He needs a simple connection process
+- Networking setup should not require technical knowledge
 
 ### Technology behavior
-
 - Primarily Android/mobile
 - Comfortable with simple app workflows
 - Does not want to configure networking manually
 
-### Linko expectation
-
-**Find → Request → Wait for approval → Connect → Use → Disconnect**
+### Expected journey
+**Find → Request → Approval → Connect → Use → Disconnect**
 
 ### Success signal
-
-Kwame can request and receive temporary connectivity with minimal technical knowledge and understands the connection status and usage.
+The Receiver can request and use temporary connectivity with minimal technical knowledge while understanding connection status and usage.
 
 ---
 
 ## Persona 2 — Ama, the Trusted Provider
 
-**Type:** Primary Provider persona  
+**Type:** Primary Provider  
 **Priority:** P0
 
 ### Profile
-
 - University student or young professional
-- Has a reliable mobile-data or Wi-Fi connection
+- Has reliable mobile-data or Wi-Fi connectivity
 - Frequently helps friends or family
 - Values control over personal resources
 - Uses Android regularly
 
 ### Situation
+Ama has enough connectivity to help someone she trusts, but does not want unrestricted access or loss of visibility into consumption.
 
-Ama has enough connectivity to help someone she trusts, but she does not want to hand over unrestricted access or lose visibility into her data consumption.
-
-### Primary goal
-
-Help a trusted person while retaining complete control over the connection.
+### Goal
+Help a trusted person while retaining control over the connection.
 
 ### Motivations
-
 - Help friends/family
 - Make use of available connectivity
 - Maintain trust
-- Know exactly who is connected
-- Control duration and data usage
+- Know who is connected
+- Control duration and usage
 
 ### Pain points
-
-- Physical hotspot sharing is inconvenient when people are far apart
-- Concern about excessive data consumption
-- Concern about unknown people accessing her connection
-- Concern about battery consumption
-- Wants an immediate kill switch
+- Physical hotspot sharing is inconvenient over distance
+- Excessive data consumption
+- Unknown people accessing her connection
+- Battery consumption
+- Need for an immediate kill switch
 
 ### Technology behavior
-
 - Comfortable with smartphone permissions
 - Expects clear controls
 - Wants transparent usage information
 
-### Linko expectation
-
-**Receive request → Verify person → Approve → Set/confirm limits → Monitor → Stop**
+### Expected journey
+**Receive request → Verify → Approve → Set/confirm limits → Monitor → Stop**
 
 ### Success signal
-
-Ama feels confident that she controls access and can terminate the session immediately.
+The Provider feels confident that access is controlled and can terminate the session immediately.
 
 ---
 
 ## Persona 3 — Kojo, the Family/Long-Distance Helper
 
-**Type:** Secondary Provider/Receiver persona  
+**Type:** Secondary Provider/Receiver  
 **Priority:** P1
 
 ### Profile
-
 - Young adult or working family member
-- Has trusted relatives in different cities or locations
+- Has trusted relatives in different locations
 - Uses mobile Internet regularly
 - May alternate between Provider and Receiver roles
 
 ### Situation
-
 A family member needs temporary connectivity while Kojo has Internet access, but they are not physically together.
 
-### Primary goal
-
-Provide or receive temporary connectivity remotely without complicated technical setup.
+### Goal
+Provide or receive temporary connectivity remotely without complicated setup.
 
 ### Motivations
-
 - Help family
-- Stay connected during emergencies or interruptions
+- Stay connected during interruptions
 - Reduce friction in remote assistance
 
 ### Pain points
-
 - Distance prevents normal hotspot sharing
-- Phone calls or messaging cannot themselves provide Internet access
-- May not understand networking configuration
+- Calls/messages do not themselves provide Internet access
+- Networking configuration may be unfamiliar
 
-### Linko expectation
-
-A simple trusted-contact workflow with strong identity and permission controls.
+### Expected journey
+Simple trusted-contact workflow with strong identity and permission controls.
 
 ### Success signal
-
-Kojo can help a trusted family member remotely without manually configuring networking infrastructure.
+A trusted family member can be helped remotely without manually configuring networking infrastructure.
 
 ---
 
 ## Persona 4 — Yaw, the Mobile Traveler
 
-**Type:** Secondary Receiver persona  
+**Type:** Secondary Receiver  
 **Priority:** P1
 
 ### Profile
-
 - Travels between cities or regions
 - Depends on smartphone connectivity
 - May temporarily experience poor or unavailable access
-- Has trusted contacts who may be elsewhere
+- Has trusted contacts elsewhere
 
 ### Situation
-
 Yaw needs temporary connectivity while traveling and wants help from a trusted person who is not physically nearby.
 
-### Primary goal
-
+### Goal
 Restore useful connectivity quickly without relying on unfamiliar public networks.
 
 ### Motivations
-
 - Navigation
 - Communication
 - Work/study
 - Emergency access
 
 ### Pain points
-
 - Network availability changes while traveling
 - Public Wi-Fi can be unreliable
 - Purchasing another plan may not be convenient immediately
 
 ### Success signal
-
-Yaw can establish a secure authorized session when the underlying networks support it.
+A secure authorized session can be established when the underlying networks support it.
 
 ---
 
@@ -200,21 +171,15 @@ Yaw can establish a secure authorized session when the underlying networks suppo
 **Type:** Negative persona  
 **Priority:** Security boundary
 
-This persona represents people Linko should **not** optimize for.
+This persona represents people Linko should not optimize for.
 
 ### Profile
-
 - Wants unauthorized connectivity
 - Attempts to access Providers without consent
-- May attempt to abuse bandwidth or infrastructure
+- May abuse bandwidth or infrastructure
 - May seek to bypass carrier/ISP restrictions
 
-### Why this persona exists
-
-Negative personas help teams avoid accidentally designing features that attract users who conflict with the product's security, trust, and business objectives.
-
 ### Linko response
-
 - No unauthorized access
 - Strong authentication
 - Explicit Provider authorization
@@ -228,20 +193,15 @@ Negative personas help teams avoid accidentally designing features that attract 
 
 ## Primary design personas
 
-The MVP should prioritize a small number of primary personas rather than attempting to satisfy every possible user segment simultaneously. UX guidance commonly recommends a small set of primary personas and using research to validate them. citeturn0search1
-
 ### Primary
-
 1. **Kwame — Receiver**
 2. **Ama — Provider**
 
 ### Secondary
-
 3. **Kojo — Family/Long-Distance Helper**
 4. **Yaw — Traveler**
 
 ### Negative
-
 5. **Unwanted User**
 
 ## Persona decision matrix
@@ -256,20 +216,18 @@ The MVP should prioritize a small number of primary personas rather than attempt
 
 ## Design implications
 
-The personas establish several requirements for later phases:
-
-- The first-run experience must be understandable to a non-networking expert.
+- First-run experience must be understandable to a non-networking expert.
 - Provider identity and consent must be prominent.
-- Receiver connection requests must be simple.
+- Receiver requests must be simple.
 - Usage and session limits must be visible.
 - Provider must have an immediate disconnect mechanism.
 - Trust relationships must be understandable.
-- Error messages must explain real network limitations without pretending that Linko can guarantee connectivity.
+- Errors must explain real network limitations honestly.
 - Security controls must not depend on users understanding networking protocols.
 
 ## Research validation plan
 
-Before final product-market decisions, validate these personas using:
+Validate these personas before major product-market decisions through:
 
 - Student interviews
 - Provider interviews
@@ -277,9 +235,9 @@ Before final product-market decisions, validate these personas using:
 - Surveys
 - Prototype usability sessions
 - Controlled beta behavior
-- Session analytics with appropriate privacy controls
+- Privacy-conscious session analytics
 
-Research should test whether the assumed goals, frequency of the problem, trust expectations, usage limits, and willingness to provide connectivity match actual behavior. Personas should remain revisable as evidence accumulates. citeturn0search1turn0search11
+Test whether assumed goals, problem frequency, trust expectations, usage limits, and willingness to provide connectivity match actual behavior. Personas remain revisable as evidence accumulates.
 
 ## Acceptance criteria
 
@@ -294,7 +252,22 @@ Research should test whether the assumed goals, frequency of the problem, trust 
 - [x] Validation plan documented
 - [x] Persona priorities defined
 
-## Next deliverable
+## Review checklist
+
+- [x] Personas map to the target-user segments in Phase 1.3
+- [x] Provider and Receiver roles are explicitly distinguished
+- [x] Negative/security persona is included
+- [x] MVP priorities are identified
+- [x] Personas are treated as hypotheses rather than validated research
+- [x] No later SDLC phase has been started
+
+## Approval gate
+
+**Project-owner approval:** PENDING
+
+This deliverable must receive explicit project-owner approval before it is marked COMPLETE and before Phase 1.5 begins.
+
+## Next deliverable after approval
 
 **Phase 1.5 — User Journeys**
 
