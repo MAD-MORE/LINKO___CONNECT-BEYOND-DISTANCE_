@@ -2,49 +2,46 @@
 
 **Project:** Linko — Connect Beyond Distance
 
-## STRICT SEQUENTIAL EXECUTION RULE — RESTORED
+## STRICT SEQUENTIAL EXECUTION RULE
 
-Linko development is strictly sequential.
-
-> **Only the current step may be actively executed. A later step MUST NOT be started until the current step is completed, reviewed, and explicitly approved by the project owner.**
+Only the current step may be actively executed. A later step MUST NOT be started until the current step is completed, reviewed, and explicitly approved by the project owner.
 
 This rule applies to every AI, developer, collaborator, and team member.
 
-The repository is the source of truth. Before doing any Linko work, read `SDLC/AI-HANDOVER.md` and this tracker.
+The repository is the source of truth. Before Linko work, read `SDLC/AI-HANDOVER.md` and this tracker.
 
 ## Folder organization rule
 
 Nothing should be scattered.
 
 - Every SDLC phase has its own folder.
-- Every category within a phase gets its own subfolder when appropriate.
-- New categories must create a new folder/subfolder rather than placing unrelated files together.
-- Do not move documents across categories without recording the decision.
-- Keep implementation code separate from SDLC documentation.
+- Categories within a phase receive their own subfolders where appropriate.
+- New categories must create a new folder/subfolder.
+- Implementation code stays separate from SDLC documentation.
 
 ## Current position
 
 **Current Phase:** Phase 1 — Product Discovery
 
-**Current Step:** 1.7 — Value Proposition
+**Current Step:** 1.9 — Market & Competitor Research
 
-**Status:** CURRENT / READY TO START
+**Status:** CURRENT / READY FOR PROJECT-OWNER REVIEW
 
-**Latest completed:** 1.6 Core Use Cases — PROJECT OWNER APPROVED
+**Latest completed:** 1.8 MVP Scope — PROJECT OWNER APPROVED
 
-**Next exact task:** Create and complete the 1.7 Value Proposition deliverable.
+**Next exact task:** Review Phase 1.9 Market & Competitor Research and approve or request changes.
 
 ## Phase 1 — Product Discovery
 
-- [x] **1.1 — Problem Definition** — COMPLETE
-- [x] **1.2 — Product Vision** — COMPLETE
-- [x] **1.3 — Target Users** — COMPLETE
-- [x] **1.4 — User Personas** — COMPLETE — APPROVED
-- [x] **1.5 — User Journeys** — COMPLETE — APPROVED
-- [x] **1.6 — Core Use Cases** — COMPLETE — APPROVED
-- [ ] **1.7 — Value Proposition** — CURRENT
-- [ ] 1.8 — MVP Scope — LOCKED
-- [ ] 1.9 — Market & Competitor Research — LOCKED
+- [x] 1.1 — Problem Definition — COMPLETE
+- [x] 1.2 — Product Vision — COMPLETE
+- [x] 1.3 — Target Users — COMPLETE
+- [x] 1.4 — User Personas — COMPLETE — APPROVED
+- [x] 1.5 — User Journeys — COMPLETE — APPROVED
+- [x] 1.6 — Core Use Cases — COMPLETE — APPROVED
+- [x] 1.7 — Value Proposition — COMPLETE — APPROVED
+- [x] 1.8 — MVP Scope — COMPLETE — APPROVED
+- [ ] **1.9 — Market & Competitor Research — CURRENT / REVIEW**
 - [ ] 1.10 — Technical Feasibility — LOCKED
 - [ ] 1.11 — Business Model Hypotheses — LOCKED
 - [ ] 1.12 — Risk Register — LOCKED
@@ -55,7 +52,7 @@ Nothing should be scattered.
 
 ## Overall SDLC checklist
 
-- [ ] **Phase 1 — Product Discovery — CURRENT / IN PROGRESS**
+- [ ] Phase 1 — Product Discovery — CURRENT / IN PROGRESS
 - [ ] Phase 2 — Requirements Engineering — LOCKED
 - [ ] Phase 3 — Technical Architecture — LOCKED
 - [ ] Phase 4 — Android Architecture — LOCKED
@@ -83,39 +80,37 @@ Nothing should be scattered.
 
 ## Completion gate
 
-A step can be marked `[x] COMPLETE` only when:
+A step becomes `[x] COMPLETE` only when:
 
-- [ ] Required deliverable exists
-- [ ] Objectives are satisfied
-- [ ] Acceptance criteria are satisfied
-- [ ] Required research/design/testing is complete
-- [ ] Documentation is updated
-- [ ] Dependencies and blockers are resolved or explicitly accepted
-- [ ] Project owner reviews the actual deliverable
-- [ ] Project owner explicitly approves completion
+- Required deliverable exists.
+- Objectives are satisfied.
+- Acceptance criteria are satisfied.
+- Required research/design/testing is complete.
+- Documentation is updated.
+- Dependencies/blockers are resolved or explicitly accepted.
+- Project owner reviews the actual deliverable.
+- Project owner explicitly approves completion.
 
 Only then is the next step unlocked.
 
-## AI / team continuation protocol
+## AI/team continuation protocol
 
-Every AI or collaborator MUST:
+Every AI/collaborator MUST:
 
 1. Read `SDLC/AI-HANDOVER.md`.
 2. Read `SDLC/PROGRESS.md`.
-3. Identify the single step marked **CURRENT**.
+3. Identify the single step marked CURRENT.
 4. Work only on that current step.
-5. Do not start, implement, or mark later steps complete.
+5. Do not start or mark later steps complete.
 6. Do not skip unfinished work.
 7. Do not rewrite approved decisions without explicit project-owner authorization.
 8. Keep files in the correct phase/category folder.
 9. Update the tracker after meaningful progress.
-10. Leave a clear handover for the next AI/team member.
+10. Leave a clear handover.
 
 ## No phase jumping
 
-Even if a later phase is technically interesting or requested, it remains locked until the current step passes its completion gate.
-
-If a later-phase dependency is discovered, record it as a dependency or blocker in the current step. Do not silently jump ahead.
+A later-phase dependency must be recorded as a dependency/blocker in the current step. It does not authorize silently starting that later phase.
 
 ## Handover template
 
@@ -136,18 +131,16 @@ Next exact task:
 
 ```text
 Current phase: Phase 1 — Product Discovery
-Current step: 1.7 — Value Proposition
-Status: READY TO START
-Completed: 1.1 Problem Definition; 1.2 Product Vision; 1.3 Target Users; 1.4 User Personas; 1.5 User Journeys; 1.6 Core Use Cases
-Incomplete: 1.7 through 1.16
+Current step: 1.9 — Market & Competitor Research
+Status: REVIEW / READY FOR PROJECT-OWNER APPROVAL
+Completed: 1.1–1.8
+Incomplete: 1.9–1.16
 Blockers: None currently recorded
-Decisions: Project owner restored strict sequential execution; only the current step may be executed
-Files changed: SDLC/PROGRESS.md
-Next exact task: Create Phase 1.7 — Value Proposition deliverable
+Decisions: Strict sequential execution restored; 1.7 and 1.8 approved
+Files changed: SDLC/01-product-discovery/market-research/market-competitor-research.md; SDLC/01-product-discovery/value-proposition/value-proposition.md; SDLC/01-product-discovery/mvp-scope/mvp-scope.md; SDLC/PROGRESS.md
+Next exact task: Project owner reviews Phase 1.9 and approves or requests changes
 ```
 
 ## Authoritative rule
 
-**The current checkbox and status in this file determine where Linko has reached.**
-
-A future AI or collaborator must verify this tracker against the repository and continue from the recorded current step. It must not restart, skip, or unlock later work without the project owner's explicit rule change.
+**The current checkbox and status in this file determine where Linko has reached.** A future AI or collaborator must verify this tracker against the repository and continue from the recorded current step. It must not restart, skip, or unlock later work without explicit project-owner authorization.
