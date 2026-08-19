@@ -250,14 +250,16 @@ Every new AI should follow this order:
 
 1. Read `SDLC/AI-HANDOVER.md`.
 2. Read `SDLC/README.md`.
-3. Identify the current SDLC phase.
-4. Read the current phase document.
-5. Inspect the repository before proposing changes.
-6. Preserve established decisions.
-7. Make the smallest change necessary to satisfy the current phase.
-8. Run appropriate tests.
-9. Update documentation when a decision changes.
-10. Leave a clear record of what was changed and what remains.
+3. Read `SDLC/PROGRESS.md`.
+4. Identify the single step marked CURRENT.
+5. Read the current step's deliverable.
+6. Inspect the repository before proposing changes.
+7. Preserve established decisions.
+8. Make the smallest change necessary to satisfy the current phase.
+9. Run appropriate tests.
+10. Update documentation when a decision changes.
+11. Update `SDLC/PROGRESS.md` after meaningful progress.
+12. Leave a clear handover.
 
 ### Never do this
 
@@ -269,6 +271,7 @@ Every new AI should follow this order:
 - Do not claim a networking feature works without real testing.
 - Do not introduce secrets into the repository.
 - Do not treat a temporary prototype shortcut as production architecture.
+- Do not start a locked SDLC step.
 
 ---
 
@@ -295,9 +298,13 @@ Important architecture/product decisions should be recorded here or in a dedicat
 
 ## 12. CURRENT PROJECT STATUS
 
-**Lifecycle state:** Planning / SDLC execution preparation
+**Lifecycle state:** SDLC Phase 1 — Product Discovery
 
-**Current priority:** Execute Phase 1, then Phase 2, sequentially.
+**Current step:** **1.10 — Technical Feasibility — REVIEW / READY FOR PROJECT-OWNER APPROVAL**
+
+**Completed through:** 1.9 — Market & Competitor Research — APPROVED
+
+**Next step after approval:** 1.11 — Business Model Hypotheses
 
 **Do not jump directly to production implementation without completing the relevant requirements and architecture decisions.**
 
