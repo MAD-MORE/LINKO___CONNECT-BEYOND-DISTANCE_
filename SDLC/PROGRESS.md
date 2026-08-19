@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 1 — Product Discovery
 
-**Current Step:** 1.10 — Technical Feasibility
+**Current Step:** 1.12 — Risk Register
 
-**Status:** CURRENT / READY FOR PROJECT-OWNER REVIEW
+**Status:** CURRENT / READY TO START
 
-**Latest completed:** 1.9 Market & Competitor Research — PROJECT OWNER APPROVED
+**Latest completed:** 1.11 Business Model Hypotheses — PROJECT OWNER APPROVED
 
-**Next exact task:** Review Phase 1.10 Technical Feasibility and approve or request changes.
+**Next exact task:** Create Phase 1.12 Risk Register.
 
 ## Phase 1 — Product Discovery
 
@@ -42,9 +42,9 @@ Nothing should be scattered.
 - [x] 1.7 — Value Proposition — COMPLETE — APPROVED
 - [x] 1.8 — MVP Scope — COMPLETE — APPROVED
 - [x] 1.9 — Market & Competitor Research — COMPLETE — APPROVED
-- [ ] **1.10 — Technical Feasibility — CURRENT / REVIEW**
-- [ ] 1.11 — Business Model Hypotheses — LOCKED
-- [ ] 1.12 — Risk Register — LOCKED
+- [x] 1.10 — Technical Feasibility — COMPLETE — APPROVED
+- [x] 1.11 — Business Model Hypotheses — COMPLETE — APPROVED
+- [ ] **1.12 — Risk Register — CURRENT**
 - [ ] 1.13 — Success Metrics — LOCKED
 - [ ] 1.14 — Phase 1 Requirements Summary — LOCKED
 - [ ] 1.15 — Phase 1 Review — LOCKED
@@ -131,15 +131,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 1 — Product Discovery
-Current step: 1.10 — Technical Feasibility
-Status: REVIEW / READY FOR PROJECT-OWNER APPROVAL
-Completed: 1.1–1.9
-Incomplete: 1.10–1.16
+Current step: 1.12 — Risk Register
+Status: READY TO START
+Completed: 1.1–1.11
+Incomplete: 1.12–1.16
 Blockers: None currently recorded
-Decisions: Strict sequential execution restored; 1.9 Market & Competitor Research approved; Phase 1.10 deliverable created
-Files changed: SDLC/01-product-discovery/technical-feasibility/technical-feasibility.md; SDLC/PROGRESS.md
-Tests/reviews: Technical feasibility checked against current Android VpnService documentation
-Next exact task: Project owner reviews Phase 1.10 and approves or requests changes
+Decisions: Strict sequential execution active; 1.11 Business Model Hypotheses approved by project owner
+Files changed: SDLC/PROGRESS.md
+Tests/reviews: 1.11 reviewed and approved
+Next exact task: Create Phase 1.12 Risk Register
 ```
 
 ## Authoritative rule
