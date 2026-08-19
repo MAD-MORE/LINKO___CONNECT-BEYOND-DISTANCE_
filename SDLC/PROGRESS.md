@@ -21,20 +21,20 @@ Nothing should be scattered.
 
 ## Current position
 
-**Current Phase:** Phase 1 — Product Discovery
+**Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 1.16 — Phase 1 Final Approval
+**Current Step:** 2.1 — Requirements Engineering Charter
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 1.15 Phase 1 Review — PROJECT OWNER APPROVED
+**Latest completed:** Phase 1 — Product Discovery — FINAL APPROVED
 
-**Next exact task:** Create Phase 1.16 Phase 1 Final Approval deliverable.
+**Next exact task:** Create Phase 2.1 Requirements Engineering Charter.
 
 ## Phase 1 — Product Discovery
 
-- [x] 1.1 — Problem Definition — COMPLETE
-- [x] 1.2 — Product Vision — COMPLETE
+- [x] 1.1 — Problem Definition — COMPLETE — APPROVED
+- [x] 1.2 — Product Vision — COMPLETE — APPROVED
 - [x] 1.3 — Target Users — COMPLETE — APPROVED
 - [x] 1.4 — User Personas — COMPLETE — APPROVED
 - [x] 1.5 — User Journeys — COMPLETE — APPROVED
@@ -48,12 +48,37 @@ Nothing should be scattered.
 - [x] 1.13 — Success Metrics — COMPLETE — APPROVED
 - [x] 1.14 — Phase 1 Requirements Summary — COMPLETE — APPROVED
 - [x] 1.15 — Phase 1 Review — COMPLETE — APPROVED
-- [ ] **1.16 — Phase 1 Final Approval — CURRENT**
+- [x] 1.16 — Phase 1 Final Approval — COMPLETE — APPROVED
+
+**PHASE 1 STATUS: COMPLETE / LOCKED**
+
+## Phase 2 — Requirements Engineering
+
+- [ ] **2.1 — Requirements Engineering Charter — CURRENT**
+- [ ] 2.2 — System Actors & Roles
+- [ ] 2.3 — Functional Requirements
+- [ ] 2.4 — Non-Functional Requirements
+- [ ] 2.5 — Connectivity & Networking Requirements
+- [ ] 2.6 — Android Platform Requirements
+- [ ] 2.7 — Security Requirements
+- [ ] 2.8 — Privacy Requirements
+- [ ] 2.9 — Data Requirements
+- [ ] 2.10 — Backend & Infrastructure Requirements
+- [ ] 2.11 — Reliability & Availability Requirements
+- [ ] 2.12 — Performance & Resource Requirements
+- [ ] 2.13 — Abuse Prevention Requirements
+- [ ] 2.14 — Business & Monetization Requirements
+- [ ] 2.15 — Compliance & Store Requirements
+- [ ] 2.16 — Requirements Traceability Matrix
+- [ ] 2.17 — Requirements Verification & Acceptance Criteria
+- [ ] 2.18 — Phase 2 Requirements Baseline
+- [ ] 2.19 — Phase 2 Review
+- [ ] 2.20 — Phase 2 Final Approval
 
 ## Overall SDLC checklist
 
-- [ ] Phase 1 — Product Discovery — CURRENT / IN PROGRESS
-- [ ] Phase 2 — Requirements Engineering — LOCKED
+- [x] Phase 1 — Product Discovery — COMPLETE / LOCKED
+- [ ] Phase 2 — Requirements Engineering — CURRENT / IN PROGRESS
 - [ ] Phase 3 — Technical Architecture — LOCKED
 - [ ] Phase 4 — Android Architecture — LOCKED
 - [ ] Phase 5 — Linko Tunnel Engine — LOCKED
@@ -130,16 +155,16 @@ Next exact task:
 ## Current handover
 
 ```text
-Current phase: Phase 1 — Product Discovery
-Current step: 1.16 — Phase 1 Final Approval
+Current phase: Phase 2 — Requirements Engineering
+Current step: 2.1 — Requirements Engineering Charter
 Status: READY TO START
-Completed: 1.1–1.15
-Incomplete: 1.16
+Completed: Phase 1; Phase 2 not started
+Incomplete: Phase 2 steps 2.1–2.20
 Blockers: None currently recorded
-Decisions: Strict sequential execution active; 1.15 Phase 1 Review approved by project owner
+Decisions: Phase 1 final approval recorded; strict sequential execution remains active
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 1.15 reviewed and approved
-Next exact task: Create Phase 1.16 Phase 1 Final Approval deliverable
+Tests/reviews: Phase 1 final approval recorded
+Next exact task: Create Phase 2.1 Requirements Engineering Charter
 ```
 
 ## Authoritative rule
