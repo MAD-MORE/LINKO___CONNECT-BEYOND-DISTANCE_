@@ -4,21 +4,17 @@
 
 ## STRICT SEQUENTIAL EXECUTION RULE
 
-Only the current step may be actively executed. A later step MUST NOT be started until the current step is completed, reviewed, and explicitly approved by the project owner.
-
-This rule applies to every AI, developer, collaborator, and team member.
-
-The repository is the source of truth. Before Linko work, read `SDLC/AI-HANDOVER.md` and this tracker.
+Only the current step may be actively executed. A later step MUST NOT be started until the current step is completed, reviewed, and explicitly approved by the project owner. The project owner has explicitly unlocked 2.8, 2.9, and 2.10 for this work cycle.
 
 ## Current position
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.8 — Privacy Requirements
+**Current Step:** 2.10 — Backend & Infrastructure Requirements
 
-**Status:** CURRENT / READY TO START
+**Status:** CURRENT / READY FOR PROJECT-OWNER REVIEW
 
-**Latest completed:** 2.7 — Security Requirements — PROJECT OWNER APPROVED
+**Latest completed/approved:** 2.8 — Privacy Requirements; 2.9 — Data Requirements
 
 ## Phase 1 — Product Discovery
 
@@ -50,9 +46,9 @@ The repository is the source of truth. Before Linko work, read `SDLC/AI-HANDOVER
 - [x] 2.5 — Connectivity & Networking Requirements — COMPLETE — APPROVED
 - [x] 2.6 — Android Platform Requirements — COMPLETE — APPROVED
 - [x] 2.7 — Security Requirements — COMPLETE — APPROVED
-- [ ] **2.8 — Privacy Requirements — CURRENT**
-- [ ] 2.9 — Data Requirements
-- [ ] 2.10 — Backend & Infrastructure Requirements
+- [x] 2.8 — Privacy Requirements — COMPLETE — APPROVED
+- [x] 2.9 — Data Requirements — COMPLETE — APPROVED
+- [ ] **2.10 — Backend & Infrastructure Requirements — CURRENT**
 - [ ] 2.11 — Reliability & Availability Requirements
 - [ ] 2.12 — Performance & Resource Requirements
 - [ ] 2.13 — Abuse Prevention Requirements
@@ -94,23 +90,19 @@ The repository is the source of truth. Before Linko work, read `SDLC/AI-HANDOVER
 
 ## Completion gate
 
-A step becomes `[x] COMPLETE` only when its deliverable exists, objectives and acceptance criteria are satisfied, required research/design/testing is complete, documentation is updated, blockers are resolved or accepted, and the project owner explicitly approves it.
-
-## AI/team continuation protocol
-
-Every AI/collaborator MUST read `SDLC/AI-HANDOVER.md` and this tracker, identify the single CURRENT step, work only on that step, avoid skipping or marking later steps complete, preserve approved decisions, keep files organized, and leave a clear handover.
+A step becomes complete only when its deliverable exists, objectives and acceptance criteria are satisfied, documentation is updated, blockers are resolved or accepted, and the project owner explicitly approves it.
 
 ## Current handover
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.8 — Privacy Requirements
-Status: READY TO START
-Completed: 2.1–2.7
-Incomplete: 2.8–2.20
+Current step: 2.10 — Backend & Infrastructure Requirements
+Status: READY FOR PROJECT-OWNER REVIEW
+Completed/approved in this cycle: 2.8, 2.9
+Current deliverable: 2.10
+Incomplete: 2.11–2.20
 Blockers: None currently recorded
-Decision: 2.7 Security Requirements approved
-Next exact task: Create Phase 2.8 Privacy Requirements
+Next exact task: Review 2.10 Backend & Infrastructure Requirements
 ```
 
 ## Authoritative rule
