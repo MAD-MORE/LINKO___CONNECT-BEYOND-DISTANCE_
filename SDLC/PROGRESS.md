@@ -10,26 +10,15 @@ This rule applies to every AI, developer, collaborator, and team member.
 
 The repository is the source of truth. Before Linko work, read `SDLC/AI-HANDOVER.md` and this tracker.
 
-## Folder organization rule
-
-Nothing should be scattered.
-
-- Every SDLC phase has its own folder.
-- Categories within a phase receive their own subfolders where appropriate.
-- New categories must create a new folder/subfolder.
-- Implementation code stays separate from SDLC documentation.
-
 ## Current position
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.6 — Android Platform Requirements
+**Current Step:** 2.8 — Privacy Requirements
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 2.5 — Connectivity & Networking Requirements — PROJECT OWNER APPROVED
-
-**Next exact task:** Create Phase 2.6 Android Platform Requirements.
+**Latest completed:** 2.7 — Security Requirements — PROJECT OWNER APPROVED
 
 ## Phase 1 — Product Discovery
 
@@ -59,9 +48,9 @@ Nothing should be scattered.
 - [x] 2.3 — Functional Requirements — COMPLETE — APPROVED
 - [x] 2.4 — Non-Functional Requirements — COMPLETE — APPROVED
 - [x] 2.5 — Connectivity & Networking Requirements — COMPLETE — APPROVED
-- [ ] **2.6 — Android Platform Requirements — CURRENT**
-- [ ] 2.7 — Security Requirements
-- [ ] 2.8 — Privacy Requirements
+- [x] 2.6 — Android Platform Requirements — COMPLETE — APPROVED
+- [x] 2.7 — Security Requirements — COMPLETE — APPROVED
+- [ ] **2.8 — Privacy Requirements — CURRENT**
 - [ ] 2.9 — Data Requirements
 - [ ] 2.10 — Backend & Infrastructure Requirements
 - [ ] 2.11 — Reliability & Availability Requirements
@@ -105,53 +94,25 @@ Nothing should be scattered.
 
 ## Completion gate
 
-A step becomes `[x] COMPLETE` only when:
-
-- Required deliverable exists.
-- Objectives are satisfied.
-- Acceptance criteria are satisfied.
-- Required research/design/testing is complete.
-- Documentation is updated.
-- Dependencies/blockers are resolved or explicitly accepted.
-- Project owner reviews the actual deliverable.
-- Project owner explicitly approves completion.
-
-Only then is the next step unlocked.
+A step becomes `[x] COMPLETE` only when its deliverable exists, objectives and acceptance criteria are satisfied, required research/design/testing is complete, documentation is updated, blockers are resolved or accepted, and the project owner explicitly approves it.
 
 ## AI/team continuation protocol
 
-Every AI/collaborator MUST:
-
-1. Read `SDLC/AI-HANDOVER.md`.
-2. Read `SDLC/PROGRESS.md`.
-3. Identify the single step marked CURRENT.
-4. Work only on that current step.
-5. Do not start or mark later steps complete.
-6. Do not skip unfinished work.
-7. Do not rewrite approved decisions without explicit project-owner authorization.
-8. Keep files in the correct phase/category folder.
-9. Update the tracker after meaningful progress.
-10. Leave a clear handover.
-
-## No phase jumping
-
-A later-phase dependency must be recorded as a dependency/blocker in the current step. It does not authorize silently starting that later phase.
+Every AI/collaborator MUST read `SDLC/AI-HANDOVER.md` and this tracker, identify the single CURRENT step, work only on that step, avoid skipping or marking later steps complete, preserve approved decisions, keep files organized, and leave a clear handover.
 
 ## Current handover
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.6 — Android Platform Requirements
+Current step: 2.8 — Privacy Requirements
 Status: READY TO START
-Completed: 2.1–2.5
-Incomplete: 2.6–2.20
+Completed: 2.1–2.7
+Incomplete: 2.8–2.20
 Blockers: None currently recorded
-Decisions: 2.5 Connectivity & Networking Requirements approved; strict sequential execution remains active
-Files changed: SDLC/PROGRESS.md
-Tests/reviews: 2.5 reviewed and approved by project owner
-Next exact task: Create Phase 2.6 Android Platform Requirements
+Decision: 2.7 Security Requirements approved
+Next exact task: Create Phase 2.8 Privacy Requirements
 ```
 
 ## Authoritative rule
 
-**The current checkbox and status in this file determine where Linko has reached.** A future AI or collaborator must verify this tracker against the repository and continue from the recorded current step. It must not restart, skip, or unlock later work without explicit project-owner authorization.
+**The current checkbox and status in this file determine where Linko has reached.** Future collaborators must verify this tracker and continue from the recorded current step without skipping or silently unlocking later work.
