@@ -23,19 +23,19 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 1 — Product Discovery
 
-**Current Step:** 1.14 — Phase 1 Requirements Summary
+**Current Step:** 1.15 — Phase 1 Review
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 1.13 Success Metrics — PROJECT OWNER APPROVED
+**Latest completed:** 1.14 Phase 1 Requirements Summary — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 1.14 Phase 1 Requirements Summary.
+**Next exact task:** Create Phase 1.15 Phase 1 Review deliverable.
 
 ## Phase 1 — Product Discovery
 
 - [x] 1.1 — Problem Definition — COMPLETE
 - [x] 1.2 — Product Vision — COMPLETE
-- [x] 1.3 — Target Users — COMPLETE
+- [x] 1.3 — Target Users — COMPLETE — APPROVED
 - [x] 1.4 — User Personas — COMPLETE — APPROVED
 - [x] 1.5 — User Journeys — COMPLETE — APPROVED
 - [x] 1.6 — Core Use Cases — COMPLETE — APPROVED
@@ -46,8 +46,8 @@ Nothing should be scattered.
 - [x] 1.11 — Business Model Hypotheses — COMPLETE — APPROVED
 - [x] 1.12 — Risk Register — COMPLETE — APPROVED
 - [x] 1.13 — Success Metrics — COMPLETE — APPROVED
-- [ ] **1.14 — Phase 1 Requirements Summary — CURRENT**
-- [ ] 1.15 — Phase 1 Review — LOCKED
+- [x] 1.14 — Phase 1 Requirements Summary — COMPLETE — APPROVED
+- [ ] **1.15 — Phase 1 Review — CURRENT**
 - [ ] 1.16 — Phase 1 Approval — LOCKED
 
 ## Overall SDLC checklist
@@ -131,15 +131,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 1 — Product Discovery
-Current step: 1.14 — Phase 1 Requirements Summary
+Current step: 1.15 — Phase 1 Review
 Status: READY TO START
-Completed: 1.1–1.13
-Incomplete: 1.14–1.16
+Completed: 1.1–1.14
+Incomplete: 1.15–1.16
 Blockers: None currently recorded
-Decisions: Strict sequential execution active; 1.13 Success Metrics approved by project owner
+Decisions: Strict sequential execution active; 1.14 Phase 1 Requirements Summary approved by project owner
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 1.13 reviewed and approved
-Next exact task: Create Phase 1.14 Phase 1 Requirements Summary
+Tests/reviews: 1.14 reviewed and approved
+Next exact task: Create Phase 1.15 Phase 1 Review deliverable
 ```
 
 ## Authoritative rule
