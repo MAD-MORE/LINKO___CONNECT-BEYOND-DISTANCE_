@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.2 — System Actors & Roles
+**Current Step:** 2.4 — Non-Functional Requirements
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 2.1 Requirements Engineering Charter — PROJECT OWNER APPROVED
+**Latest completed:** 2.3 Functional Requirements — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 2.2 System Actors & Roles.
+**Next exact task:** Create Phase 2.4 Non-Functional Requirements.
 
 ## Phase 1 — Product Discovery
 
@@ -55,9 +55,9 @@ Nothing should be scattered.
 ## Phase 2 — Requirements Engineering
 
 - [x] 2.1 — Requirements Engineering Charter — COMPLETE — APPROVED
-- [ ] **2.2 — System Actors & Roles — CURRENT**
-- [ ] 2.3 — Functional Requirements
-- [ ] 2.4 — Non-Functional Requirements
+- [x] 2.2 — System Actors & Roles — COMPLETE — APPROVED
+- [x] 2.3 — Functional Requirements — COMPLETE — APPROVED
+- [ ] **2.4 — Non-Functional Requirements — CURRENT**
 - [ ] 2.5 — Connectivity & Networking Requirements
 - [ ] 2.6 — Android Platform Requirements
 - [ ] 2.7 — Security Requirements
@@ -156,15 +156,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.2 — System Actors & Roles
+Current step: 2.4 — Non-Functional Requirements
 Status: READY TO START
-Completed: 2.1
-Incomplete: 2.2–2.20
+Completed: 2.1–2.3
+Incomplete: 2.4–2.20
 Blockers: None currently recorded
-Decisions: 2.1 approved; strict sequential execution remains active
+Decisions: 2.3 Functional Requirements approved; strict sequential execution remains active
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 2.1 charter reviewed/approved by project owner through explicit continuation instruction
-Next exact task: Create Phase 2.2 System Actors & Roles
+Tests/reviews: 2.3 reviewed and approved by project owner
+Next exact task: Create Phase 2.4 Non-Functional Requirements
 ```
 
 ## Authoritative rule
