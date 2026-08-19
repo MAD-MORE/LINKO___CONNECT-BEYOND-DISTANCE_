@@ -2,109 +2,103 @@
 
 **Project:** Linko — Connect Beyond Distance
 
-## STRICT SEQUENTIAL EXECUTION RULE
+## PROJECT OWNER AUTHORIZATION
 
-Only the current step may be actively executed. A later step MUST NOT be started until the current step is completed, reviewed, and explicitly approved by the project owner. The project owner has explicitly unlocked 2.8, 2.9, and 2.10 for this work cycle.
+The project owner has explicitly approved/unlocked the requirements work and authorized continuation without individual approval pauses. Work may proceed through the roadmap, but no implementation claim is considered complete without actual deliverables and verification evidence.
 
 ## Current position
 
-**Current Phase:** Phase 2 — Requirements Engineering
+**Current Phase:** Phase 3 — Technical Architecture
 
-**Current Step:** 2.10 — Backend & Infrastructure Requirements
+**Current Step:** 3.1 — Architecture Principles & Constraints
 
-**Status:** CURRENT / READY FOR PROJECT-OWNER REVIEW
+**Status:** CURRENT / READY TO EXECUTE
 
-**Latest completed/approved:** 2.8 — Privacy Requirements; 2.9 — Data Requirements
+**Latest completed:** Phase 2 — Requirements Engineering — COMPLETE / APPROVED / BASELINED
 
 ## Phase 1 — Product Discovery
 
-- [x] 1.1 — Problem Definition — COMPLETE — APPROVED
-- [x] 1.2 — Product Vision — COMPLETE — APPROVED
-- [x] 1.3 — Target Users — COMPLETE — APPROVED
-- [x] 1.4 — User Personas — COMPLETE — APPROVED
-- [x] 1.5 — User Journeys — COMPLETE — APPROVED
-- [x] 1.6 — Core Use Cases — COMPLETE — APPROVED
-- [x] 1.7 — Value Proposition — COMPLETE — APPROVED
-- [x] 1.8 — MVP Scope — COMPLETE — APPROVED
-- [x] 1.9 — Market & Competitor Research — COMPLETE — APPROVED
-- [x] 1.10 — Technical Feasibility — COMPLETE — APPROVED
-- [x] 1.11 — Business Model Hypotheses — COMPLETE — APPROVED
-- [x] 1.12 — Risk Register — COMPLETE — APPROVED
-- [x] 1.13 — Success Metrics — COMPLETE — APPROVED
-- [x] 1.14 — Phase 1 Requirements Summary — COMPLETE — APPROVED
-- [x] 1.15 — Phase 1 Review — COMPLETE — APPROVED
-- [x] 1.16 — Phase 1 Final Approval — COMPLETE — APPROVED
-
-**PHASE 1 STATUS: COMPLETE / LOCKED**
+- [x] 1.1–1.16 — COMPLETE / APPROVED
 
 ## Phase 2 — Requirements Engineering
 
-- [x] 2.1 — Requirements Engineering Charter — COMPLETE — APPROVED
-- [x] 2.2 — System Actors & Roles — COMPLETE — APPROVED
-- [x] 2.3 — Functional Requirements — COMPLETE — APPROVED
-- [x] 2.4 — Non-Functional Requirements — COMPLETE — APPROVED
-- [x] 2.5 — Connectivity & Networking Requirements — COMPLETE — APPROVED
-- [x] 2.6 — Android Platform Requirements — COMPLETE — APPROVED
-- [x] 2.7 — Security Requirements — COMPLETE — APPROVED
-- [x] 2.8 — Privacy Requirements — COMPLETE — APPROVED
-- [x] 2.9 — Data Requirements — COMPLETE — APPROVED
-- [ ] **2.10 — Backend & Infrastructure Requirements — CURRENT**
-- [ ] 2.11 — Reliability & Availability Requirements
-- [ ] 2.12 — Performance & Resource Requirements
-- [ ] 2.13 — Abuse Prevention Requirements
-- [ ] 2.14 — Business & Monetization Requirements
-- [ ] 2.15 — Compliance & Store Requirements
-- [ ] 2.16 — Requirements Traceability Matrix
-- [ ] 2.17 — Requirements Verification & Acceptance Criteria
-- [ ] 2.18 — Phase 2 Requirements Baseline
-- [ ] 2.19 — Phase 2 Review
-- [ ] 2.20 — Phase 2 Final Approval
+- [x] 2.1 — Requirements Engineering Charter
+- [x] 2.2 — System Actors & Roles
+- [x] 2.3 — Functional Requirements
+- [x] 2.4 — Non-Functional Requirements
+- [x] 2.5 — Connectivity & Networking Requirements
+- [x] 2.6 — Android Platform Requirements
+- [x] 2.7 — Security Requirements
+- [x] 2.8 — Privacy Requirements
+- [x] 2.9 — Data Requirements
+- [x] 2.10 — Backend & Infrastructure Requirements
+- [x] 2.11 — Reliability & Availability Requirements
+- [x] 2.12 — Performance & Resource Requirements
+- [x] 2.13 — Abuse Prevention Requirements
+- [x] 2.14 — Business & Monetization Requirements
+- [x] 2.15 — Compliance & Store Requirements
+- [x] 2.16 — Requirements Traceability Matrix
+- [x] 2.17 — Requirements Verification & Acceptance Criteria
+- [x] 2.18 — Phase 2 Requirements Baseline
+- [x] 2.19 — Phase 2 Review
+- [x] 2.20 — Phase 2 Final Approval
 
-## Overall SDLC checklist
+**PHASE 2 STATUS: COMPLETE / APPROVED / BASELINED**
 
-- [x] Phase 1 — Product Discovery — COMPLETE / LOCKED
-- [ ] Phase 2 — Requirements Engineering — CURRENT / IN PROGRESS
-- [ ] Phase 3 — Technical Architecture — LOCKED
-- [ ] Phase 4 — Android Architecture — LOCKED
-- [ ] Phase 5 — Linko Tunnel Engine — LOCKED
-- [ ] Phase 6 — Signaling — LOCKED
-- [ ] Phase 7 — Relay Infrastructure — LOCKED
-- [ ] Phase 8 — Backend — LOCKED
-- [ ] Phase 9 — Database Design — LOCKED
-- [ ] Phase 10 — Security SDLC — LOCKED
-- [ ] Phase 11 — Abuse Prevention — LOCKED
-- [ ] Phase 12 — Privacy — LOCKED
-- [ ] Phase 13 — UI/UX Development — LOCKED
-- [ ] Phase 14 — MVP Development — LOCKED
-- [ ] Phase 15 — Testing — LOCKED
-- [ ] Phase 16 — Real-World Testing — LOCKED
-- [ ] Phase 17 — Performance Engineering — LOCKED
-- [ ] Phase 18 — Business & Monetization — LOCKED
-- [ ] Phase 19 — Linko Economy — LOCKED
-- [ ] Phase 20 — Legal & Compliance — LOCKED
-- [ ] Phase 21 — Google Play Launch — LOCKED
-- [ ] Phase 22 — Monetization Implementation — LOCKED
-- [ ] Phase 23 — Observability — LOCKED
-- [ ] Phase 24 — Beta Program — LOCKED
-- [ ] Phase 25 — Scale & Global Expansion — LOCKED
+## Phase 3 — Technical Architecture
 
-## Completion gate
+- [ ] **3.1 — Architecture Principles & Constraints — CURRENT**
+- [ ] 3.2 — System Context Architecture
+- [ ] 3.3 — Component Architecture
+- [ ] 3.4 — Connectivity Architecture
+- [ ] 3.5 — Signaling Architecture
+- [ ] 3.6 — Relay Architecture
+- [ ] 3.7 — Backend Service Architecture
+- [ ] 3.8 — Data Architecture
+- [ ] 3.9 — Security Architecture
+- [ ] 3.10 — Privacy Architecture
+- [ ] 3.11 — Deployment Architecture
+- [ ] 3.12 — Failure & Recovery Architecture
+- [ ] 3.13 — Scaling Architecture
+- [ ] 3.14 — Architecture Decision Records
+- [ ] 3.15 — Architecture Review
+- [ ] 3.16 — Architecture Baseline
 
-A step becomes complete only when its deliverable exists, objectives and acceptance criteria are satisfied, documentation is updated, blockers are resolved or accepted, and the project owner explicitly approves it.
+## Remaining SDLC phases
+
+- [ ] Phase 4 — Android Architecture
+- [ ] Phase 5 — Linko Tunnel Engine
+- [ ] Phase 6 — Signaling
+- [ ] Phase 7 — Relay Infrastructure
+- [ ] Phase 8 — Backend
+- [ ] Phase 9 — Database Design
+- [ ] Phase 10 — Security SDLC
+- [ ] Phase 11 — Abuse Prevention
+- [ ] Phase 12 — Privacy
+- [ ] Phase 13 — UI/UX Development
+- [ ] Phase 14 — MVP Development
+- [ ] Phase 15 — Testing
+- [ ] Phase 16 — Real-World Testing
+- [ ] Phase 17 — Performance Engineering
+- [ ] Phase 18 — Business & Monetization
+- [ ] Phase 19 — Linko Economy
+- [ ] Phase 20 — Legal & Compliance
+- [ ] Phase 21 — Google Play Launch
+- [ ] Phase 22 — Monetization Implementation
+- [ ] Phase 23 — Observability
+- [ ] Phase 24 — Beta Program
+- [ ] Phase 25 — Scale & Global Expansion
+
+## Execution rule
+
+Project-owner approval has unlocked continuation. Nevertheless, each phase must still produce its actual artifacts, implementation, tests, and evidence before it can truthfully be marked complete.
 
 ## Current handover
 
 ```text
-Current phase: Phase 2 — Requirements Engineering
-Current step: 2.10 — Backend & Infrastructure Requirements
-Status: READY FOR PROJECT-OWNER REVIEW
-Completed/approved in this cycle: 2.8, 2.9
-Current deliverable: 2.10
-Incomplete: 2.11–2.20
-Blockers: None currently recorded
-Next exact task: Review 2.10 Backend & Infrastructure Requirements
+Phase 1: COMPLETE
+Phase 2: COMPLETE / APPROVED / BASELINED
+Phase 3: CURRENT
+Current step: 3.1 — Architecture Principles & Constraints
+Next: establish architecture constraints and principles derived from the approved requirements.
 ```
-
-## Authoritative rule
-
-**The current checkbox and status in this file determine where Linko has reached.** Future collaborators must verify this tracker and continue from the recorded current step without skipping or silently unlocking later work.
