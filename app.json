@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Linko",
+    "slug": "linko",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "android": {
+      "package": "com.madmore.linko"
+    }
+  }
+}
