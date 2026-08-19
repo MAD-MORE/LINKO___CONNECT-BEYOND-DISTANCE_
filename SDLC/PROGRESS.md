@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 1 — Product Discovery
 
-**Current Step:** 1.12 — Risk Register
+**Current Step:** 1.14 — Phase 1 Requirements Summary
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 1.11 Business Model Hypotheses — PROJECT OWNER APPROVED
+**Latest completed:** 1.13 Success Metrics — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 1.12 Risk Register.
+**Next exact task:** Create Phase 1.14 Phase 1 Requirements Summary.
 
 ## Phase 1 — Product Discovery
 
@@ -44,9 +44,9 @@ Nothing should be scattered.
 - [x] 1.9 — Market & Competitor Research — COMPLETE — APPROVED
 - [x] 1.10 — Technical Feasibility — COMPLETE — APPROVED
 - [x] 1.11 — Business Model Hypotheses — COMPLETE — APPROVED
-- [ ] **1.12 — Risk Register — CURRENT**
-- [ ] 1.13 — Success Metrics — LOCKED
-- [ ] 1.14 — Phase 1 Requirements Summary — LOCKED
+- [x] 1.12 — Risk Register — COMPLETE — APPROVED
+- [x] 1.13 — Success Metrics — COMPLETE — APPROVED
+- [ ] **1.14 — Phase 1 Requirements Summary — CURRENT**
 - [ ] 1.15 — Phase 1 Review — LOCKED
 - [ ] 1.16 — Phase 1 Approval — LOCKED
 
@@ -131,15 +131,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 1 — Product Discovery
-Current step: 1.12 — Risk Register
+Current step: 1.14 — Phase 1 Requirements Summary
 Status: READY TO START
-Completed: 1.1–1.11
-Incomplete: 1.12–1.16
+Completed: 1.1–1.13
+Incomplete: 1.14–1.16
 Blockers: None currently recorded
-Decisions: Strict sequential execution active; 1.11 Business Model Hypotheses approved by project owner
+Decisions: Strict sequential execution active; 1.13 Success Metrics approved by project owner
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 1.11 reviewed and approved
-Next exact task: Create Phase 1.12 Risk Register
+Tests/reviews: 1.13 reviewed and approved
+Next exact task: Create Phase 1.14 Phase 1 Requirements Summary
 ```
 
 ## Authoritative rule
