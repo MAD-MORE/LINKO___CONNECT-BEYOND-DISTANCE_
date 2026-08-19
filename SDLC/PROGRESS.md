@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.1 — Requirements Engineering Charter
+**Current Step:** 2.2 — System Actors & Roles
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** Phase 1 — Product Discovery — FINAL APPROVED
+**Latest completed:** 2.1 Requirements Engineering Charter — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 2.1 Requirements Engineering Charter.
+**Next exact task:** Create Phase 2.2 System Actors & Roles.
 
 ## Phase 1 — Product Discovery
 
@@ -54,8 +54,8 @@ Nothing should be scattered.
 
 ## Phase 2 — Requirements Engineering
 
-- [ ] **2.1 — Requirements Engineering Charter — CURRENT**
-- [ ] 2.2 — System Actors & Roles
+- [x] 2.1 — Requirements Engineering Charter — COMPLETE — APPROVED
+- [ ] **2.2 — System Actors & Roles — CURRENT**
 - [ ] 2.3 — Functional Requirements
 - [ ] 2.4 — Non-Functional Requirements
 - [ ] 2.5 — Connectivity & Networking Requirements
@@ -156,15 +156,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.1 — Requirements Engineering Charter
+Current step: 2.2 — System Actors & Roles
 Status: READY TO START
-Completed: Phase 1; Phase 2 not started
-Incomplete: Phase 2 steps 2.1–2.20
+Completed: 2.1
+Incomplete: 2.2–2.20
 Blockers: None currently recorded
-Decisions: Phase 1 final approval recorded; strict sequential execution remains active
+Decisions: 2.1 approved; strict sequential execution remains active
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: Phase 1 final approval recorded
-Next exact task: Create Phase 2.1 Requirements Engineering Charter
+Tests/reviews: 2.1 charter reviewed/approved by project owner through explicit continuation instruction
+Next exact task: Create Phase 2.2 System Actors & Roles
 ```
 
 ## Authoritative rule
