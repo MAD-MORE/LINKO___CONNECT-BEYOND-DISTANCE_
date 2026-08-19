@@ -1,0 +1,41 @@
+# Local tooling
+.codex/
+
+# Android SDK / build artifacts
+android/.android-sdk/
+android/commandlinetools-win.zip
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Gradle
+.gradle/
+build/
+captures/
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+
+# OS
+Thumbs.db
+.DS_Store
+*.swp
+*~
