@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.5 — Connectivity & Networking Requirements
+**Current Step:** 2.6 — Android Platform Requirements
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 2.4 Non-Functional Requirements — PROJECT OWNER APPROVED
+**Latest completed:** 2.5 — Connectivity & Networking Requirements — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 2.5 Connectivity & Networking Requirements.
+**Next exact task:** Create Phase 2.6 Android Platform Requirements.
 
 ## Phase 1 — Product Discovery
 
@@ -58,8 +58,8 @@ Nothing should be scattered.
 - [x] 2.2 — System Actors & Roles — COMPLETE — APPROVED
 - [x] 2.3 — Functional Requirements — COMPLETE — APPROVED
 - [x] 2.4 — Non-Functional Requirements — COMPLETE — APPROVED
-- [ ] **2.5 — Connectivity & Networking Requirements — CURRENT**
-- [ ] 2.6 — Android Platform Requirements
+- [x] 2.5 — Connectivity & Networking Requirements — COMPLETE — APPROVED
+- [ ] **2.6 — Android Platform Requirements — CURRENT**
 - [ ] 2.7 — Security Requirements
 - [ ] 2.8 — Privacy Requirements
 - [ ] 2.9 — Data Requirements
@@ -137,34 +137,19 @@ Every AI/collaborator MUST:
 
 A later-phase dependency must be recorded as a dependency/blocker in the current step. It does not authorize silently starting that later phase.
 
-## Handover template
-
-```text
-Current phase:
-Current step:
-Status:
-Completed:
-Incomplete:
-Blockers:
-Decisions:
-Files changed:
-Tests/reviews:
-Next exact task:
-```
-
 ## Current handover
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.5 — Connectivity & Networking Requirements
+Current step: 2.6 — Android Platform Requirements
 Status: READY TO START
-Completed: 2.1–2.4
-Incomplete: 2.5–2.20
+Completed: 2.1–2.5
+Incomplete: 2.6–2.20
 Blockers: None currently recorded
-Decisions: 2.4 Non-Functional Requirements approved; strict sequential execution remains active
+Decisions: 2.5 Connectivity & Networking Requirements approved; strict sequential execution remains active
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 2.4 reviewed and approved by project owner
-Next exact task: Create Phase 2.5 Connectivity & Networking Requirements
+Tests/reviews: 2.5 reviewed and approved by project owner
+Next exact task: Create Phase 2.6 Android Platform Requirements
 ```
 
 ## Authoritative rule
