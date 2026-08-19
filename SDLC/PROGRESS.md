@@ -23,13 +23,13 @@ Nothing should be scattered.
 
 **Current Phase:** Phase 2 — Requirements Engineering
 
-**Current Step:** 2.4 — Non-Functional Requirements
+**Current Step:** 2.5 — Connectivity & Networking Requirements
 
 **Status:** CURRENT / READY TO START
 
-**Latest completed:** 2.3 Functional Requirements — PROJECT OWNER APPROVED
+**Latest completed:** 2.4 Non-Functional Requirements — PROJECT OWNER APPROVED
 
-**Next exact task:** Create Phase 2.4 Non-Functional Requirements.
+**Next exact task:** Create Phase 2.5 Connectivity & Networking Requirements.
 
 ## Phase 1 — Product Discovery
 
@@ -57,8 +57,8 @@ Nothing should be scattered.
 - [x] 2.1 — Requirements Engineering Charter — COMPLETE — APPROVED
 - [x] 2.2 — System Actors & Roles — COMPLETE — APPROVED
 - [x] 2.3 — Functional Requirements — COMPLETE — APPROVED
-- [ ] **2.4 — Non-Functional Requirements — CURRENT**
-- [ ] 2.5 — Connectivity & Networking Requirements
+- [x] 2.4 — Non-Functional Requirements — COMPLETE — APPROVED
+- [ ] **2.5 — Connectivity & Networking Requirements — CURRENT**
 - [ ] 2.6 — Android Platform Requirements
 - [ ] 2.7 — Security Requirements
 - [ ] 2.8 — Privacy Requirements
@@ -156,15 +156,15 @@ Next exact task:
 
 ```text
 Current phase: Phase 2 — Requirements Engineering
-Current step: 2.4 — Non-Functional Requirements
+Current step: 2.5 — Connectivity & Networking Requirements
 Status: READY TO START
-Completed: 2.1–2.3
-Incomplete: 2.4–2.20
+Completed: 2.1–2.4
+Incomplete: 2.5–2.20
 Blockers: None currently recorded
-Decisions: 2.3 Functional Requirements approved; strict sequential execution remains active
+Decisions: 2.4 Non-Functional Requirements approved; strict sequential execution remains active
 Files changed: SDLC/PROGRESS.md
-Tests/reviews: 2.3 reviewed and approved by project owner
-Next exact task: Create Phase 2.4 Non-Functional Requirements
+Tests/reviews: 2.4 reviewed and approved by project owner
+Next exact task: Create Phase 2.5 Connectivity & Networking Requirements
 ```
 
 ## Authoritative rule
