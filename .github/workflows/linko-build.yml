@@ -29,9 +29,6 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
-      # SDK packages and licenses are handled by setup-android above.
-      # Do not run `yes | sdkmanager --licenses` here: sdkmanager exits early
-      # after accepting its licenses, which causes a broken pipe under pipefail.
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -44,7 +41,9 @@ jobs:
           test -f gradle.properties
           echo "Building commit: $(git -C .. rev-parse HEAD)"
       - name: Build debug APK (clean, no build cache)
-        run: gradle clean assembleDebug --stacktrace --no-build-cache
+        env:
+          LINKO_CONTROL_PLANE_URL: ${{ vars.LINKO_CONTROL_PLANE_URL }}
+        run: gradle clean assembleDebug --stacktrace --no-build-cache -PLINKO_CONTROL_PLANE_URL="$LINKO_CONTROL_PLANE_URL"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
