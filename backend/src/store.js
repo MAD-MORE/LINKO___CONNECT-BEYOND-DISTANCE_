@@ -55,6 +55,7 @@ export class Store {
       `insert into public.linko_sessions
        (request_id, receiver_id, provider_id, transport, expires_at)
        values ($1,$2,$3,'pending',$4)
+       on conflict (request_id) do update set expires_at = excluded.expires_at
        returning *`,
       [request.id, request.receiver_id, request.provider_id, request.expires_at]
     );
