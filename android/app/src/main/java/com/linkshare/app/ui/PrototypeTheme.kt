@@ -50,7 +50,6 @@ val LinkoGreen = Color(0xFF22C55E)
 val LinkoYellow = Color(0xFFF59E0B)
 val LinkoRed = Color(0xFFEF4444)
 
-// Compatibility aliases used by existing production files.
 val LinkoParchment = LinkoBackground
 val LinkoSeaGlass = LinkoBlue
 val LinkoCopper = LinkoYellow
@@ -80,41 +79,28 @@ fun LinkoCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 @Composable
 fun LinkoPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(54.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = LinkoBlue, contentColor = Color.White)
-    ) { Text(text.uppercase(), fontWeight = FontWeight.Bold, letterSpacing = .5.sp) }
+    Button(onClick = onClick, modifier = modifier.height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = LinkoBlue, contentColor = Color.White)) {
+        Text(text.uppercase(), fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
+    }
 }
 
 @Composable
 fun LinkoSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(54.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = LinkoCardAlt, contentColor = LinkoInk)
-    ) { Text(text.uppercase(), fontWeight = FontWeight.Bold, letterSpacing = .5.sp) }
+    Button(onClick = onClick, modifier = modifier.height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = LinkoCardAlt, contentColor = LinkoInk)) {
+        Text(text.uppercase(), fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
+    }
 }
 
 @Composable
 fun LinkoDangerButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(54.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = LinkoRed, contentColor = Color.White)
-    ) { Text(text.uppercase(), fontWeight = FontWeight.Bold) }
+    Button(onClick = onClick, modifier = modifier.height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = LinkoRed, contentColor = Color.White)) {
+        Text(text.uppercase(), fontWeight = FontWeight.Bold)
+    }
 }
 
 @Composable
 fun LinkoStatusDot(active: Boolean, modifier: Modifier = Modifier) {
-    Spacer(
-        modifier = modifier
-            .size(9.dp)
-            .background(if (active) LinkoGreen else LinkoYellow, RoundedCornerShape(50))
-    )
+    Spacer(modifier = modifier.size(9.dp).background(if (active) LinkoGreen else LinkoYellow, RoundedCornerShape(50)))
 }
 
 @Composable
@@ -141,24 +127,23 @@ fun LinkoRing(
         animationSpec = infiniteRepeatable(tween(if (pulse) 1100 else 1800, easing = LinearEasing), RepeatMode.Restart),
         label = "rotation"
     )
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(RoundedCornerShape(50))
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = modifier.size(size).clip(RoundedCornerShape(50)).then(if (onClick != null) Modifier.clickable { onClick() } else Modifier), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(size)) {
-            val r = size.minDimension / 2f - 12.dp.toPx()
+            val canvasSize = this.size
+            val r = canvasSize.minDimension / 2f - 12.dp.toPx()
+            val center = androidx.compose.ui.geometry.Offset(canvasSize.width / 2f, canvasSize.height / 2f)
             drawCircle(color = LinkoBorder, radius = r, style = Stroke(1.5.dp.toPx()))
             rotate(rotation) {
-                drawArc(color = color.copy(alpha = .16f), startAngle = 0f, sweepAngle = 220f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(size.width / 2f - r, size.height / 2f - r), size = androidx.compose.ui.geometry.Size(r * 2, r * 2), style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
-                drawArc(color = color, startAngle = 0f, sweepAngle = 220f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(size.width / 2f - r, size.height / 2f - r), size = androidx.compose.ui.geometry.Size(r * 2, r * 2), style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
-                drawCircle(color = color, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f - r))
+                val topLeft = androidx.compose.ui.geometry.Offset(center.x - r, center.y - r)
+                val arcSize = androidx.compose.ui.geometry.Size(r * 2, r * 2)
+                drawArc(color = color.copy(alpha = .16f), startAngle = 0f, sweepAngle = 220f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(color = color, startAngle = 0f, sweepAngle = 220f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
+                drawCircle(color = color, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(center.x, center.y - r))
             }
             for (i in 1..3) {
                 val rr = r * (0.30f + i * .14f)
-                drawArc(color = color.copy(alpha = .45f / i), startAngle = rotation * (if (i % 2 == 0) -1f else 1f), sweepAngle = 150f, useCenter = false, topLeft = androidx.compose.ui.geometry.Offset(size.width / 2f - rr, size.height / 2f - rr), size = androidx.compose.ui.geometry.Size(rr * 2, rr * 2), style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
+                val topLeft = androidx.compose.ui.geometry.Offset(center.x - rr, center.y - rr)
+                drawArc(color = color.copy(alpha = .45f / i), startAngle = rotation * (if (i % 2 == 0) -1f else 1f), sweepAngle = 150f, useCenter = false, topLeft = topLeft, size = androidx.compose.ui.geometry.Size(rr * 2, rr * 2), style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
             }
         }
         Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
