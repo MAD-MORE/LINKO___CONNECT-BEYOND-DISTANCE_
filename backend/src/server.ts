@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { ControlPlaneStore } from "./store.js";
+import { PostgresControlPlaneStore } from "./postgres-store.js";
 import { isBootstrapSecret, issueDeviceToken, verifyDeviceToken } from "./auth.js";
+import type { SessionState } from "./types.js";
 
-const store = new ControlPlaneStore();
+const store = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : new ControlPlaneStore();
 const port = Number(process.env.PORT ?? 8080);
 
 function json(res: ServerResponse, status: number, body: unknown, requestId: string) {
@@ -31,7 +33,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      return json(res, 200, { service: "linko-control-plane", status: "ok" }, requestId);
+      return json(res, 200, { service: "linko-control-plane", status: "ok", persistence: process.env.DATABASE_URL ? "postgres" : "memory" }, requestId);
     }
 
     if (req.method === "POST" && url.pathname === "/v1/devices") {
@@ -44,13 +46,13 @@ const server = createServer(async (req, res) => {
       }
       const roles = input.roles.filter((role): role is "provider" | "receiver" => role === "provider" || role === "receiver");
       if (!roles.length) return json(res, 400, { error: "device_role_required", requestId }, requestId);
-      const device = store.registerDevice({ userId: input.userId, publicKey: input.publicKey, name: input.name, roles });
+      const device = await store.registerDevice({ userId: input.userId, publicKey: input.publicKey, name: input.name, roles });
       return json(res, 201, { device, accessToken: issueDeviceToken(device.userId, device.id) }, requestId);
     }
 
     const token = bearer(req);
     if (!token) return json(res, 401, { error: "authentication_required", requestId }, requestId);
-    const authenticatedDevice = store.getDevice(token.deviceId);
+    const authenticatedDevice = await store.getDevice(token.deviceId);
     if (!authenticatedDevice || authenticatedDevice.userId !== token.sub || authenticatedDevice.revokedAt) {
       return json(res, 401, { error: "device_not_authorized", requestId }, requestId);
     }
@@ -63,28 +65,28 @@ const server = createServer(async (req, res) => {
       if (authenticatedDevice.id !== input.receiverDeviceId && authenticatedDevice.id !== input.providerDeviceId) {
         return json(res, 403, { error: "session_party_required", requestId }, requestId);
       }
-      const session = store.createSession(input.receiverDeviceId, input.providerDeviceId);
+      const session = await store.createSession(input.receiverDeviceId, input.providerDeviceId);
       return json(res, 201, session, requestId);
     }
 
     const transitionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/transition$/);
     if (req.method === "POST" && transitionMatch) {
-      const session = store.getSession(transitionMatch[1]);
+      const session = await store.getSession(transitionMatch[1]);
       if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
       if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) {
         return json(res, 403, { error: "session_party_required", requestId }, requestId);
       }
       const input = await body(req);
       if (typeof input.state !== "string") return json(res, 400, { error: "state_required", requestId }, requestId);
-      const next = input.state as Parameters<ControlPlaneStore["transitionSession"]>[1];
+      const next = input.state as SessionState;
       if (next === "approved" && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "provider_approval_required", requestId }, requestId);
-      const updated = store.transitionSession(session.id, next);
+      const updated = await store.transitionSession(session.id, next);
       return json(res, 200, updated, requestId);
     }
 
     const sessionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/);
     if (req.method === "GET" && sessionMatch) {
-      const session = store.getSession(sessionMatch[1]);
+      const session = await store.getSession(sessionMatch[1]);
       if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
       if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) {
         return json(res, 403, { error: "session_party_required", requestId }, requestId);
