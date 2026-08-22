@@ -1,0 +1,1 @@
+Placeholder to locate Android source tree; do not ship.
