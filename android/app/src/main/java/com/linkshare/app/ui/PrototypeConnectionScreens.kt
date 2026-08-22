@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.Friend
@@ -37,7 +38,7 @@ fun ReceiverHomeScreen(
         }
         item {
             LinkoCard {
-                Text("Friends sharing data", color = LinkoInk, fontSize = 20.dp.value.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Black)
+                Text("Friends sharing data", color = LinkoInk, fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Black)
                 Text("Only friends who have enabled sharing appear here.", color = LinkoInk.copy(alpha = .62f))
             }
         }
@@ -118,5 +119,3 @@ fun ProviderSharingScreen(state: ConnectionUiState, onToggle: () -> Unit, onAppr
         }
     }
 }
-
-private val Int.sp get() = androidx.compose.ui.unit.sp(this)
