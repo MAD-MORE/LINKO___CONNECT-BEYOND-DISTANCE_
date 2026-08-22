@@ -50,10 +50,23 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route
     val onboarding = route in onboardingScreens
+
+    val onDeleteAccount: () -> Unit = {
+        auth.signOut()
+        nav.navigate(Screen.Welcome.route) {
+            popUpTo(Screen.Welcome.route) { inclusive = true }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
-        if (!onboarding && route != Screen.HomeEngine.route) AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
+        if (!onboarding && route != Screen.HomeEngine.route) {
+            AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
+        }
         Box(Modifier.weight(1f)) {
-            NavHost(navController = nav, startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route) {
+            NavHost(
+                navController = nav,
+                startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route,
+            ) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.SignUp.route) { inclusive = true } } } }
                 composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { runtime.start(); nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }) }
@@ -96,33 +109,64 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
                 composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
-                composable(Screen.DeleteAccount.route) { DeleteAccountScreen({ auth.signOut(); nav.navigate(Screen.Welcome.route) { popUpTo(0) } }, { nav.popBackStack() }) }
+                composable(Screen.DeleteAccount.route) { DeleteAccountScreen(onDeleteAccount, { nav.popBackStack() }) }
             }
         }
         if (!onboarding) BottomNav(route, nav)
     }
 }
 
-@Composable private fun AppBar(title: String, onBack: () -> Unit) {
+@Composable
+private fun AppBar(title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(modifier = Modifier.size(44.dp).clickable { onBack() }, contentAlignment = Alignment.Center) { Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }
+        Box(modifier = Modifier.size(44.dp).clickable { onBack() }, contentAlignment = Alignment.Center) {
+            Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono)
+        }
         Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
     }
 }
 
-private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "create_account" to "Create Account", "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Key Revoked", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
+private val titles = mapOf(
+    "sign_in" to "Sign In", "sign_up" to "Create Account", "create_account" to "Create Account",
+    "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device",
+    "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends",
+    "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request",
+    "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request",
+    "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting",
+    "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected",
+    "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session",
+    "session_history" to "Session History", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize",
+    "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage",
+    "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch",
+    "session_expired" to "Session Expired", "key_revoked" to "Key Revoked", "device_identity" to "Device Identity",
+    "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account"
+)
+
 private fun appBarTitle(route: String) = titles[route]
 private data class NavItem(val label: String, val tab: String, val route: String, val icon: String)
-private val items = listOf(NavItem("HOME","HOME",Screen.HomeEngine.route,"⌂"),NavItem("FRIENDS","FRIENDS",Screen.Friends.route,"◎"),NavItem("HISTORY","HISTORY",Screen.SessionHistory.route,"◷"),NavItem("SETTINGS","SETTINGS",Screen.Settings.route,"⚙"))
+private val items = listOf(
+    NavItem("HOME", "HOME", Screen.HomeEngine.route, "⌂"),
+    NavItem("FRIENDS", "FRIENDS", Screen.Friends.route, "◎"),
+    NavItem("HISTORY", "HISTORY", Screen.SessionHistory.route, "◷"),
+    NavItem("SETTINGS", "SETTINGS", Screen.Settings.route, "⚙")
+)
 
-@Composable private fun BottomNav(route: String, nav: NavController) {
+@Composable
+private fun BottomNav(route: String, nav: NavController) {
     val active = activeNavTab(route)
     Row(Modifier.fillMaxWidth().background(Surface).border(1.dp, Border)) {
         items.forEach { item ->
             val selected = active == item.tab
-            Column(Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(40.dp,28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha=.12f) else Color.Transparent), contentAlignment = Alignment.Center) { Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp) }
-                Spacer(Modifier.height(4.dp)); Text(item.label, color = if (selected) Blue else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            Column(
+                Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier.size(40.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha = .12f) else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) { Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp) }
+                Spacer(Modifier.height(4.dp))
+                Text(item.label, color = if (selected) Blue else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             }
         }
     }
