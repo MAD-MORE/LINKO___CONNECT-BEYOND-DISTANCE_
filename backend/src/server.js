@@ -34,6 +34,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { service: 'linko-signaling', status: 'ok', persistence: Boolean(store), realtime: true });
     }
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+
     const parts = url.pathname.split('/').filter(Boolean);
 
     if (req.method === 'POST' && url.pathname === '/v1/connections/request') {
@@ -41,6 +42,10 @@ const server = http.createServer(async (req, res) => {
       if (!body.receiverId || !body.providerId) return json(res, 400, { error: 'receiverId and providerId are required' });
       const expiresAt = new Date(Date.now() + TTL_MS).toISOString();
       return json(res, 201, await requireStore().createRequest({ receiverId: body.receiverId, providerId: body.providerId, expiresAt }));
+    }
+
+    if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'providers' && parts[2] === 'requests' && parts[3] === 'pending' && parts[2]) {
+      return json(res, 200, { items: await requireStore().listPendingRequests(parts[2]) });
     }
 
     if (parts[0] === 'v1' && parts[1] === 'connections' && parts[2]) {
@@ -69,6 +74,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { closed: true });
       }
     }
+
     return json(res, 404, { error: 'not found' });
   } catch (error) {
     console.error(error);
