@@ -43,30 +43,32 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         LinkoInput("EMAIL", email, { email = it }, "you@example.com", "Used for account verification")
         Spacer(Modifier.height(12.dp))
-        LinkoInput("DISPLAY NAME", displayName, { displayName = it }, "Your display name", "Visible to trusted friends")
+        LinkoInput("DISPLAY NAME", displayName, { displayName = it }, "Your display name", "2–40 characters")
         Spacer(Modifier.height(12.dp))
-        SecretField("PASSWORD", password, { password = it }, "At least 8 characters")
+        SecretField("PASSWORD", password, { password = it }, "8–72 chars, upper/lowercase + number")
         Spacer(Modifier.height(12.dp))
         SecretField("CONFIRM PASSWORD", confirm, { confirm = it }, "Repeat your password")
         message?.let { Spacer(Modifier.height(10.dp)); LinkoCard { Text(it, color = if (it == "Account created") Green else Yellow, fontSize = 11.sp, fontFamily = JetBrainsMono) } }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(12.dp))
         PrimaryButton(if (busy) "CREATING…" else "CREATE ACCOUNT", {
             if (busy) return@PrimaryButton
+            val normalizedEmail = email.trim().lowercase()
             when {
-                !email.contains('@') -> message = "Enter a valid email address."
+                !EMAIL_REGEX.matches(normalizedEmail) -> message = "Enter a valid email address."
+                displayName.trim().length !in 2..40 -> message = "Display name must be 2–40 characters."
                 password.length < 8 -> message = "Password must be at least 8 characters."
+                password.length > 72 -> message = "Password must be 72 characters or fewer."
+                !password.any(Char::isUpperCase) -> message = "Password needs at least one uppercase letter."
+                !password.any(Char::isLowerCase) -> message = "Password needs at least one lowercase letter."
+                !password.any(Char::isDigit) -> message = "Password needs at least one number."
                 password != confirm -> message = "Passwords do not match."
                 else -> {
                     busy = true
                     message = null
                     scope.launch {
-                        val result = withContext(Dispatchers.IO) { auth.signUp(email, password, displayName) }
+                        val result = withContext(Dispatchers.IO) { auth.signUp(normalizedEmail, password, displayName.trim()) }
                         busy = false
-                        message = when {
-                            result.success -> "Account created"
-                            result.message == "user_already_exists" -> "Account already exists. Sign in instead."
-                            else -> result.message.replace('_', ' ')
-                        }
+                        message = friendlyAuthError(result)
                         if (result.success) onRegistered()
                     }
                 }
@@ -92,8 +94,16 @@ private fun SecretField(label: String, value: String, onValueChange: (String) ->
     }
 }
 
-private fun friendlyAuthError(result: AuthResult): String = when (result.message) {
-    "valid_email_required" -> "Enter a valid email address."
-    "password_min_8_chars" -> "Password must be at least 8 characters."
-    else -> result.message.replace('_', ' ')
+private fun friendlyAuthError(result: AuthResult): String {
+    val raw = result.message.lowercase()
+    return when {
+        result.success -> "Account created"
+        raw.contains("already registered") || raw.contains("already exists") || raw.contains("user already") -> "An account with this email already exists. Sign in instead."
+        raw.contains("weak") -> "Password is too weak. Use upper/lowercase letters and a number."
+        raw.contains("email") && raw.contains("invalid") -> "Enter a valid email address."
+        result.message == "too_many_requests" -> "Too many attempts. Please wait and try again."
+        else -> result.message.replace('_', ' ')
+    }
 }
+
+private val EMAIL_REGEX = Regex("^[A-Za-z0-9.!#${'$'}%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+${'$'}")
