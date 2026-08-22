@@ -7,6 +7,7 @@ import com.linkshare.app.model.AppMode
 import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.Friend
+import com.linkshare.app.model.PrototypeScreen
 import com.linkshare.app.model.UsageStats
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -30,15 +31,34 @@ class LinkShareViewModel : ViewModel() {
     private var usageJob: Job? = null
 
     fun setMode(mode: AppMode) {
-        _uiState.update { it.copy(mode = mode, eventMessage = null) }
+        _uiState.update {
+            it.copy(
+                mode = mode,
+                screen = PrototypeScreen.HomeEngine,
+                eventMessage = null
+            )
+        }
+    }
+
+    fun openFriends() {
+        _uiState.update { it.copy(screen = PrototypeScreen.Friends, eventMessage = null) }
+    }
+
+    fun openSettings() {
+        _uiState.update { it.copy(screen = PrototypeScreen.Settings, eventMessage = null) }
+    }
+
+    fun openHistory() {
+        _uiState.update { it.copy(screen = PrototypeScreen.SessionHistory, eventMessage = null) }
     }
 
     fun toggleHostSharing() {
         val next = !_uiState.value.hostSharingEnabled
         _uiState.update {
             it.copy(
+                screen = if (next) PrototypeScreen.ProviderSharingActive else PrototypeScreen.HomeEngine,
                 hostSharingEnabled = next,
-                usageStats = if (next) UsageStats(connectedClients = 1) else UsageStats(),
+                usageStats = if (next) UsageStats(connectedClients = 0) else UsageStats(),
                 eventMessage = if (next) "Your data is available to approved friends." else "Sharing stopped."
             )
         }
@@ -48,6 +68,7 @@ class LinkShareViewModel : ViewModel() {
     fun approveIncomingRequest() {
         _uiState.update {
             it.copy(
+                screen = PrototypeScreen.ProviderLiveUsage,
                 incomingRequest = null,
                 hostSharingEnabled = true,
                 usageStats = it.usageStats.copy(connectedClients = 1),
@@ -60,6 +81,7 @@ class LinkShareViewModel : ViewModel() {
     fun denyIncomingRequest() {
         _uiState.update {
             it.copy(
+                screen = PrototypeScreen.ProviderIncoming,
                 incomingRequest = null,
                 eventMessage = "Request denied. Nothing was shared."
             )
@@ -70,6 +92,7 @@ class LinkShareViewModel : ViewModel() {
         if (!friend.isSharing) {
             _uiState.update {
                 it.copy(
+                    screen = PrototypeScreen.RxRelayFallback,
                     connectionPhase = ConnectionPhase.Failed,
                     activeFriend = friend,
                     eventMessage = "${friend.name} is not sharing right now."
@@ -82,6 +105,7 @@ class LinkShareViewModel : ViewModel() {
             stopUsageTicker()
             _uiState.update {
                 it.copy(
+                    screen = PrototypeScreen.RxRequest,
                     activeFriend = friend,
                     connectionPhase = ConnectionPhase.Requesting,
                     retryAttempt = 0,
@@ -93,6 +117,7 @@ class LinkShareViewModel : ViewModel() {
             if (!accepted) {
                 _uiState.update {
                     it.copy(
+                        screen = PrototypeScreen.SessionExpired,
                         connectionPhase = ConnectionPhase.Failed,
                         eventMessage = "${friend.name} did not approve this request."
                     )
@@ -102,25 +127,33 @@ class LinkShareViewModel : ViewModel() {
 
             _uiState.update {
                 it.copy(
+                    screen = PrototypeScreen.RxApproved,
                     connectionPhase = ConnectionPhase.Handshaking,
                     eventMessage = "Building an encrypted path..."
                 )
             }
 
+            delay(250)
+            _uiState.update { it.copy(screen = PrototypeScreen.RxConnecting) }
+
             val handshakeOk = repository.performWireGuardStyleHandshake()
             if (!handshakeOk) {
                 _uiState.update {
                     it.copy(
+                        screen = PrototypeScreen.RxRelayFallback,
                         connectionPhase = ConnectionPhase.Retrying,
                         retryAttempt = 1,
-                        eventMessage = "Retrying on weak connection..."
+                        eventMessage = "Direct path unavailable. Trying relay fallback..."
                     )
                 }
                 repository.retryHandshakeOnWeakSignal()
+            } else {
+                _uiState.update { it.copy(screen = PrototypeScreen.RxDirectPath) }
             }
 
             _uiState.update {
                 it.copy(
+                    screen = PrototypeScreen.Connected,
                     connectionPhase = ConnectionPhase.Connected,
                     usageStats = UsageStats(connectedClients = 1),
                     eventMessage = "Connected through ${friend.name}."
@@ -134,6 +167,7 @@ class LinkShareViewModel : ViewModel() {
         stopUsageTicker()
         _uiState.update {
             it.copy(
+                screen = PrototypeScreen.HomeEngine,
                 connectionPhase = ConnectionPhase.Idle,
                 activeFriend = null,
                 retryAttempt = 0,
@@ -146,10 +180,19 @@ class LinkShareViewModel : ViewModel() {
     fun onVpnPermissionResult(granted: Boolean) {
         _uiState.update {
             it.copy(
+                screen = if (granted) PrototypeScreen.HomeEngine else PrototypeScreen.Permissions,
                 hasVpnPermission = granted,
-                eventMessage = if (granted) "VPN permission granted. LinkShare can protect the tunnel." else "VPN permission is required before connecting."
+                eventMessage = if (granted) "VPN permission granted. LINKO can protect the tunnel." else "VPN permission is required before connecting."
             )
         }
+    }
+
+    fun openUsage() {
+        _uiState.update { it.copy(screen = PrototypeScreen.Usage) }
+    }
+
+    fun openNetworkQuality() {
+        _uiState.update { it.copy(screen = PrototypeScreen.NetworkQuality) }
     }
 
     private fun startUsageTicker(hostMode: Boolean) {
