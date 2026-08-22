@@ -42,8 +42,9 @@ jobs:
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f gradle.properties
-      - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+          echo "Building commit: $(git -C .. rev-parse HEAD)"
+      - name: Build debug APK (clean, no build cache)
+        run: gradle clean assembleDebug --stacktrace --no-build-cache
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
