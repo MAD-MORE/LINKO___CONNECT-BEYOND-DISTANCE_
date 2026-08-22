@@ -66,6 +66,16 @@ export class Store {
     return rows[0] || null;
   }
 
+  async setSessionPublicKey(id, role, publicKey) {
+    const column = role === 'receiver' ? 'receiver_public_key' : role === 'provider' ? 'provider_public_key' : null;
+    if (!column || !publicKey) throw new Error('invalid key role');
+    const { rows } = await this.pool.query(
+      `update public.linko_sessions set ${column}=$2 where id=$1 returning *`,
+      [id, publicKey]
+    );
+    return rows[0] || null;
+  }
+
   async closeSession(id) {
     await this.pool.query(
       `update public.linko_sessions set status='closed', closed_at=now() where id=$1`,
