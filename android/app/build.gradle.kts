@@ -22,14 +22,12 @@ android {
     }
 
     buildTypes {
+        val configuredControlPlane = providers.gradleProperty("LINKO_CONTROL_PLANE_URL").orElse("").get()
         getByName("debug") {
-            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"https://invalid.linko.invalid\"")
+            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${configuredControlPlane.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
         getByName("release") {
-            val controlPlaneUrl = providers.gradleProperty("LINKO_CONTROL_PLANE_URL")
-                .orElse("")
-                .get()
-            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${controlPlaneUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${configuredControlPlane.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
     }
 
