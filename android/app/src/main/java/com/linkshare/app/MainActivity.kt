@@ -40,7 +40,6 @@ fun LinkoApp() {
     val route = entry?.destination?.route ?: Screen.Welcome.route
     val onboarding = route in onboardingScreens
     Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
-        StatusBar()
         if (!onboarding && route != Screen.HomeEngine.route) AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
         Box(Modifier.weight(1f)) {
             NavHost(navController = nav, startDestination = Screen.Welcome.route) {
@@ -88,21 +87,8 @@ fun LinkoApp() {
             }
         }
         if (!onboarding) BottomNav(route, nav)
-        Box(modifier = Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
-            Box(Modifier.width(100.dp).height(4.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = .2f)))
-        }
     }
 }
-
-@Composable private fun StatusBar() {
-    var time by remember { mutableStateOf(now()) }
-    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(10_000); time = now() } }
-    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 18.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-        Text(time, color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) { listOf(8,12,16,20).forEachIndexed { i,h -> Box(Modifier.width(3.dp).height(h.dp).clip(RoundedCornerShape(1.dp)).background(if (i < 3) TextPrimary else TextMuted)) } }
-    }
-}
-private fun now() = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
 
 @Composable private fun AppBar(title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
