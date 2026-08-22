@@ -11,8 +11,9 @@ import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 
 /**
- * Bridges one authorized LINKO provider session to a userspace full-IP engine.
- * The engine owns TCP/UDP/IPv4/IPv6 state; LINKO owns authenticated transport.
+ * Bridges one authorized LINKO provider session to a full-IP userspace engine.
+ * A loopback SOCKS5 server is created and destroyed with the session so the
+ * tun2socks engine always has a concrete provider-network egress path.
  */
 class ProviderFullIpSession(
     private val socket: DatagramSocket,
@@ -20,8 +21,6 @@ class ProviderFullIpSession(
     private val sessionId: String,
     sessionKey: ByteArray,
     private val tun: ParcelFileDescriptor,
-    private val socksHost: String,
-    private val socksPort: Int,
     private val scope: CoroutineScope,
     private val engine: FullIpTunnelEngine = HevFullIpTunnelEngine()
 ) : AutoCloseable {
@@ -32,12 +31,19 @@ class ProviderFullIpSession(
         role = EncryptedDatagramTunnel.Role.PROVIDER,
         sessionKey = sessionKey
     )
+    private val socks = ProviderSocks5Server()
     private var inboundJob: Job? = null
     private var outboundJob: Job? = null
 
     fun start() {
         check(inboundJob == null) { "provider_full_ip_session_already_started" }
-        engine.start(tun.fileDescriptor, socksHost, socksPort)
+        val socksPort = socks.start()
+        try {
+            engine.start(tun.fileDescriptor, LOOPBACK_HOST, socksPort)
+        } catch (error: Throwable) {
+            socks.close()
+            throw error
+        }
 
         inboundJob = scope.launch(Dispatchers.IO) {
             ParcelFileDescriptor.AutoCloseOutputStream(tun.fileDescriptor).use { output ->
@@ -49,7 +55,7 @@ class ProviderFullIpSession(
                             output.flush()
                         }
                     } catch (_: SocketTimeoutException) {
-                        // Continue polling without creating unbounded work.
+                        // Continue polling with bounded work.
                     } catch (_: Exception) {
                         break
                     }
@@ -74,12 +80,14 @@ class ProviderFullIpSession(
         outboundJob?.cancel()
         inboundJob = null
         outboundJob = null
-        engine.close()
+        runCatching { engine.close() }
+        socks.close()
         tunnel.close()
         tun.close()
     }
 
     companion object {
+        private const val LOOPBACK_HOST = "127.0.0.1"
         private const val MAX_IP_PACKET = 64 * 1024
     }
 }
