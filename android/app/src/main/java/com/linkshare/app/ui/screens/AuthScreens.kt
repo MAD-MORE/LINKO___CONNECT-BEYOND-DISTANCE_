@@ -52,16 +52,24 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
         Spacer(Modifier.height(8.dp))
         PrimaryButton(if (busy) "SIGNING IN…" else "SIGN IN", onClick = {
             if (busy) return@PrimaryButton
-            busy = true
-            message = null
-            scope.launch {
-                val result = withContext(Dispatchers.IO) { auth.signIn(email, password) }
-                busy = false
-                if (result.success) {
-                    message = "Authenticated"
-                    onSignedIn()
-                } else {
-                    message = friendlyAuthError(result)
+            val normalizedEmail = email.trim().lowercase()
+            when {
+                !EMAIL_REGEX.matches(normalizedEmail) -> message = "Enter a valid email address."
+                password.isBlank() -> message = "Enter your password."
+                password.length > 72 -> message = "Password is too long."
+                else -> {
+                    busy = true
+                    message = null
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { auth.signIn(normalizedEmail, password) }
+                        busy = false
+                        if (result.success) {
+                            message = "Authenticated"
+                            onSignedIn()
+                        } else {
+                            message = friendlyAuthError(result)
+                        }
+                    }
                 }
             }
         })
@@ -71,14 +79,17 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
     }
 }
 
-private fun friendlyAuthError(result: AuthResult): String = when (result.message) {
-    "valid_email_required" -> "Enter a valid email address."
-    "password_min_8_chars" -> "Password must be at least 8 characters."
-    "password_max_72_chars" -> "Password is too long. Use 72 characters or fewer."
-    "session_missing" -> "Your session has expired. Please sign in again."
-    "invalid_credentials" -> "Incorrect email or password."
-    "too_many_requests" -> "Too many attempts. Please wait and try again."
-    else -> result.message.replace('_', ' ')
+private fun friendlyAuthError(result: AuthResult): String {
+    val raw = result.message.lowercase()
+    return when {
+        raw.contains("invalid login") || raw.contains("invalid credentials") -> "Incorrect email or password."
+        result.message == "valid_email_required" -> "Enter a valid email address."
+        result.message == "password_min_8_chars" -> "Password must be at least 8 characters."
+        result.message == "password_max_72_chars" -> "Password is too long."
+        result.message == "session_missing" -> "Your session has expired. Please sign in again."
+        result.message == "too_many_requests" -> "Too many attempts. Please wait and try again."
+        else -> result.message.replace('_', ' ')
+    }
 }
 
 @Composable
@@ -115,3 +126,5 @@ private fun PasswordInput(label: String, value: String, onValueChange: (String) 
         )
     }
 }
+
+private val EMAIL_REGEX = Regex("^[A-Za-z0-9.!#${'$'}%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+${'$'}")
