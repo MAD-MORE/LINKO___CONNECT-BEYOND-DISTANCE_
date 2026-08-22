@@ -72,3 +72,5 @@ jobs:
           path: android/app/build/reports/tests/**
           if-no-files-found: ignore
           retention-days: 14
+
+      # Triggered by this workflow update so GitHub Actions starts immediately.
