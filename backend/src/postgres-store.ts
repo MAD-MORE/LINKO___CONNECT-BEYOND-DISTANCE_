@@ -4,14 +4,12 @@ import type { Device, Session, SessionState } from "./types.js";
 export class PostgresControlPlaneStore {
   private readonly pool: Pool;
 
-  constructor(connectionString = process.env.DATABASE_URL) {
-    if (!connectionString) throw new Error("DATABASE_URL_required");
+  constructor(connectionString = process.env.LINKO_DATABASE_URL ?? process.env.DATABASE_URL) {
+    if (!connectionString) throw new Error("LINKO_DATABASE_URL_required");
     this.pool = new Pool({ connectionString, max: 10, ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false } });
   }
 
-  async health(): Promise<void> {
-    await this.pool.query("select 1");
-  }
+  async health(): Promise<void> { await this.pool.query("select 1"); }
 
   async registerDevice(input: Omit<Device, "id" | "lastSeenAt">): Promise<Device> {
     const result = await this.pool.query(
