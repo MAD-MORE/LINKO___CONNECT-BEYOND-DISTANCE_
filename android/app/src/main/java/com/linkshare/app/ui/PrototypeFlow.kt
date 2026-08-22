@@ -15,7 +15,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -26,10 +25,7 @@ import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.PrototypeScreen
 import com.linkshare.app.viewmodel.LinkShareViewModel
 
-/**
- * Production state router for the frozen 41-screen prototype contract.
- * Visual components are intentionally kept separate from connection logic.
- */
+/** Production state router for the frozen 41-screen prototype contract. */
 @Composable
 fun PrototypeFlow(
     state: ConnectionUiState,
@@ -109,7 +105,6 @@ fun PrototypeFlow(
             Text("LINKO", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BFB5))
             Text(title, fontSize = 32.sp, fontWeight = FontWeight.Black, color = Color(0xFF101417))
             Text(detail, fontSize = 16.sp, lineHeight = 23.sp, color = Color(0xFF101417).copy(alpha = .72f))
-
             Column(
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF101417), RoundedCornerShape(28.dp)).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -118,7 +113,6 @@ fun PrototypeFlow(
                 Text(screen.name, color = Color(0xFF66BFB5), fontSize = 20.sp, fontWeight = FontWeight.Black)
                 Text("Connection: ${state.connectionPhase.name}", color = Color(0xFFF7F2E8).copy(alpha = .7f))
             }
-
             Spacer(Modifier.weight(1f))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -129,7 +123,9 @@ fun PrototypeFlow(
                 Button(
                     onClick = {
                         when (screen) {
-                            PrototypeScreen.RxRequest, PrototypeScreen.RxWaiting -> viewModel.connectToFriend(state.activeFriend ?: return@Button)
+                            PrototypeScreen.RxRequest, PrototypeScreen.RxWaiting -> {
+                                state.activeFriend?.let { viewModel.connectToFriend(it) }
+                            }
                             PrototypeScreen.Connected -> viewModel.disconnect()
                             PrototypeScreen.ProviderSharingSetup, PrototypeScreen.ProviderSharingActive -> viewModel.toggleHostSharing()
                             PrototypeScreen.IncomingRequest, PrototypeScreen.ProviderIncoming, PrototypeScreen.ProviderAuthorization -> viewModel.approveIncomingRequest()
