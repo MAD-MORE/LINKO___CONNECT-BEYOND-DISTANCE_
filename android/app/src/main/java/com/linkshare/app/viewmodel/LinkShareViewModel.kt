@@ -30,6 +30,11 @@ class LinkShareViewModel : ViewModel() {
 
     private var usageJob: Job? = null
 
+    /** Navigate to a state defined by the frozen prototype contract. */
+    fun navigateTo(screen: PrototypeScreen) {
+        _uiState.update { it.copy(screen = screen, eventMessage = null) }
+    }
+
     fun setMode(mode: AppMode) {
         _uiState.update {
             it.copy(
@@ -41,15 +46,15 @@ class LinkShareViewModel : ViewModel() {
     }
 
     fun openFriends() {
-        _uiState.update { it.copy(screen = PrototypeScreen.Friends, eventMessage = null) }
+        navigateTo(PrototypeScreen.Friends)
     }
 
     fun openSettings() {
-        _uiState.update { it.copy(screen = PrototypeScreen.Settings, eventMessage = null) }
+        navigateTo(PrototypeScreen.Settings)
     }
 
     fun openHistory() {
-        _uiState.update { it.copy(screen = PrototypeScreen.SessionHistory, eventMessage = null) }
+        navigateTo(PrototypeScreen.SessionHistory)
     }
 
     fun toggleHostSharing() {
@@ -188,11 +193,11 @@ class LinkShareViewModel : ViewModel() {
     }
 
     fun openUsage() {
-        _uiState.update { it.copy(screen = PrototypeScreen.Usage) }
+        navigateTo(PrototypeScreen.Usage)
     }
 
     fun openNetworkQuality() {
-        _uiState.update { it.copy(screen = PrototypeScreen.NetworkQuality) }
+        navigateTo(PrototypeScreen.NetworkQuality)
     }
 
     private fun startUsageTicker(hostMode: Boolean) {
