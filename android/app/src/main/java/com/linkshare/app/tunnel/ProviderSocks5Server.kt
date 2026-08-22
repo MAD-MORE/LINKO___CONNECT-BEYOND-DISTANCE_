@@ -16,8 +16,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Loopback-only SOCKS5 server used by the provider-side tun2socks engine.
- * No external device can reach it. Authentication is intentionally disabled
- * because the socket is bound to 127.0.0.1 and is created per authorized LINKO session.
  * Supports CONNECT and UDP ASSOCIATE; BIND is rejected.
  */
 class ProviderSocks5Server : Closeable {
@@ -34,9 +32,10 @@ class ProviderSocks5Server : Closeable {
         workers.execute {
             while (running.get()) {
                 try {
-                    workers.execute { handleClient(tcpServer!!.accept()) }
+                    val accepted = tcpServer!!.accept()
+                    workers.execute { handleClient(accepted) }
                 } catch (_: Exception) {
-                    if (running.get()) { /* loop and allow transient accept errors */ }
+                    // Closing the server socket is the normal termination path.
                 }
             }
         }
@@ -50,11 +49,12 @@ class ProviderSocks5Server : Closeable {
             val output = socket.getOutputStream()
             try {
                 socksHandshake(input, output)
-                when (input.read()) {
+                val command = readRequestCommand(input)
+                when (command) {
                     CMD_CONNECT -> handleConnect(input, output, socket)
-                    CMD_UDP_ASSOCIATE -> handleUdpAssociate(input, output, socket)
+                    CMD_UDP_ASSOCIATE -> handleUdpAssociate(output, socket)
                     CMD_BIND -> reply(output, REP_COMMAND_NOT_SUPPORTED)
-                    else -> reply(output, REP_GENERAL_FAILURE)
+                    else -> reply(output, REP_COMMAND_NOT_SUPPORTED)
                 }
             } catch (_: Exception) {
                 runCatching { reply(output, REP_GENERAL_FAILURE) }
@@ -73,12 +73,22 @@ class ProviderSocks5Server : Closeable {
         output.flush()
     }
 
+    private fun readRequestCommand(input: InputStream): Int {
+        require(input.read() == SOCKS_VERSION)
+        val command = input.read()
+        require(input.read() == 0)
+        return command
+    }
+
     private fun handleConnect(input: InputStream, output: OutputStream, client: Socket) {
-        val target = readTarget(input)
+        val target = readTargetAddress(input)
         val upstream = Socket()
         try {
-            upstream.connect(target, 15_000)
+            upstream.connect(target, CONNECT_TIMEOUT_MS)
             reply(output, REP_SUCCEEDED, upstream.localAddress, upstream.localPort)
+            // CONNECT becomes a long-lived byte stream; do not apply the handshake timeout.
+            client.soTimeout = 0
+            upstream.soTimeout = 0
             proxyBidirectional(client, upstream)
         } catch (_: Exception) {
             upstream.close()
@@ -86,10 +96,11 @@ class ProviderSocks5Server : Closeable {
         }
     }
 
-    private fun handleUdpAssociate(input: InputStream, output: OutputStream, client: Socket) {
+    private fun handleUdpAssociate(output: OutputStream, client: Socket) {
         val relay = DatagramSocket(0, InetAddress.getLoopbackAddress())
         udpRelay = relay
         reply(output, REP_SUCCEEDED, relay.localAddress, relay.localPort)
+        client.soTimeout = 0
 
         val clientAddress = client.inetAddress
         val clientPort = client.port
@@ -100,19 +111,16 @@ class ProviderSocks5Server : Closeable {
                 relay.receive(packet)
                 if (!packet.address.isLoopbackAddress || packet.address != clientAddress || packet.port != clientPort) continue
                 if (packet.length < UDP_HEADER_MIN) continue
-                val target = decodeUdpRequest(packet)
-                if (target == null) continue
-                val responseSocket = DatagramSocket()
-                try {
-                    responseSocket.soTimeout = 5_000
+                val target = decodeUdpRequest(packet) ?: continue
+
+                DatagramSocket().use { responseSocket ->
+                    responseSocket.soTimeout = UDP_TIMEOUT_MS
                     responseSocket.send(DatagramPacket(target.payload, target.payload.size, target.address, target.port))
                     val responseBuffer = ByteArray(MAX_UDP_PACKET)
                     val response = DatagramPacket(responseBuffer, responseBuffer.size)
                     responseSocket.receive(response)
                     val encoded = encodeUdpResponse(response.address, response.port, response.data.copyOf(response.length))
                     relay.send(DatagramPacket(encoded, encoded.size, clientAddress, clientPort))
-                } finally {
-                    responseSocket.close()
                 }
             }
         } finally {
@@ -121,12 +129,7 @@ class ProviderSocks5Server : Closeable {
         }
     }
 
-    private fun readTarget(input: InputStream): InetSocketAddress {
-        require(input.read() == SOCKS_VERSION)
-        require(input.read() == 0)
-        val command = input.read()
-        require(command == CMD_CONNECT || command == CMD_BIND || command == CMD_UDP_ASSOCIATE)
-        require(input.read() == 0)
+    private fun readTargetAddress(input: InputStream): InetSocketAddress {
         val atyp = input.read()
         val host = when (atyp) {
             ATYP_IPV4 -> InetAddress.getByAddress(readExact(input, 4)).hostAddress
@@ -138,7 +141,11 @@ class ProviderSocks5Server : Closeable {
             ATYP_IPV6 -> InetAddress.getByAddress(readExact(input, 16)).hostAddress
             else -> throw IllegalArgumentException("unsupported_socks5_address_type")
         }
-        val port = ((input.read() and 0xff) shl 8) or (input.read() and 0xff)
+        val high = input.read()
+        val low = input.read()
+        require(high >= 0 && low >= 0)
+        val port = ((high and 0xff) shl 8) or (low and 0xff)
+        require(port in 1..65535)
         return InetSocketAddress(host, port)
     }
 
@@ -147,7 +154,7 @@ class ProviderSocks5Server : Closeable {
         var offset = packet.offset
         val end = packet.offset + packet.length
         if (end - offset < 4) return null
-        offset += 2 // RSV
+        offset += 2
         val frag = bytes[offset++].toInt() and 0xff
         if (frag != 0) return null
         val atyp = bytes[offset++].toInt() and 0xff
@@ -159,7 +166,9 @@ class ProviderSocks5Server : Closeable {
             else -> return null
         }
         if (end - offset < 2) return null
-        val port = ((bytes[offset++].toInt() and 0xff) shl 8) or (bytes[offset++].toInt() and 0xff)
+        val high = bytes[offset++].toInt() and 0xff
+        val low = bytes[offset++].toInt() and 0xff
+        val port = (high shl 8) or low
         if (port !in 1..65535 || offset > end) return null
         return UdpTarget(address, port, bytes.copyOfRange(offset, end))
     }
@@ -243,5 +252,7 @@ class ProviderSocks5Server : Closeable {
         private const val REP_COMMAND_NOT_SUPPORTED = 7
         private const val UDP_HEADER_MIN = 4
         private const val MAX_UDP_PACKET = 65_507
+        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val UDP_TIMEOUT_MS = 5_000
     }
 }
