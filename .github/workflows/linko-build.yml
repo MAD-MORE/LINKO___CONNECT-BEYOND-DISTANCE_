@@ -48,6 +48,7 @@ jobs:
           test -f gradle.properties
           echo "Building commit: $(git -C .. rev-parse HEAD)"
 
+      # Keep this normalization deterministic while the prototype UI remains the source of truth.
       - name: Normalize Compose imports before compilation
         run: |
           set -euo pipefail
