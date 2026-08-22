@@ -18,7 +18,13 @@ class LinkoDeviceIdentity {
 
     fun deviceFingerprint(): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(getOrCreateKeyPair().public.encoded)
-        return digest.joinToString("") { "%02x".format(it) }.take(24)
+        return digest.joinToString("") { "%02x".format(it) }.take(24).uppercase()
+    }
+
+    /** Permanently replaces this installation's signing key and therefore its device ID. */
+    fun rotate(): String {
+        if (store.containsAlias(alias)) store.deleteEntry(alias)
+        return deviceFingerprint()
     }
 
     private fun getOrCreateKeyPair(): KeyPair {
@@ -26,10 +32,8 @@ class LinkoDeviceIdentity {
         if (existing != null) return KeyPair(existing.certificate.publicKey, existing.privateKey)
         val generator = KeyPairGenerator.getInstance("EC", "AndroidKeyStore")
         generator.initialize(
-            KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-            ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                 .setDigests(KeyProperties.DIGEST_SHA256)
                 .build(),
         )
