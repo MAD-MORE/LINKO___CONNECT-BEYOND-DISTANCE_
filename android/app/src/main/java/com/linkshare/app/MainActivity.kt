@@ -20,21 +20,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.*
+import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.screens.*
 import com.linkshare.app.ui.theme.*
-import java.text.SimpleDateFormat
-import java.util.*
 
 class MainActivity : ComponentActivity() {
     private lateinit var linkoRuntime: LinkoRuntime
+    private lateinit var linkoAuth: LinkoAuth
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        linkoAuth = LinkoAuth(this)
         linkoRuntime = LinkoRuntime()
         linkoRuntime.start()
-        setContent { LinkoTheme { LinkoApp() } }
+        setContent { LinkoTheme { LinkoApp(linkoAuth) } }
     }
 
     override fun onDestroy() {
@@ -44,18 +45,37 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun LinkoApp() {
+fun LinkoApp(auth: LinkoAuth) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
-    val route = entry?.destination?.route ?: Screen.Welcome.route
+    val route = entry?.destination?.route ?: if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route
     val onboarding = route in onboardingScreens
     Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
         if (!onboarding && route != Screen.HomeEngine.route) AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
         Box(Modifier.weight(1f)) {
-            NavHost(navController = nav, startDestination = Screen.Welcome.route) {
-                composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.CreateAccount.route) }, { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }) }
-                composable(Screen.CreateAccount.route) { CreateAccountScreen { nav.navigate(Screen.Verify.route) } }
-                composable(Screen.Verify.route) { VerifyScreen { nav.navigate(Screen.Profile.route) } }
+            NavHost(navController = nav, startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route) {
+                composable(Screen.Welcome.route) {
+                    WelcomeScreen(
+                        onCreateAccount = { nav.navigate(Screen.SignUp.route) },
+                        onSignIn = { nav.navigate(Screen.SignIn.route) },
+                    )
+                }
+                composable(Screen.SignUp.route) {
+                    LinkoSignUpScreen(auth) {
+                        nav.navigate(Screen.SignIn.route) {
+                            popUpTo(Screen.SignUp.route) { inclusive = true }
+                        }
+                    }
+                }
+                composable(Screen.SignIn.route) {
+                    SignInScreen(auth, onSignedIn = {
+                        nav.navigate(Screen.HomeEngine.route) {
+                            popUpTo(Screen.Welcome.route) { inclusive = true }
+                        }
+                    }, onCreateAccount = { nav.navigate(Screen.SignUp.route) })
+                }
+                composable(Screen.CreateAccount.route) { CreateAccountScreen { _, _, _ -> nav.navigate(Screen.Verify.route) } }
+                composable(Screen.Verify.route) { VerifyScreen { nav.navigate(Screen.SignIn.route) } }
                 composable(Screen.Profile.route) { ProfileScreen { nav.navigate(Screen.RegisterDevice.route) } }
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
@@ -73,7 +93,7 @@ fun LinkoApp() {
                 composable(Screen.RxConnecting.route) { RxConnectingScreen { nav.navigate(Screen.RxDirectPath.route) } }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
-                composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } } }, { nav.navigate(Screen.NetworkQuality.route) }) }
+                composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } }, { nav.navigate(Screen.NetworkQuality.route) }) }
                 composable(Screen.NetworkQuality.route) { NetworkQualityScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Usage.route) { UsageScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
@@ -93,7 +113,7 @@ fun LinkoApp() {
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
                 composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
-                composable(Screen.DeleteAccount.route) { DeleteAccountScreen({ nav.navigate(Screen.Welcome.route) { popUpTo(0) } }, { nav.popBackStack() }) }
+                composable(Screen.DeleteAccount.route) { DeleteAccountScreen({ auth.signOut(); nav.navigate(Screen.Welcome.route) { popUpTo(0) } }, { nav.popBackStack() }) }
             }
         }
         if (!onboarding) BottomNav(route, nav)
@@ -110,7 +130,7 @@ fun LinkoApp() {
 }
 
 private val titles = mapOf(
-    "create_account" to "Create Account", "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Key Revoked", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account"
+    "sign_in" to "Sign In", "sign_up" to "Create Account", "create_account" to "Create Account", "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Key Revoked", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account"
 )
 private fun appBarTitle(route: String) = titles[route]
 
