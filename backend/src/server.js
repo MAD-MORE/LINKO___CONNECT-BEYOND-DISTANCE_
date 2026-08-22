@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import { createStore } from './db.js';
+import { attachRealtime } from './realtime.js';
 
 const TTL_MS = 5 * 60 * 1000;
 const API_TOKEN = process.env.LINKO_API_TOKEN || '';
@@ -31,17 +31,16 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { service: 'linko-signaling', status: 'ok', persistence: Boolean(store) });
+      return json(res, 200, { service: 'linko-signaling', status: 'ok', persistence: Boolean(store), realtime: true });
     }
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
-
     const parts = url.pathname.split('/').filter(Boolean);
+
     if (req.method === 'POST' && url.pathname === '/v1/connections/request') {
       const body = await readBody(req);
       if (!body.receiverId || !body.providerId) return json(res, 400, { error: 'receiverId and providerId are required' });
       const expiresAt = new Date(Date.now() + TTL_MS).toISOString();
-      const request = await requireStore().createRequest({ receiverId: body.receiverId, providerId: body.providerId, expiresAt });
-      return json(res, 201, request);
+      return json(res, 201, await requireStore().createRequest({ receiverId: body.receiverId, providerId: body.providerId, expiresAt }));
     }
 
     if (parts[0] === 'v1' && parts[1] === 'connections' && parts[2]) {
@@ -49,13 +48,11 @@ const server = http.createServer(async (req, res) => {
       if (!request || new Date(request.expires_at).getTime() <= Date.now()) return json(res, 404, { error: 'request not found or expired' });
       if (req.method === 'GET' && parts.length === 3) return json(res, 200, request);
       if (req.method === 'POST' && (parts[3] === 'approve' || parts[3] === 'deny')) {
-        const updated = await requireStore().setRequestStatus(parts[2], parts[3] === 'approve' ? 'approved' : 'denied');
-        return json(res, 200, updated);
+        return json(res, 200, await requireStore().setRequestStatus(parts[2], parts[3] === 'approve' ? 'approved' : 'denied'));
       }
       if (req.method === 'POST' && parts[3] === 'session') {
         if (request.status !== 'approved') return json(res, 409, { error: 'request is not approved' });
-        const session = await requireStore().createSession(request);
-        return json(res, 201, session);
+        return json(res, 201, await requireStore().createSession(request));
       }
     }
 
@@ -64,7 +61,7 @@ const server = http.createServer(async (req, res) => {
       if (!session || new Date(session.expires_at).getTime() <= Date.now()) return json(res, 404, { error: 'session not found or expired' });
       if (req.method === 'POST' && parts[3] === 'negotiate') {
         const body = await readBody(req);
-        if (!body.type || !body.payload) return json(res, 400, { error: 'type and payload are required' });
+        if (!['offer', 'answer', 'candidate'].includes(body.type) || typeof body.payload !== 'string' || !body.payload) return json(res, 400, { error: 'invalid negotiation envelope' });
         return json(res, 200, { accepted: true, sessionId: session.id, type: body.type, payload: body.payload });
       }
       if (req.method === 'DELETE' && parts.length === 3) {
@@ -72,7 +69,6 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { closed: true });
       }
     }
-
     return json(res, 404, { error: 'not found' });
   } catch (error) {
     console.error(error);
@@ -80,4 +76,5 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(Number(process.env.PORT || 8080), '0.0.0.0', () => console.log('LINKO signaling listening on port ' + (process.env.PORT || 8080)));
+attachRealtime(server);
+server.listen(Number(process.env.PORT || 8080), '0.0.0.0', () => console.log(`LINKO signaling listening on port ${process.env.PORT || 8080}`));
