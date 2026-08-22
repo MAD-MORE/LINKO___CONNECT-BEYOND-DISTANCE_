@@ -16,13 +16,26 @@ android {
         versionName = "0.1.0"
     }
 
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"https://invalid.linko.invalid\"")
+        }
+        getByName("release") {
+            val controlPlaneUrl = providers.gradleProperty("LINKO_CONTROL_PLANE_URL")
+                .orElse("")
+                .get()
+            buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${controlPlaneUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    buildFeatures {
-        compose = true
     }
 
     kotlinOptions {
@@ -57,7 +70,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Published Maven Central release of the embedded tun2socks engine.
     implementation("com.zaneschepke:hevtunnel:1.0.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
