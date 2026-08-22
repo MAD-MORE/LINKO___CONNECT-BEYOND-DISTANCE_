@@ -49,7 +49,7 @@ fun VerifyScreen(onVerify: () -> Unit) {
         Spacer(Modifier.height(4.dp)); Text("Confirm your identity securely", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(24.dp))
         LinkoCard {
             Text("VERIFICATION CODE", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp); Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) { repeat(6) { Box(Alignment.Center, Modifier.size(40.dp, 50.dp).clip(RoundedCornerShape(10.dp)).background(Card2).border(1.dp, Border, RoundedCornerShape(10.dp))) { Text("·", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) } } }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) { repeat(6) { Box(modifier = Modifier.size(40.dp, 50.dp).clip(RoundedCornerShape(10.dp)).background(Card2).border(1.dp, Border, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Text("·", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) } } }
             Spacer(Modifier.height(14.dp)); Text("Short-lived verification code", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
         }
         GhostButton("Resend code") {}; Spacer(Modifier.weight(1f)); PrimaryButton("VERIFY", onVerify); Spacer(Modifier.height(24.dp))
