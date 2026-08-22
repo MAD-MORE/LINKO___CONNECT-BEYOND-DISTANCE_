@@ -5,9 +5,9 @@ import java.io.FileDescriptor
 /**
  * Full IP data-plane engine boundary.
  *
- * LINKO deliberately delegates TCP/UDP/IPv4/IPv6 state-machine work to a
- * maintained userspace tun2socks implementation instead of implementing a
- * TCP/IP stack in application Kotlin code.
+ * LINKO delegates TCP/UDP/IPv4/IPv6 state-machine work to a maintained
+ * userspace tun2socks implementation instead of implementing a TCP/IP stack
+ * in application Kotlin code.
  */
 interface FullIpTunnelEngine : AutoCloseable {
     fun start(tunFd: FileDescriptor, socksHost: String, socksPort: Int)
@@ -15,11 +15,7 @@ interface FullIpTunnelEngine : AutoCloseable {
     override fun close()
 }
 
-/**
- * Adapter for the embedded HevSocks5Tunnel library.
- * Reflection keeps LINKO's packet layer independent from the native library's
- * Java package surface while still failing fast if the dependency is missing.
- */
+/** Adapter for the embedded HevSocks5Tunnel userspace engine. */
 class HevFullIpTunnelEngine : FullIpTunnelEngine {
     private var tunnel: Any? = null
 
@@ -33,8 +29,8 @@ class HevFullIpTunnelEngine : FullIpTunnelEngine {
             "com.zaneschepke.hevtunnel.HevSocks5Tunnel"
         ) ?: error("HevSocks5Tunnel library is unavailable")
         val builderClass = loadFirst(
-            "cc.hev.socks5.tunnel.TunnelConfig$Builder",
-            "com.zaneschepke.hevtunnel.TunnelConfig$Builder"
+            "cc.hev.socks5.tunnel.TunnelConfig\$Builder",
+            "com.zaneschepke.hevtunnel.TunnelConfig\$Builder"
         ) ?: error("Hev TunnelConfig builder is unavailable")
 
         val builder = builderClass.getDeclaredConstructor().newInstance()
