@@ -1,0 +1,1 @@
+Target runtime API: Android signaling client must reach backend health and signaling endpoints over HTTPS/WSS in production. Exact existing endpoints must be preserved once discovered.
