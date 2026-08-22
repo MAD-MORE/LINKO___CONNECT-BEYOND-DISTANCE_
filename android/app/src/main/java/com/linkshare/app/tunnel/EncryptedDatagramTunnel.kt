@@ -29,11 +29,11 @@ class EncryptedDatagramTunnel(
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
         val ciphertext = cipher.doFinal(plaintext)
-        val frame = ByteArray(MAGIC.size + 1 + NONCE_SIZE + ciphertext.size)
+        val frame = ByteArray(MAGIC_SIZE + 1 + NONCE_SIZE + ciphertext.size)
         MAGIC.copyInto(frame)
-        frame[MAGIC.size] = VERSION
-        nonce.copyInto(frame, MAGIC.size + 1)
-        ciphertext.copyInto(frame, MAGIC.size + 1 + NONCE_SIZE)
+        frame[MAGIC_SIZE] = VERSION
+        nonce.copyInto(frame, MAGIC_SIZE + 1)
+        ciphertext.copyInto(frame, MAGIC_SIZE + 1 + NONCE_SIZE)
         val header = sessionHeader + byteArrayOf(0, if (role == Role.RECEIVER) 0 else 1)
         val wire = header + frame
         socket.send(DatagramPacket(wire, wire.size, peer))
@@ -50,9 +50,9 @@ class EncryptedDatagramTunnel(
         if (targetRole != if (role == Role.RECEIVER) 0 else 1) return null
         val frameStart = separator + 2
         if (packet.length < frameStart + HEADER_SIZE + TAG_SIZE) return null
-        if (!buffer.copyOfRange(frameStart, frameStart + MAGIC.size).contentEquals(MAGIC)) return null
-        if (buffer[frameStart + MAGIC.size] != VERSION) return null
-        val nonceStart = frameStart + MAGIC.size + 1
+        if (!buffer.copyOfRange(frameStart, frameStart + MAGIC_SIZE).contentEquals(MAGIC)) return null
+        if (buffer[frameStart + MAGIC_SIZE] != VERSION) return null
+        val nonceStart = frameStart + MAGIC_SIZE + 1
         val nonce = buffer.copyOfRange(nonceStart, nonceStart + NONCE_SIZE)
         val cipherText = buffer.copyOfRange(nonceStart + NONCE_SIZE, packet.length)
         return try {
@@ -73,11 +73,12 @@ class EncryptedDatagramTunnel(
 
     companion object {
         private val MAGIC = byteArrayOf(0x4C, 0x4B, 0x4F, 0x31)
+        private const val MAGIC_SIZE = 4
         private const val VERSION: Byte = 1
         private const val NONCE_SIZE = 12
         private const val TAG_SIZE = 16
         private const val MAX_PAYLOAD = 16 * 1024
-        private const val HEADER_SIZE = MAGIC.size + 1 + NONCE_SIZE
+        private const val HEADER_SIZE = MAGIC_SIZE + 1 + NONCE_SIZE
         private const val MAX_FRAME = HEADER_SIZE + MAX_PAYLOAD + TAG_SIZE
     }
 }
