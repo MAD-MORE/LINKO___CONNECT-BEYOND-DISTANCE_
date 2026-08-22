@@ -11,6 +11,14 @@ import androidx.compose.ui.unit.sp
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
 
+/** Prototype trusted peers used by the UI flows until the real friends repository is wired. */
+val sampleFriends = listOf(
+    Friend("Kwame Mensah", "@kwame", "ONLINE", Green),
+    Friend("Ama Owusu", "@ama", "ONLINE", Blue),
+    Friend("Kofi Asante", "@kofi", "OFFLINE", TextMuted),
+    Friend("Yaa Boateng", "@yaa", "ONLINE", Yellow),
+)
+
 @Composable
 fun FriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
