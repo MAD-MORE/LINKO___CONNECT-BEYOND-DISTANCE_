@@ -28,6 +28,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    configurations.all {
+        resolutionStrategy {
+            force("androidx.core:core:1.16.0")
+            force("androidx.core:core-ktx:1.16.0")
+        }
+    }
 }
 
 dependencies {
@@ -35,6 +42,8 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
+    implementation("androidx.core:core:1.16.0")
+    implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.foundation:foundation")
