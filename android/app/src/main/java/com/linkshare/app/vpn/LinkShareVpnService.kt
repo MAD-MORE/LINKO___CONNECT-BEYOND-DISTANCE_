@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import com.linkshare.app.tunnel.EncryptedDatagramTunnel
+import com.linkshare.app.tunnel.IpPacketRouter
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
@@ -15,6 +16,7 @@ class LinkShareVpnService : VpnService() {
     private var transport: EncryptedDatagramTunnel? = null
     private val running = AtomicBoolean(false)
     private val executor = Executors.newFixedThreadPool(2)
+    private val router = IpPacketRouter()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val host = intent?.getStringExtra(EXTRA_PEER_HOST)
@@ -30,8 +32,10 @@ class LinkShareVpnService : VpnService() {
         stopTunnel()
         tunnelInterface = Builder()
             .setSession("LINKO tunnel")
+            .setMtu(TUN_MTU)
             .addAddress("10.48.0.2", 32)
             .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
             .addDnsServer("1.1.1.1")
             .establish()
             ?: return START_NOT_STICKY
@@ -64,11 +68,14 @@ class LinkShareVpnService : VpnService() {
                 while (running.get()) {
                     val count = input.read(packet)
                     if (count <= 0) break
-                    transport?.send(packet.copyOf(count))
+                    val raw = packet.copyOf(count)
+                    val parsed = router.parse(raw) ?: continue
+                    if (parsed.payload.size > MAX_TUN_PAYLOAD) continue
+                    transport?.send(parsed.payload)
                 }
             }
         } catch (_: Exception) {
-            // Teardown is handled centrally.
+            stopTunnel()
         }
     }
 
@@ -79,7 +86,7 @@ class LinkShareVpnService : VpnService() {
                 while (running.get()) {
                     try {
                         val packet = transport?.receive(RECEIVE_TIMEOUT_MS) ?: continue
-                        if (packet.isNotEmpty() && packet.size <= MAX_IP_PACKET) {
+                        if (packet.isNotEmpty() && packet.size <= MAX_IP_PACKET && router.parse(packet) != null) {
                             output.write(packet)
                             output.flush()
                         }
@@ -89,7 +96,7 @@ class LinkShareVpnService : VpnService() {
                 }
             }
         } catch (_: Exception) {
-            // Teardown is handled centrally.
+            stopTunnel()
         }
     }
 
@@ -116,5 +123,7 @@ class LinkShareVpnService : VpnService() {
         const val ROLE_RECEIVER = "receiver"
         private const val RECEIVE_TIMEOUT_MS = 1000
         private const val MAX_IP_PACKET = 64 * 1024
+        private const val MAX_TUN_PAYLOAD = 16 * 1024
+        private const val TUN_MTU = 1500
     }
 }
