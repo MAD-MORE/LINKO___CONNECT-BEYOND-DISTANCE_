@@ -46,7 +46,7 @@ class ProviderFullIpSession(
         }
 
         inboundJob = scope.launch(Dispatchers.IO) {
-            ParcelFileDescriptor.AutoCloseOutputStream(tun.fileDescriptor).use { output ->
+            ParcelFileDescriptor.AutoCloseOutputStream(tun.dup()).use { output ->
                 while (isActive) {
                     try {
                         val packet = tunnel.receive(1_000) ?: continue
@@ -64,7 +64,7 @@ class ProviderFullIpSession(
         }
 
         outboundJob = scope.launch(Dispatchers.IO) {
-            ParcelFileDescriptor.AutoCloseInputStream(tun.fileDescriptor).use { input ->
+            ParcelFileDescriptor.AutoCloseInputStream(tun.dup()).use { input ->
                 val buffer = ByteArray(MAX_IP_PACKET)
                 while (isActive) {
                     val count = input.read(buffer)
