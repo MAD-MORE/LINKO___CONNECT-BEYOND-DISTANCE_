@@ -1,7 +1,6 @@
 package com.linkshare.app.data
 
 import com.linkshare.app.model.Friend
-import com.linkshare.app.model.IncomingRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -12,8 +11,9 @@ class HttpSignalingRepository(
     private val baseUrl: String,
     private val tokenProvider: () -> String
 ) {
-    suspend fun requestHostAccess(friend: Friend): String = withContext(Dispatchers.IO) {
+    suspend fun requestHostAccess(receiverId: String, friend: Friend): String = withContext(Dispatchers.IO) {
         val response = post("/v1/connections/request", JSONObject().apply {
+            put("receiverId", receiverId)
             put("providerId", friend.id)
         })
         response.getString("id")
@@ -21,6 +21,26 @@ class HttpSignalingRepository(
 
     suspend fun getRequest(requestId: String): JSONObject = withContext(Dispatchers.IO) {
         get("/v1/connections/$requestId")
+    }
+
+    suspend fun listPendingRequests(providerId: String): List<JSONObject> = withContext(Dispatchers.IO) {
+        val response = get("/v1/providers/$providerId/requests/pending")
+        val items = response.optJSONArray("items") ?: return@withContext emptyList()
+        buildList {
+            for (index in 0 until items.length()) add(items.getJSONObject(index))
+        }
+    }
+
+    suspend fun approveRequest(requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/v1/connections/$requestId/approve", JSONObject())
+    }
+
+    suspend fun denyRequest(requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/v1/connections/$requestId/deny", JSONObject())
+    }
+
+    suspend fun createSession(requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/v1/connections/$requestId/session", JSONObject())
     }
 
     suspend fun negotiate(sessionId: String, type: String, payload: String): JSONObject = withContext(Dispatchers.IO) {
@@ -44,7 +64,8 @@ class HttpSignalingRepository(
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer ${tokenProvider()}")
+            val token = tokenProvider()
+            if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
