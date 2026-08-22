@@ -5,17 +5,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-/**
- * Production connection boundary.
- * Signaling is real HTTPS; packet forwarding is intentionally delegated to
- * the platform VPN/tunnel implementation rather than simulated here.
- */
+/** Production control-plane boundary. */
 class ProductionLinkShareRepository(
     private val signaling: HttpSignalingRepository
 ) {
-    suspend fun request(friend: Friend): String = signaling.requestHostAccess(friend)
+    suspend fun request(receiverId: String, friend: Friend): String =
+        signaling.requestHostAccess(receiverId, friend)
 
     suspend fun status(requestId: String): JSONObject = signaling.getRequest(requestId)
+
+    suspend fun pending(providerId: String): List<JSONObject> =
+        signaling.listPendingRequests(providerId)
+
+    suspend fun approve(requestId: String): JSONObject = signaling.approveRequest(requestId)
+
+    suspend fun deny(requestId: String): JSONObject = signaling.denyRequest(requestId)
+
+    suspend fun createSession(requestId: String): JSONObject = signaling.createSession(requestId)
 
     suspend fun negotiate(sessionId: String, type: String, payload: String): JSONObject =
         signaling.negotiate(sessionId, type, payload)
@@ -24,8 +30,6 @@ class ProductionLinkShareRepository(
 
     suspend fun buildTunnelPacket(plainPacket: ByteArray, sessionKey: ByteArray): ByteArray =
         withContext(Dispatchers.Default) {
-            // Reserved for the audited tunnel implementation. Never send plaintext
-            // packets to the relay. Failing closed is safer than silently exposing data.
-            error("Encrypted tunnel provider is not configured")
+            error("Encrypted peer transport is not configured")
         }
 }
