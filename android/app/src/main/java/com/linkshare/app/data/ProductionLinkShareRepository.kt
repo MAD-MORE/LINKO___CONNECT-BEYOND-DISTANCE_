@@ -9,29 +9,18 @@ import org.json.JSONObject
 class ProductionLinkShareRepository(
     private val signaling: HttpSignalingRepository
 ) {
-    suspend fun request(receiverId: String, friend: Friend): String =
-        signaling.requestHostAccess(receiverId, friend)
-
+    suspend fun request(receiverId: String, friend: Friend): String = signaling.requestHostAccess(receiverId, friend)
     suspend fun status(requestId: String): JSONObject = signaling.getRequest(requestId)
-
-    suspend fun pending(providerId: String): List<JSONObject> =
-        signaling.listPendingRequests(providerId)
-
-    suspend fun approve(requestId: String, providerId: String): JSONObject =
-        signaling.approveRequest(requestId, providerId)
-
-    suspend fun deny(requestId: String, providerId: String): JSONObject =
-        signaling.denyRequest(requestId, providerId)
-
+    suspend fun pending(providerId: String): List<JSONObject> = signaling.listPendingRequests(providerId)
+    suspend fun approve(requestId: String, providerId: String): JSONObject = signaling.approveRequest(requestId, providerId)
+    suspend fun deny(requestId: String, providerId: String): JSONObject = signaling.denyRequest(requestId, providerId)
     suspend fun createSession(requestId: String): JSONObject = signaling.createSession(requestId)
-
-    suspend fun negotiate(sessionId: String, type: String, payload: String): JSONObject =
-        signaling.negotiate(sessionId, type, payload)
-
+    suspend fun publishPublicKey(sessionId: String, role: String, publicKey: String): JSONObject = signaling.publishSessionPublicKey(sessionId, role, publicKey)
+    suspend fun sessionPublicKeys(sessionId: String): JSONObject = signaling.getSessionPublicKeys(sessionId)
+    suspend fun negotiate(sessionId: String, type: String, payload: String): JSONObject = signaling.negotiate(sessionId, type, payload)
     suspend fun close(sessionId: String) = signaling.closeSession(sessionId)
 
-    suspend fun buildTunnelPacket(plainPacket: ByteArray, sessionKey: ByteArray): ByteArray =
-        withContext(Dispatchers.Default) {
-            error("Encrypted peer transport is not configured")
-        }
+    suspend fun buildTunnelPacket(plainPacket: ByteArray, sessionKey: ByteArray): ByteArray = withContext(Dispatchers.Default) {
+        error("Encrypted tunnel provider must be supplied by the active RelayTunnelClient")
+    }
 }
