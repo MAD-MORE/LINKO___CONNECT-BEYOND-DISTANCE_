@@ -22,6 +22,8 @@ import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.LinkoInput
 import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () -> Unit) {
@@ -29,6 +31,7 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(8.dp))
@@ -48,13 +51,15 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
             if (busy) return@PrimaryButton
             busy = true
             message = null
-            val result = auth.signIn(email, password)
-            busy = false
-            if (result.success) {
-                message = "Authenticated"
-                onSignedIn()
-            } else {
-                message = friendlyAuthError(result)
+            scope.launch {
+                val result = withContext(Dispatchers.IO) { auth.signIn(email, password) }
+                busy = false
+                if (result.success) {
+                    message = "Authenticated"
+                    onSignedIn()
+                } else {
+                    message = friendlyAuthError(result)
+                }
             }
         })
         Spacer(Modifier.height(4.dp))
