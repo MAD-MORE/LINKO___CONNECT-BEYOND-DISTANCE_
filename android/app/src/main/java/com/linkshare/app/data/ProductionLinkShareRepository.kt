@@ -17,9 +17,11 @@ class ProductionLinkShareRepository(
     suspend fun pending(providerId: String): List<JSONObject> =
         signaling.listPendingRequests(providerId)
 
-    suspend fun approve(requestId: String): JSONObject = signaling.approveRequest(requestId)
+    suspend fun approve(requestId: String, providerId: String): JSONObject =
+        signaling.approveRequest(requestId, providerId)
 
-    suspend fun deny(requestId: String): JSONObject = signaling.denyRequest(requestId)
+    suspend fun deny(requestId: String, providerId: String): JSONObject =
+        signaling.denyRequest(requestId, providerId)
 
     suspend fun createSession(requestId: String): JSONObject = signaling.createSession(requestId)
 
