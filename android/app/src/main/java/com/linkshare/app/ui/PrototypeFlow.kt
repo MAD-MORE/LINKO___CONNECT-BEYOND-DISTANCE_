@@ -1,7 +1,6 @@
 package com.linkshare.app.ui
 
 import androidx.compose.runtime.Composable
-import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.PrototypeScreen
 import com.linkshare.app.viewmodel.LinkShareViewModel
@@ -20,7 +19,7 @@ fun PrototypeFlow(
         PrototypeScreen.FindFriends,
         PrototypeScreen.FriendProfile -> ReceiverHomeScreen(
             state = state,
-            onFriendSelected = viewModel::selectFriend,
+            onFriendSelected = viewModel::connectToFriend,
             onUsage = { viewModel.openUsage() },
             onSettings = { viewModel.openSettings() }
         )
