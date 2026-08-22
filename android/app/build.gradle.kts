@@ -48,9 +48,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Userspace tun2socks engine: IPv4/IPv6 + TCP/UDP.
-    // The engine is intentionally isolated behind FullIpTunnelEngine.
-    implementation("com.zaneschepke:hevtunnel:1.0.0")
+    // Published Maven Central release of the embedded tun2socks engine.
+    implementation("com.zaneschepke:hevtunnel:1.0.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
