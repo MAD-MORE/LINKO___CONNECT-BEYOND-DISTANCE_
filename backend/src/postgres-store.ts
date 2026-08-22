@@ -9,6 +9,10 @@ export class PostgresControlPlaneStore {
     this.pool = new Pool({ connectionString, max: 10, ssl: process.env.DATABASE_SSL === "false" ? false : { rejectUnauthorized: false } });
   }
 
+  async health(): Promise<void> {
+    await this.pool.query("select 1");
+  }
+
   async registerDevice(input: Omit<Device, "id" | "lastSeenAt">): Promise<Device> {
     const result = await this.pool.query(
       `insert into devices (id, user_id, public_key, name, roles, last_seen_at, revoked_at)
