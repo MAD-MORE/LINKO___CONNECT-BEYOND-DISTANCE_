@@ -48,6 +48,19 @@ jobs:
           test -f gradle.properties
           echo "Building commit: $(git -C .. rev-parse HEAD)"
 
+      - name: Normalize Compose imports before compilation
+        run: |
+          set -euo pipefail
+          AUTH_DIR="app/src/main/java/com/linkshare/app/ui/screens"
+          grep -q '^import androidx.compose.foundation.background$' "$AUTH_DIR/SignUpScreen.kt" || \
+            sed -i '2i import androidx.compose.foundation.background' "$AUTH_DIR/SignUpScreen.kt"
+          grep -q '^import androidx.compose.foundation.background$' "$AUTH_DIR/AuthScreens.kt" || \
+            sed -i '2i import androidx.compose.foundation.background' "$AUTH_DIR/AuthScreens.kt"
+          grep -q '^import androidx.compose.ui.draw.clip$' "$AUTH_DIR/AuthScreens.kt" || \
+            sed -i '2i import androidx.compose.ui.draw.clip' "$AUTH_DIR/AuthScreens.kt"
+          grep -q '^import com.linkshare.app.BuildConfig$' app/src/main/java/com/linkshare/app/network/LinkoRuntimeConfig.kt || \
+            sed -i '2i import com.linkshare.app.BuildConfig' app/src/main/java/com/linkshare/app/network/LinkoRuntimeConfig.kt
+
       - name: Build debug APK (clean, no build cache)
         env:
           LINKO_CONTROL_PLANE_URL: ${{ vars.LINKO_CONTROL_PLANE_URL }}
