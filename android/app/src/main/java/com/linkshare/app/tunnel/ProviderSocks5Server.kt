@@ -49,8 +49,7 @@ class ProviderSocks5Server : Closeable {
             val output = socket.getOutputStream()
             try {
                 socksHandshake(input, output)
-                val command = readRequestCommand(input)
-                when (command) {
+                when (readRequestCommand(input)) {
                     CMD_CONNECT -> handleConnect(input, output, socket)
                     CMD_UDP_ASSOCIATE -> handleUdpAssociate(output, socket)
                     CMD_BIND -> reply(output, REP_COMMAND_NOT_SUPPORTED)
@@ -86,7 +85,6 @@ class ProviderSocks5Server : Closeable {
         try {
             upstream.connect(target, CONNECT_TIMEOUT_MS)
             reply(output, REP_SUCCEEDED, upstream.localAddress, upstream.localPort)
-            // CONNECT becomes a long-lived byte stream; do not apply the handshake timeout.
             client.soTimeout = 0
             upstream.soTimeout = 0
             proxyBidirectional(client, upstream)
@@ -101,18 +99,17 @@ class ProviderSocks5Server : Closeable {
         udpRelay = relay
         reply(output, REP_SUCCEEDED, relay.localAddress, relay.localPort)
         client.soTimeout = 0
-
         val clientAddress = client.inetAddress
-        val clientPort = client.port
         val buffer = ByteArray(MAX_UDP_PACKET)
         try {
             while (running.get() && !client.isClosed) {
                 val packet = DatagramPacket(buffer, buffer.size)
                 relay.receive(packet)
-                if (!packet.address.isLoopbackAddress || packet.address != clientAddress || packet.port != clientPort) continue
+                // The endpoint is loopback-only, so source-port changes made by the
+                // SOCKS5 client are safe and expected for UDP ASSOCIATE.
+                if (!packet.address.isLoopbackAddress || packet.address != clientAddress) continue
                 if (packet.length < UDP_HEADER_MIN) continue
                 val target = decodeUdpRequest(packet) ?: continue
-
                 DatagramSocket().use { responseSocket ->
                     responseSocket.soTimeout = UDP_TIMEOUT_MS
                     responseSocket.send(DatagramPacket(target.payload, target.payload.size, target.address, target.port))
@@ -120,7 +117,7 @@ class ProviderSocks5Server : Closeable {
                     val response = DatagramPacket(responseBuffer, responseBuffer.size)
                     responseSocket.receive(response)
                     val encoded = encodeUdpResponse(response.address, response.port, response.data.copyOf(response.length))
-                    relay.send(DatagramPacket(encoded, encoded.size, clientAddress, clientPort))
+                    relay.send(DatagramPacket(encoded, encoded.size, clientAddress, packet.port))
                 }
             }
         } finally {
