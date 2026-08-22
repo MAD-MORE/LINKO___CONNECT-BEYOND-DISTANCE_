@@ -31,12 +31,12 @@ class HttpSignalingRepository(
         }
     }
 
-    suspend fun approveRequest(requestId: String): JSONObject = withContext(Dispatchers.IO) {
-        post("/v1/connections/$requestId/approve", JSONObject())
+    suspend fun approveRequest(requestId: String, providerId: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/v1/connections/$requestId/approve", JSONObject().apply { put("providerId", providerId) })
     }
 
-    suspend fun denyRequest(requestId: String): JSONObject = withContext(Dispatchers.IO) {
-        post("/v1/connections/$requestId/deny", JSONObject())
+    suspend fun denyRequest(requestId: String, providerId: String): JSONObject = withContext(Dispatchers.IO) {
+        post("/v1/connections/$requestId/deny", JSONObject().apply { put("providerId", providerId) })
     }
 
     suspend fun createSession(requestId: String): JSONObject = withContext(Dispatchers.IO) {
