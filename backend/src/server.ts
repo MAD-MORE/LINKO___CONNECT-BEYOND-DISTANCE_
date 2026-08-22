@@ -4,6 +4,7 @@ import { ControlPlaneStore } from "./store.js";
 import { PostgresControlPlaneStore } from "./postgres-store.js";
 import { SignalingBroker, type SignalKind } from "./signaling.js";
 import { isBootstrapSecret, issueDeviceToken, verifyDeviceToken } from "./auth.js";
+import { createSessionTunnelKey, getSessionTunnelKey, revokeSessionTunnelKey } from "./tunnel-key-store.js";
 import type { SessionState } from "./types.js";
 
 const store = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : new ControlPlaneStore();
@@ -11,7 +12,7 @@ const signaling = new SignalingBroker();
 const port = Number(process.env.PORT ?? 8080);
 
 function json(res: ServerResponse, status: number, body: unknown, requestId: string) {
-  res.writeHead(status, { "content-type": "application/json", "x-request-id": requestId });
+  res.writeHead(status, { "content-type": "application/json", "x-request-id": requestId, "cache-control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
@@ -35,7 +36,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      return json(res, 200, { service: "linko-control-plane", status: "ok", persistence: process.env.DATABASE_URL ? "postgres" : "memory" }, requestId);
+      return json(res, 200, { service: "linko-control-plane", status: "ok", persistence: process.env.DATABASE_URL ? "postgres" : "memory", tunnelKeys: "session-bound" }, requestId);
     }
 
     if (req.method === "POST" && url.pathname === "/v1/devices") {
@@ -58,6 +59,7 @@ const server = createServer(async (req, res) => {
       if (typeof input.receiverDeviceId !== "string" || typeof input.providerDeviceId !== "string") return json(res, 400, { error: "invalid_session_request", requestId }, requestId);
       if (authenticatedDevice.id !== input.receiverDeviceId && authenticatedDevice.id !== input.providerDeviceId) return json(res, 403, { error: "session_party_required", requestId }, requestId);
       const session = await store.createSession(input.receiverDeviceId, input.providerDeviceId);
+      createSessionTunnelKey(session.id);
       return json(res, 201, session, requestId);
     }
 
@@ -71,7 +73,22 @@ const server = createServer(async (req, res) => {
       const next = input.state as SessionState;
       if (next === "approved" && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "provider_approval_required", requestId }, requestId);
       const updated = await store.transitionSession(session.id, next);
+      if (["revoked", "expired", "denied"].includes(next)) revokeSessionTunnelKey(session.id);
       return json(res, 200, updated, requestId);
+    }
+
+    const tunnelConfigMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/tunnel$/);
+    if (req.method === "GET" && tunnelConfigMatch) {
+      const session = await store.getSession(tunnelConfigMatch[1]);
+      if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
+      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId);
+      if (!["signaling", "connected"].includes(session.state)) return json(res, 409, { error: "tunnel_not_ready", requestId }, requestId);
+      const key = getSessionTunnelKey(session.id);
+      if (!key) return json(res, 410, { error: "tunnel_key_unavailable", requestId }, requestId);
+      const host = process.env.TUNNEL_HOST;
+      const tunnelPort = Number(process.env.TUNNEL_PORT ?? 0);
+      if (!host || !tunnelPort) return json(res, 503, { error: "tunnel_endpoint_not_configured", requestId }, requestId);
+      return json(res, 200, { sessionId: session.id, endpoint: { host, port: tunnelPort }, key: key.toString("base64url"), expiresAt: session.expiresAt }, requestId);
     }
 
     const signalTicketMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/signaling\/ticket$/);
