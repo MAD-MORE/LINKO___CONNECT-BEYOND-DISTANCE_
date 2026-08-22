@@ -8,13 +8,14 @@ import kotlinx.coroutines.launch
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 
-/** Runs the provider side of a LINKO relay session. UDP is supported; TCP is intentionally rejected. */
+/** Runs the provider side of a LINKO relay session through an explicit IP transport boundary. */
 class ProviderTunnelRunner(
     private val socket: DatagramSocket,
     private val endpoint: InetSocketAddress,
     private val sessionId: String,
     sessionKey: ByteArray,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val adapter: ProviderTransportAdapter = UdpOnlyProviderTransportAdapter()
 ) {
     private val tunnel = EncryptedDatagramTunnel(
         socket = socket,
@@ -23,7 +24,6 @@ class ProviderTunnelRunner(
         role = EncryptedDatagramTunnel.Role.PROVIDER,
         sessionKey = sessionKey
     )
-    private val udpForwarder = ProviderUdpPacketForwarder()
     private var job: Job? = null
 
     fun start() {
@@ -32,12 +32,12 @@ class ProviderTunnelRunner(
             while (isActive) {
                 try {
                     val packet = tunnel.receive(1_000) ?: continue
-                    val response = udpForwarder.forward(packet)
+                    val response = adapter.forward(packet)
                     if (response != null) tunnel.send(response)
                 } catch (_: java.net.SocketTimeoutException) {
-                    // Keep the session alive.
+                    // Keep the authorized session alive while waiting for traffic.
                 } catch (_: Exception) {
-                    // Invalid frames and unsupported protocols are dropped.
+                    // Malformed, unsupported, or failed packets are isolated to this frame.
                 }
             }
         }
@@ -46,7 +46,7 @@ class ProviderTunnelRunner(
     fun stop() {
         job?.cancel()
         job = null
-        udpForwarder.close()
+        adapter.close()
         tunnel.close()
     }
 }
