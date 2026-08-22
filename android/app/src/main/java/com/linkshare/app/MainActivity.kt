@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
         linkoAuth = LinkoAuth(this)
         linkoRuntime = LinkoRuntime(this)
         linkoRuntime.start()
-        setContent { LinkoTheme { LinkoApp(linkoAuth) } }
+        setContent { LinkoTheme { LinkoApp(linkoAuth, linkoRuntime) } }
     }
 
     override fun onDestroy() {
@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun LinkoApp(auth: LinkoAuth) {
+fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route
@@ -56,7 +56,7 @@ fun LinkoApp(auth: LinkoAuth) {
             NavHost(navController = nav, startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.SignUp.route) { inclusive = true } } } }
-                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }) }
+                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { runtime.start(); nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }) }
                 composable(Screen.CreateAccount.route) { CreateAccountScreen { _, _, _ -> nav.navigate(Screen.Verify.route) } }
                 composable(Screen.Verify.route) { VerifyScreen { nav.navigate(Screen.SignIn.route) } }
                 composable(Screen.Profile.route) { ProfileScreen { nav.navigate(Screen.RegisterDevice.route) } }
