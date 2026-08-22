@@ -1,5 +1,6 @@
 package com.linkshare.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +21,8 @@ import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.LinkoInput
 import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
@@ -29,6 +32,7 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
     var confirm by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(8.dp))
@@ -53,14 +57,17 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
                 password != confirm -> message = "Passwords do not match."
                 else -> {
                     busy = true
-                    val result = auth.signUp(email, password, displayName)
-                    busy = false
-                    message = when {
-                        result.success -> "Account created"
-                        result.message == "user_already_exists" -> "Account already exists. Sign in instead."
-                        else -> result.message.replace('_', ' ')
+                    message = null
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { auth.signUp(email, password, displayName) }
+                        busy = false
+                        message = when {
+                            result.success -> "Account created"
+                            result.message == "user_already_exists" -> "Account already exists. Sign in instead."
+                            else -> result.message.replace('_', ' ')
+                        }
+                        if (result.success) onRegistered()
                     }
-                    if (result.success) onRegistered()
                 }
             }
         })
