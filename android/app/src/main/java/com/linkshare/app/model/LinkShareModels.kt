@@ -14,6 +14,50 @@ enum class ConnectionPhase {
     Failed
 }
 
+enum class PrototypeScreen {
+    Welcome,
+    CreateAccount,
+    Verify,
+    Profile,
+    RegisterDevice,
+    Permissions,
+    Friends,
+    FindFriends,
+    FriendProfile,
+    RequestSent,
+    IncomingRequest,
+    BlockedRemoved,
+    HomeEngine,
+    RxSelectFriend,
+    RxRequest,
+    RxWaiting,
+    RxApproved,
+    RxConnecting,
+    RxDirectPath,
+    RxRelayFallback,
+    Connected,
+    NetworkQuality,
+    Usage,
+    ProviderIncoming,
+    ProviderAuthorization,
+    ProviderSharingSetup,
+    ProviderSharingActive,
+    ProviderLiveUsage,
+    SessionDetails,
+    SessionHistory,
+    ConnectionLost,
+    Reconnecting,
+    NetworkSwitching,
+    SessionExpired,
+    DeviceIdentity,
+    SecurityEngine,
+    KeyRevoked,
+    Privacy,
+    DataRetention,
+    Settings,
+    DeleteAccount
+}
+
 data class Friend(
     val id: String,
     val name: String,
@@ -42,6 +86,7 @@ data class UsageStats(
 
 data class ConnectionUiState(
     val mode: AppMode = AppMode.Host,
+    val screen: PrototypeScreen = PrototypeScreen.Welcome,
     val hostSharingEnabled: Boolean = false,
     val connectionPhase: ConnectionPhase = ConnectionPhase.Idle,
     val activeFriend: Friend? = null,
