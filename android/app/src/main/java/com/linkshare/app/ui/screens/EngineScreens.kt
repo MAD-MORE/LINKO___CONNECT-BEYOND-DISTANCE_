@@ -1,10 +1,15 @@
 package com.linkshare.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -22,7 +27,47 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
     }
 }
 
-@Composable fun RxSelectFriendScreen(onRequest: () -> Unit) { Column(Modifier.fillMaxSize().padding(16.dp)) { title("Choose a Friend", "Select a trusted peer to request a connection")(); Spacer(Modifier.height(20.dp)); LinkoCard { sampleFriends.filter { it.status != "OFFLINE" }.forEachIndexed { i, f -> FriendRow(f); if (i < 2) RowDivider() } }; Spacer(Modifier.weight(1f)); PrimaryButton("REQUEST CONNECTION", onRequest); Spacer(Modifier.height(24.dp)) } }
+@Composable
+fun RxSelectFriendScreen(onRequest: () -> Unit) {
+    var selectedFriendId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectableFriends = sampleFriends.filter { it.status != "OFFLINE" }
+    val selectedFriend = selectableFriends.firstOrNull { it.id == selectedFriendId }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        title("Choose a Friend", "Select a trusted peer to request a connection")()
+        Spacer(Modifier.height(20.dp))
+        LinkoCard {
+            selectableFriends.forEachIndexed { i, friend ->
+                val selected = friend.id == selectedFriendId
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) Blue.copy(alpha = 0.10f) else Color.Transparent)
+                        .border(if (selected) 1.5.dp else 0.dp, if (selected) Blue else Color.Transparent, RoundedCornerShape(12.dp))
+                        .clickable { selectedFriendId = friend.id },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp)) {
+                        FriendRow(friend)
+                    }
+                }
+                if (i < selectableFriends.lastIndex) RowDivider()
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (selectedFriend != null) {
+            Text("SELECTED", color = Blue, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text("${selectedFriend.name} • ${selectedFriend.id}", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+        } else {
+            Text("Select a friend to continue", color = TextMuted, fontSize = 11.sp, fontFamily = JetBrainsMono)
+        }
+        Spacer(Modifier.weight(1f))
+        PrimaryButton("REQUEST CONNECTION", { if (selectedFriend != null) onRequest() }, color = if (selectedFriend != null) Blue else TextMuted, outline = selectedFriend == null)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
 @Composable fun RxRequestScreen(onCancel: () -> Unit) { Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spacer(Modifier.weight(1f)); Ring(Yellow, 180.dp, pulse = true, label = "REQUEST"); Spacer(Modifier.height(24.dp)); Text("Connection Requested", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text("Waiting for your friend to approve", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.weight(1f)); PrimaryButton("CANCEL", onCancel, color = Red, outline = true); Spacer(Modifier.height(24.dp)) } }
 @Composable fun RxWaitingScreen(onCancel: () -> Unit) = RxRequestScreen(onCancel)
 @Composable fun RxApprovedScreen(onConnect: () -> Unit) { Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spacer(Modifier.height(20.dp)); title("Request Approved", "Your friend accepted the connection")(); Spacer(Modifier.height(28.dp)); Ring(Green, 180.dp, label = "APPROVED"); Spacer(Modifier.weight(1f)); PrimaryButton("START SECURE CONNECTION", onConnect, color = Green); Spacer(Modifier.height(24.dp)) } }
