@@ -95,7 +95,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                     )
                 }
                 composable(Screen.CreateAccount.route) {
-                    CreateAccountScreen { _, _, _ -> nav.navigate(Screen.Verify.route) }
+                    CreateAccountScreen { nav.navigate(Screen.Verify.route) }
                 }
                 composable(Screen.Verify.route) { VerifyScreen { nav.navigate(Screen.SignIn.route) } }
                 composable(Screen.Profile.route) { ProfileScreen { nav.navigate(Screen.RegisterDevice.route) } }
