@@ -8,7 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import com.linkshare.app.ui.LinkShareApp
+import com.linkshare.app.ui.LinkoProductionApp
 import com.linkshare.app.viewmodel.LinkShareViewModel
 
 class MainActivity : ComponentActivity() {
@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            LinkShareApp(
+            LinkoProductionApp(
                 viewModel = viewModel,
                 onRequestVpnPermission = {
                     val intent: Intent? = VpnService.prepare(this)
