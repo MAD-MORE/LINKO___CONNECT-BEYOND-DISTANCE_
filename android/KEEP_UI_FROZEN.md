@@ -1,0 +1,1 @@
+The frozen prototype UI is not to be changed as part of connectivity integration.
