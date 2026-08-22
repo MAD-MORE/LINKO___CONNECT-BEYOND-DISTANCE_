@@ -9,11 +9,13 @@ import { UdpTunnelEndpoint } from "./tunnel.js";
 import type { SessionState } from "./types.js";
 
 const production = process.env.NODE_ENV === "production";
-if (production && !process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL_required_in_production");
+const databaseUrl = process.env.LINKO_DATABASE_URL ?? process.env.DATABASE_URL;
+
+if (production && !databaseUrl) {
+  throw new Error("LINKO_DATABASE_URL_required_in_production");
 }
 
-const postgresStore = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : null;
+const postgresStore = databaseUrl ? new PostgresControlPlaneStore(databaseUrl) : null;
 const store = postgresStore ?? new ControlPlaneStore();
 const signaling = new SignalingBroker();
 const port = Number(process.env.PORT ?? 8080);
