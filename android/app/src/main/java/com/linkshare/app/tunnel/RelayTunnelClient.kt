@@ -14,9 +14,16 @@ class RelayTunnelClient(
     private val sessionId: String,
     private val peerId: String,
     private val sessionKey: ByteArray,
+    private val onPacket: (ByteArray) -> Unit = {},
 ) {
     private val client = OkHttpClient()
     private var socket: WebSocket? = null
+
+    init {
+        require(sessionKey.size == 32) { "LINKO session key must be 256 bits" }
+        require(endpoint.startsWith("wss://")) { "Relay endpoint must use WSS" }
+        require(bearerToken.isNotBlank())
+    }
 
     suspend fun connect(): Boolean = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder()
@@ -25,12 +32,20 @@ class RelayTunnelClient(
             .build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-                webSocket.send("{\"peerId\":\"$peerId\",\"sessionId\":\"$sessionId\"}")
+                val hello = "{\"peerId\":\"$peerId\",\"sessionId\":\"$sessionId\"}"
+                webSocket.send(hello)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (text.contains("\"type\":\"ready\"")) {
                     if (continuation.isActive) continuation.resume(true)
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                runCatching {
+                    val plaintext = EncryptedFrame.decrypt(bytes.toByteArray(), sessionKey)
+                    onPacket(plaintext)
                 }
             }
 
@@ -42,6 +57,7 @@ class RelayTunnelClient(
     }
 
     fun sendPacket(packet: ByteArray): Boolean {
+        if (packet.isEmpty()) return true
         val encrypted = EncryptedFrame.encrypt(packet, sessionKey)
         return socket?.send(ByteString.of(*encrypted)) == true
     }
