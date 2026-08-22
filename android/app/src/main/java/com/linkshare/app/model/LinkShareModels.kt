@@ -65,7 +65,9 @@ data class Friend(
     val cityHint: String,
     val trustNote: String,
     val isSharing: Boolean,
-    val accentHex: Long
+    val accentHex: Long,
+    val deviceName: String = "Unknown Device",
+    val distanceLabel: String = "Remote"
 )
 
 data class IncomingRequest(
@@ -95,5 +97,10 @@ data class ConnectionUiState(
     val usageStats: UsageStats = UsageStats(),
     val friends: List<Friend> = emptyList(),
     val incomingRequest: IncomingRequest? = null,
-    val eventMessage: String? = null
+    val eventMessage: String? = null,
+    val sessionId: String = "",
+    val peerId: String = "",
+    val sessionKey: ByteArray = ByteArray(32),
+    val relayEndpoint: String = "",
+    val relayToken: String = ""
 )
