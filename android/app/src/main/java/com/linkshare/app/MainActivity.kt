@@ -20,16 +20,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.*
+import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.screens.*
 import com.linkshare.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : ComponentActivity() {
+    private lateinit var linkoRuntime: LinkoRuntime
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        linkoRuntime = LinkoRuntime()
+        linkoRuntime.start()
         setContent { LinkoTheme { LinkoApp() } }
+    }
+
+    override fun onDestroy() {
+        linkoRuntime.stop()
+        super.onDestroy()
     }
 }
 
