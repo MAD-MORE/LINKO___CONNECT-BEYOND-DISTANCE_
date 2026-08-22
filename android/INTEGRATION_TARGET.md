@@ -1,0 +1,1 @@
+Target: wire Android runtime to engine and backend without altering the frozen Compose UI.
