@@ -16,6 +16,17 @@ The project owner has explicitly approved/unlocked the requirements work and aut
 
 **Latest completed:** Phase 2 — Requirements Engineering — COMPLETE / APPROVED / BASELINED
 
+## Prototype UI implementation handover
+
+The frozen `Implement Prototype (1).zip` Kotlin + Jetpack Compose implementation has been integrated into `main` as the current Android UI implementation baseline.
+
+- Prototype navigation and screen flow integrated.
+- Prototype theme, colors, typography, components and animated connection ring integrated.
+- Onboarding, friends, settings, receiver, provider, connected, history and edge-state screens are represented in Compose.
+- The previous parchment/light `LinkShareApp` UI is no longer the active Android entry point.
+- Build/APK verification is still pending and must be completed before this UI integration is considered verified.
+- Networking, signaling, relay and production tunnel behavior remain separate from this UI integration.
+
 ## Phase 1 — Product Discovery
 
 - [x] 1.1–1.16 — COMPLETE / APPROVED
@@ -100,5 +111,6 @@ Phase 1: COMPLETE
 Phase 2: COMPLETE / APPROVED / BASELINED
 Phase 3: CURRENT
 Current step: 3.1 — Architecture Principles & Constraints
-Next: establish architecture constraints and principles derived from the approved requirements.
+UI: Prototype Kotlin/Compose integrated into main; build verification pending
+Next: establish architecture constraints and principles derived from the approved requirements, then verify the integrated Android UI with a real build/APK.
 ```
