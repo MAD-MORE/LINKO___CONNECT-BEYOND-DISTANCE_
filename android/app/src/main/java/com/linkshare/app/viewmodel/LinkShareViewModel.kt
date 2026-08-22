@@ -1,12 +1,18 @@
 package com.linkshare.app.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.provider.Settings
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.linkshare.app.data.HttpSignalingRepository
+import com.linkshare.app.data.ProductionLinkShareRepository
+import com.linkshare.app.data.SignalingConfig
 import com.linkshare.app.data.MockLinkShareRepository
 import com.linkshare.app.model.AppMode
 import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.Friend
+import com.linkshare.app.model.IncomingRequest
 import com.linkshare.app.model.PrototypeScreen
 import com.linkshare.app.model.UsageStats
 import kotlinx.coroutines.Job
@@ -17,45 +23,40 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class LinkShareViewModel : ViewModel() {
-    private val repository = MockLinkShareRepository()
+class LinkShareViewModel(application: Application) : AndroidViewModel(application) {
+    private val demoRepository = MockLinkShareRepository()
+    private val productionRepository = ProductionLinkShareRepository(
+        HttpSignalingRepository(SignalingConfig.BASE_URL) { SignalingConfig.API_TOKEN }
+    )
+    private val deviceId = "android:${Settings.Secure.getString(application.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()}"
 
     private val _uiState = MutableStateFlow(
-        ConnectionUiState(
-            friends = repository.friends(),
-            incomingRequest = repository.incomingRequest()
-        )
+        ConnectionUiState(friends = demoRepository.friends())
     )
     val uiState: StateFlow<ConnectionUiState> = _uiState.asStateFlow()
 
     private var usageJob: Job? = null
+    private var activeRequestId: String? = null
+    private var activeSessionId: String? = null
 
-    /** Navigate to a state defined by the frozen prototype contract. */
+    init {
+        refreshIncomingRequests()
+    }
+
     fun navigateTo(screen: PrototypeScreen) {
         _uiState.update { it.copy(screen = screen, eventMessage = null) }
     }
 
     fun setMode(mode: AppMode) {
-        _uiState.update {
-            it.copy(
-                mode = mode,
-                screen = PrototypeScreen.HomeEngine,
-                eventMessage = null
-            )
-        }
+        _uiState.update { it.copy(mode = mode, screen = PrototypeScreen.HomeEngine, eventMessage = null) }
+        if (mode == AppMode.Host) refreshIncomingRequests()
     }
 
-    fun openFriends() {
-        navigateTo(PrototypeScreen.Friends)
-    }
-
-    fun openSettings() {
-        navigateTo(PrototypeScreen.Settings)
-    }
-
-    fun openHistory() {
-        navigateTo(PrototypeScreen.SessionHistory)
-    }
+    fun openFriends() = navigateTo(PrototypeScreen.Friends)
+    fun openSettings() = navigateTo(PrototypeScreen.Settings)
+    fun openHistory() = navigateTo(PrototypeScreen.SessionHistory)
+    fun openUsage() = navigateTo(PrototypeScreen.Usage)
+    fun openNetworkQuality() = navigateTo(PrototypeScreen.NetworkQuality)
 
     fun toggleHostSharing() {
         val next = !_uiState.value.hostSharingEnabled
@@ -68,28 +69,72 @@ class LinkShareViewModel : ViewModel() {
             )
         }
         if (next) startUsageTicker(hostMode = true) else stopUsageTicker()
+        refreshIncomingRequests()
     }
 
     fun approveIncomingRequest() {
-        _uiState.update {
-            it.copy(
-                screen = PrototypeScreen.ProviderLiveUsage,
-                incomingRequest = null,
-                hostSharingEnabled = true,
-                usageStats = it.usageStats.copy(connectedClients = 1),
-                eventMessage = "Kwesi is connected through your phone."
-            )
+        val requestId = _uiState.value.incomingRequest?.id ?: return
+        viewModelScope.launch {
+            try {
+                productionRepository.approve(requestId)
+                _uiState.update {
+                    it.copy(
+                        screen = PrototypeScreen.ProviderLiveUsage,
+                        incomingRequest = null,
+                        hostSharingEnabled = true,
+                        usageStats = it.usageStats.copy(connectedClients = 1),
+                        eventMessage = "Request approved. Waiting for the receiver to establish transport."
+                    )
+                }
+                startUsageTicker(hostMode = true)
+            } catch (error: Exception) {
+                _uiState.update { it.copy(eventMessage = error.message ?: "Approval failed") }
+            }
         }
-        startUsageTicker(hostMode = true)
     }
 
     fun denyIncomingRequest() {
-        _uiState.update {
-            it.copy(
-                screen = PrototypeScreen.ProviderIncoming,
-                incomingRequest = null,
-                eventMessage = "Request denied. Nothing was shared."
-            )
+        val requestId = _uiState.value.incomingRequest?.id ?: return
+        viewModelScope.launch {
+            try {
+                productionRepository.deny(requestId)
+                _uiState.update {
+                    it.copy(
+                        screen = PrototypeScreen.ProviderIncoming,
+                        incomingRequest = null,
+                        eventMessage = "Request denied. Nothing was shared."
+                    )
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(eventMessage = error.message ?: "Request denial failed") }
+            }
+        }
+    }
+
+    fun refreshIncomingRequests() {
+        viewModelScope.launch {
+            try {
+                val pending = productionRepository.pending(deviceId)
+                val item = pending.firstOrNull()
+                val incoming = item?.let {
+                    IncomingRequest(
+                        id = it.getString("id"),
+                        friendName = it.optString("receiver_id", "LINKO user"),
+                        initials = "LK",
+                        deviceName = "LINKO device",
+                        distanceLabel = "Remote",
+                        requestedAtLabel = it.optString("created_at", "Just now")
+                    )
+                }
+                _uiState.update {
+                    it.copy(
+                        incomingRequest = incoming,
+                        screen = if (incoming != null) PrototypeScreen.ProviderIncoming else it.screen
+                    )
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(eventMessage = error.message ?: "Unable to refresh requests") }
+            }
         }
     }
 
@@ -114,61 +159,83 @@ class LinkShareViewModel : ViewModel() {
                     activeFriend = friend,
                     connectionPhase = ConnectionPhase.Requesting,
                     retryAttempt = 0,
-                    eventMessage = "Asking ${friend.name} for access..."
+                    eventMessage = "Requesting access from ${friend.name}..."
                 )
             }
 
-            val accepted = repository.requestHostAccess(friend.id)
-            if (!accepted) {
+            try {
+                activeRequestId = productionRepository.request(deviceId, friend)
+                _uiState.update { it.copy(screen = PrototypeScreen.RxWaiting, eventMessage = "Waiting for ${friend.name} to approve the request...") }
+
+                repeat(60) {
+                    delay(1_000)
+                    val requestId = activeRequestId ?: return@repeat
+                    val status = productionRepository.status(requestId)
+                    when (status.optString("status")) {
+                        "approved" -> {
+                            val session = productionRepository.createSession(requestId)
+                            activeSessionId = session.getString("id")
+                            _uiState.update {
+                                it.copy(
+                                    screen = PrototypeScreen.RxApproved,
+                                    connectionPhase = ConnectionPhase.Handshaking,
+                                    eventMessage = "Request approved. Negotiating the secure transport..."
+                                )
+                            }
+                            _uiState.update { it.copy(screen = PrototypeScreen.RxConnecting) }
+                            return@repeat
+                        }
+                        "denied" -> {
+                            _uiState.update {
+                                it.copy(
+                                    screen = PrototypeScreen.SessionExpired,
+                                    connectionPhase = ConnectionPhase.Failed,
+                                    eventMessage = "${friend.name} denied the request."
+                                )
+                            }
+                            return@repeat
+                        }
+                        "expired" -> {
+                            _uiState.update {
+                                it.copy(
+                                    screen = PrototypeScreen.SessionExpired,
+                                    connectionPhase = ConnectionPhase.Failed,
+                                    eventMessage = "The connection request expired."
+                                )
+                            }
+                            return@repeat
+                        }
+                    }
+                }
+
+                if (_uiState.value.connectionPhase == ConnectionPhase.Handshaking) {
+                    _uiState.update {
+                        it.copy(
+                            screen = PrototypeScreen.RxConnecting,
+                            eventMessage = "Control-plane session created. Peer transport is still required before traffic can flow."
+                        )
+                    }
+                }
+            } catch (error: Exception) {
                 _uiState.update {
                     it.copy(
-                        screen = PrototypeScreen.SessionExpired,
+                        screen = PrototypeScreen.ConnectionLost,
                         connectionPhase = ConnectionPhase.Failed,
-                        eventMessage = "${friend.name} did not approve this request."
+                        eventMessage = error.message ?: "Unable to create a LINKO session."
                     )
                 }
-                return@launch
             }
-
-            _uiState.update {
-                it.copy(
-                    screen = PrototypeScreen.RxApproved,
-                    connectionPhase = ConnectionPhase.Handshaking,
-                    eventMessage = "Building an encrypted path..."
-                )
-            }
-
-            delay(250)
-            _uiState.update { it.copy(screen = PrototypeScreen.RxConnecting) }
-
-            val handshakeOk = repository.performWireGuardStyleHandshake()
-            if (!handshakeOk) {
-                _uiState.update {
-                    it.copy(
-                        screen = PrototypeScreen.RxRelayFallback,
-                        connectionPhase = ConnectionPhase.Retrying,
-                        retryAttempt = 1,
-                        eventMessage = "Direct path unavailable. Trying relay fallback..."
-                    )
-                }
-                repository.retryHandshakeOnWeakSignal()
-            } else {
-                _uiState.update { it.copy(screen = PrototypeScreen.RxDirectPath) }
-            }
-
-            _uiState.update {
-                it.copy(
-                    screen = PrototypeScreen.Connected,
-                    connectionPhase = ConnectionPhase.Connected,
-                    usageStats = UsageStats(connectedClients = 1),
-                    eventMessage = "Connected through ${friend.name}."
-                )
-            }
-            startUsageTicker(hostMode = false)
         }
     }
 
     fun disconnect() {
+        viewModelScope.launch {
+            activeSessionId?.let { sessionId ->
+                runCatching { productionRepository.close(sessionId) }
+            }
+            activeSessionId = null
+            activeRequestId = null
+        }
         stopUsageTicker()
         _uiState.update {
             it.copy(
@@ -187,17 +254,9 @@ class LinkShareViewModel : ViewModel() {
             it.copy(
                 screen = if (granted) PrototypeScreen.HomeEngine else PrototypeScreen.Permissions,
                 hasVpnPermission = granted,
-                eventMessage = if (granted) "VPN permission granted. LINKO can protect the tunnel." else "VPN permission is required before connecting."
+                eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting."
             )
         }
-    }
-
-    fun openUsage() {
-        navigateTo(PrototypeScreen.Usage)
-    }
-
-    fun openNetworkQuality() {
-        navigateTo(PrototypeScreen.NetworkQuality)
     }
 
     private fun startUsageTicker(hostMode: Boolean) {
