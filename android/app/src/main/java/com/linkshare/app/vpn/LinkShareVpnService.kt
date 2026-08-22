@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class LinkShareVpnService : VpnService() {
     companion object {
@@ -36,7 +37,7 @@ class LinkShareVpnService : VpnService() {
 
         tunnelInterface?.close()
         relay?.close()
-        relay = RelayTunnelClient(endpoint, token, sessionId, peerId, key)
+
         tunnelInterface = Builder()
             .setSession("LINKO tunnel")
             .addAddress("10.48.0.2", 32)
@@ -44,6 +45,15 @@ class LinkShareVpnService : VpnService() {
             .establish()
 
         val pfd = tunnelInterface ?: return START_NOT_STICKY
+        relay = RelayTunnelClient(endpoint, token, sessionId, peerId, key) { packet ->
+            runCatching {
+                FileOutputStream(pfd.fileDescriptor).use { output ->
+                    output.write(packet)
+                    output.flush()
+                }
+            }
+        }
+
         ioJob?.cancel()
         ioJob = CoroutineScope(Dispatchers.IO).launch {
             val connected = relay?.connect() == true
@@ -56,8 +66,7 @@ class LinkShareVpnService : VpnService() {
                 while (true) {
                     val count = input.read(packet)
                     if (count <= 0) break
-                    val sent = relay?.sendPacket(packet.copyOf(count)) == true
-                    if (!sent) break
+                    if (relay?.sendPacket(packet.copyOf(count)) != true) break
                 }
             }
         }
