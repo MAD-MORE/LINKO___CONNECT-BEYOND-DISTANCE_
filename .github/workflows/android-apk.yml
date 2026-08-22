@@ -27,14 +27,17 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses and install required SDK packages
+        working-directory: .
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -46,6 +49,7 @@ jobs:
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f app/build.gradle.kts
+          test -f gradle.properties
 
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
@@ -72,5 +76,3 @@ jobs:
           path: android/app/build/reports/tests/**
           if-no-files-found: ignore
           retention-days: 14
-
-      # Triggered by this workflow update so GitHub Actions starts immediately.
