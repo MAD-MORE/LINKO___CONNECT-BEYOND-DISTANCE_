@@ -1,0 +1,1 @@
+Connectivity integration target recorded for the LINKO Android client.
