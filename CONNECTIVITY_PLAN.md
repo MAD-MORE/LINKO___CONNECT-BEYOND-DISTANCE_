@@ -1,0 +1,1 @@
+Android app must communicate with the LINKO runtime engine and signaling backend. Do not hard-code localhost in release builds.
