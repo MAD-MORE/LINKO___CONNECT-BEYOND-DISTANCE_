@@ -28,12 +28,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
 
-    configurations.all {
-        resolutionStrategy {
-            force("androidx.core:core:1.16.0")
-            force("androidx.core:core-ktx:1.16.0")
-        }
+configurations.all {
+    resolutionStrategy {
+        force("androidx.core:core:1.16.0")
+        force("androidx.core:core-ktx:1.16.0")
     }
 }
 
