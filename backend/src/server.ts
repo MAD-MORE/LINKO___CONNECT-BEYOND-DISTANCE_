@@ -8,7 +8,13 @@ import { createSessionTunnelKey, getSessionTunnelKey, revokeSessionTunnelKey } f
 import { UdpTunnelEndpoint } from "./tunnel.js";
 import type { SessionState } from "./types.js";
 
-const store = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : new ControlPlaneStore();
+const production = process.env.NODE_ENV === "production";
+if (production && !process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL_required_in_production");
+}
+
+const postgresStore = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : null;
+const store = postgresStore ?? new ControlPlaneStore();
 const signaling = new SignalingBroker();
 const port = Number(process.env.PORT ?? 8080);
 const tunnelPort = Number(process.env.TUNNEL_PORT ?? 0);
@@ -41,12 +47,16 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      return json(res, 200, {
-        service: "linko-control-plane",
-        status: "ok",
-        persistence: process.env.DATABASE_URL ? "postgres" : "memory",
-        relay: tunnelEndpoint ? "enabled" : "disabled"
-      }, requestId);
+      let database = "memory";
+      if (postgresStore) {
+        try {
+          await postgresStore.health();
+          database = "postgres";
+        } catch {
+          return json(res, 503, { service: "linko-control-plane", status: "degraded", database: "unreachable", relay: tunnelEndpoint ? "enabled" : "disabled", requestId }, requestId);
+        }
+      }
+      return json(res, 200, { service: "linko-control-plane", status: "ok", database, persistence: database, relay: tunnelEndpoint ? "enabled" : "disabled" }, requestId);
     }
 
     if (req.method === "POST" && url.pathname === "/v1/devices") {
@@ -100,13 +110,7 @@ const server = createServer(async (req, res) => {
       const key = getSessionTunnelKey(session.id);
       if (!key) return json(res, 410, { error: "tunnel_key_unavailable", requestId }, requestId);
       if (!tunnelHost || !tunnelEndpoint) return json(res, 503, { error: "tunnel_endpoint_not_configured", requestId }, requestId);
-      return json(res, 200, {
-        sessionId: session.id,
-        endpoint: { host: tunnelHost, port: tunnelPort },
-        key: key.toString("base64url"),
-        role: authenticatedDevice.id === session.receiverDeviceId ? "receiver" : "provider",
-        expiresAt: session.expiresAt
-      }, requestId);
+      return json(res, 200, { sessionId: session.id, endpoint: { host: tunnelHost, port: tunnelPort }, key: key.toString("base64url"), role: authenticatedDevice.id === session.receiverDeviceId ? "receiver" : "provider", expiresAt: session.expiresAt }, requestId);
     }
 
     const signalTicketMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/signaling\/ticket$/);
