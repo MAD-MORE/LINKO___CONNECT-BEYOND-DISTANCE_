@@ -85,11 +85,10 @@ fun Avatar(initials: String, color: Color, size: androidx.compose.ui.unit.Dp = 4
 }
 
 data class Friend(val name: String, val id: String, val status: String, val color: Color)
-val sampleFriends = listOf(Friend("Kwame Mensah", "@kwame", "ONLINE", Green), Friend("Ama Owusu", "@ama", "ONLINE", Green), Friend("Kofi Asante", "@kofi", "AWAY", Yellow), Friend("Abena Poku", "@abena", "OFFLINE", TextMuted))
 
 @Composable
 fun FriendRow(friend: Friend, onClick: (() -> Unit)? = null) {
-    val initials = friend.name.split(" ").take(2).joinToString("") { it.first().toString() }
+    val initials = friend.name.split(" ").take(2).joinToString("") { it.firstOrNull()?.toString().orEmpty() }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).padding(vertical = 11.dp)) {
         Avatar(initials, friend.color); Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) { Text(friend.name, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Medium); Text(friend.id, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
