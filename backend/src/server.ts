@@ -2,10 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { ControlPlaneStore } from "./store.js";
 import { PostgresControlPlaneStore } from "./postgres-store.js";
+import { SignalingBroker, type SignalKind } from "./signaling.js";
 import { isBootstrapSecret, issueDeviceToken, verifyDeviceToken } from "./auth.js";
 import type { SessionState } from "./types.js";
 
 const store = process.env.DATABASE_URL ? new PostgresControlPlaneStore() : new ControlPlaneStore();
+const signaling = new SignalingBroker();
 const port = Number(process.env.PORT ?? 8080);
 
 function json(res: ServerResponse, status: number, body: unknown, requestId: string) {
@@ -37,13 +39,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/v1/devices") {
-      if (!isBootstrapSecret(req.headers["x-linko-bootstrap"]?.toString())) {
-        return json(res, 401, { error: "bootstrap_auth_required", requestId }, requestId);
-      }
+      if (!isBootstrapSecret(req.headers["x-linko-bootstrap"]?.toString())) return json(res, 401, { error: "bootstrap_auth_required", requestId }, requestId);
       const input = await body(req);
-      if (typeof input.userId !== "string" || typeof input.publicKey !== "string" || typeof input.name !== "string" || !Array.isArray(input.roles)) {
-        return json(res, 400, { error: "invalid_device", requestId }, requestId);
-      }
+      if (typeof input.userId !== "string" || typeof input.publicKey !== "string" || typeof input.name !== "string" || !Array.isArray(input.roles)) return json(res, 400, { error: "invalid_device", requestId }, requestId);
       const roles = input.roles.filter((role): role is "provider" | "receiver" => role === "provider" || role === "receiver");
       if (!roles.length) return json(res, 400, { error: "device_role_required", requestId }, requestId);
       const device = await store.registerDevice({ userId: input.userId, publicKey: input.publicKey, name: input.name, roles });
@@ -53,18 +51,12 @@ const server = createServer(async (req, res) => {
     const token = bearer(req);
     if (!token) return json(res, 401, { error: "authentication_required", requestId }, requestId);
     const authenticatedDevice = await store.getDevice(token.deviceId);
-    if (!authenticatedDevice || authenticatedDevice.userId !== token.sub || authenticatedDevice.revokedAt) {
-      return json(res, 401, { error: "device_not_authorized", requestId }, requestId);
-    }
+    if (!authenticatedDevice || authenticatedDevice.userId !== token.sub || authenticatedDevice.revokedAt) return json(res, 401, { error: "device_not_authorized", requestId }, requestId);
 
     if (req.method === "POST" && url.pathname === "/v1/sessions") {
       const input = await body(req);
-      if (typeof input.receiverDeviceId !== "string" || typeof input.providerDeviceId !== "string") {
-        return json(res, 400, { error: "invalid_session_request", requestId }, requestId);
-      }
-      if (authenticatedDevice.id !== input.receiverDeviceId && authenticatedDevice.id !== input.providerDeviceId) {
-        return json(res, 403, { error: "session_party_required", requestId }, requestId);
-      }
+      if (typeof input.receiverDeviceId !== "string" || typeof input.providerDeviceId !== "string") return json(res, 400, { error: "invalid_session_request", requestId }, requestId);
+      if (authenticatedDevice.id !== input.receiverDeviceId && authenticatedDevice.id !== input.providerDeviceId) return json(res, 403, { error: "session_party_required", requestId }, requestId);
       const session = await store.createSession(input.receiverDeviceId, input.providerDeviceId);
       return json(res, 201, session, requestId);
     }
@@ -73,9 +65,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && transitionMatch) {
       const session = await store.getSession(transitionMatch[1]);
       if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
-      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) {
-        return json(res, 403, { error: "session_party_required", requestId }, requestId);
-      }
+      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId);
       const input = await body(req);
       if (typeof input.state !== "string") return json(res, 400, { error: "state_required", requestId }, requestId);
       const next = input.state as SessionState;
@@ -84,13 +74,33 @@ const server = createServer(async (req, res) => {
       return json(res, 200, updated, requestId);
     }
 
+    const signalTicketMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/signaling\/ticket$/);
+    if (req.method === "POST" && signalTicketMatch) {
+      const session = await store.getSession(signalTicketMatch[1]);
+      if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
+      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId);
+      return json(res, 200, signaling.createTicket(session, authenticatedDevice.id), requestId);
+    }
+
+    const signalMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/signaling$/);
+    if (signalMatch && (req.method === "POST" || req.method === "GET")) {
+      const session = await store.getSession(signalMatch[1]);
+      if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
+      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId);
+      if (req.method === "POST") {
+        const input = await body(req);
+        if (!["offer", "answer", "ice"].includes(input.kind as string)) return json(res, 400, { error: "invalid_signal_kind", requestId }, requestId);
+        const envelope = signaling.publish(session, authenticatedDevice.id, input.kind as SignalKind, input.payload ?? null);
+        return json(res, 201, envelope, requestId);
+      }
+      return json(res, 200, { signals: signaling.drain(session, authenticatedDevice.id) }, requestId);
+    }
+
     const sessionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)$/);
     if (req.method === "GET" && sessionMatch) {
       const session = await store.getSession(sessionMatch[1]);
       if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId);
-      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) {
-        return json(res, 403, { error: "session_party_required", requestId }, requestId);
-      }
+      if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId);
       return json(res, 200, session, requestId);
     }
 
