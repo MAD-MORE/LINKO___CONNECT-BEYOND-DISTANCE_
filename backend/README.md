@@ -1,14 +1,24 @@
 # LINKO Control Plane
 
-Phase 5 backend foundation for authentication/device identity, authorization, session coordination and signaling.
+Phase 5 control-plane backend for authentication, device identity, authorization, session coordination and signaling.
 
-## Current implementation
+## Database
 
-- `src/server.ts` — HTTP API service
-- `src/store.ts` — authoritative in-memory session/device state machine for development/tests
-- `src/types.ts` — API/domain contracts
-- `src/store.test.ts` — lifecycle and revocation tests
-- `migrations/001_control_plane.sql` — PostgreSQL persistence baseline with RLS enabled
+LINKO uses PostgreSQL for production persistence. Set `DATABASE_URL` in the backend deployment environment. The production backend selects `PostgresControlPlaneStore` whenever `DATABASE_URL` is present and refuses to start in production without it.
+
+The production schema is tracked in `migrations/002_linko_production.sql` and is also applied to the dedicated Supabase project used by LINKO.
+
+Required environment variables:
+
+```bash
+PORT=8080
+DATABASE_URL=postgresql://<backend-db-user>:<password>@<linko-db-host>:5432/postgres
+DATABASE_SSL=true
+LINKO_AUTH_SECRET=<random-secret>
+LINKO_BOOTSTRAP_SECRET=<random-secret>
+```
+
+Never commit `DATABASE_URL`, database passwords, auth secrets, or bootstrap secrets.
 
 ## API
 
@@ -17,15 +27,16 @@ Phase 5 backend foundation for authentication/device identity, authorization, se
 - `POST /v1/sessions`
 - `GET /v1/sessions/:id`
 - `POST /v1/sessions/:id/transition`
+- `POST /v1/sessions/:id/signaling/ticket`
+- `POST /v1/sessions/:id/signaling`
+- `GET /v1/sessions/:id/signaling`
+- `GET /v1/sessions/:id/tunnel`
 
-## Invariants
+## Production database
 
-1. Authorization is a backend decision; clients cannot directly choose a connected state.
-2. Session transitions follow an explicit state machine.
-3. Device revocation propagates to active sessions.
-4. Session commands are safe to retry when the requested transition is already represented by the current state or rejected as invalid.
-5. The control plane stores metadata only; it does not store traffic payloads.
-6. Secrets/configuration are supplied through environment variables and are never committed.
+The control plane stores metadata only: device identity, roles, session state and tunnel authorization metadata. It does not store application traffic payloads.
+
+RLS is enabled on the public control-plane tables as defense in depth. Anonymous and authenticated Data API roles are not granted access to these tables; the trusted backend is the system that accesses the database.
 
 ## Development
 
@@ -35,5 +46,3 @@ npm test
 npm run build
 npm start
 ```
-
-The current store is intentionally in-memory. Production completion of Phase 5 requires wiring the migration to the selected PostgreSQL staging environment, real authentication/device credentials, quotas, background events, signaling transport, security tests and staging deployment evidence.
