@@ -44,7 +44,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 201, await requireStore().createRequest({ receiverId: body.receiverId, providerId: body.providerId, expiresAt }));
     }
 
-    if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'providers' && parts[2] === 'requests' && parts[3] === 'pending' && parts[2]) {
+    if (req.method === 'GET' && parts[0] === 'v1' && parts[1] === 'providers' && parts[2] && parts[3] === 'requests' && parts[4] === 'pending') {
       return json(res, 200, { items: await requireStore().listPendingRequests(parts[2]) });
     }
 
@@ -53,7 +53,10 @@ const server = http.createServer(async (req, res) => {
       if (!request || new Date(request.expires_at).getTime() <= Date.now()) return json(res, 404, { error: 'request not found or expired' });
       if (req.method === 'GET' && parts.length === 3) return json(res, 200, request);
       if (req.method === 'POST' && (parts[3] === 'approve' || parts[3] === 'deny')) {
-        return json(res, 200, await requireStore().setRequestStatus(parts[2], parts[3] === 'approve' ? 'approved' : 'denied'));
+        const body = await readBody(req);
+        if (!body.providerId || body.providerId !== request.provider_id) return json(res, 403, { error: 'provider is not authorized for this request' });
+        const nextStatus = parts[3] === 'approve' ? 'approved' : 'denied';
+        return json(res, 200, await requireStore().setRequestStatus(parts[2], nextStatus));
       }
       if (req.method === 'POST' && parts[3] === 'session') {
         if (request.status !== 'approved') return json(res, 409, { error: 'request is not approved' });
