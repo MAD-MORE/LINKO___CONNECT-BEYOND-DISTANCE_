@@ -66,6 +66,12 @@ class LinkShareViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Compatibility entry point for the frozen prototype's friend-selection callback.
+     * Selecting a friend starts the existing production connection flow.
+     */
+    fun selectFriend(friend: Friend) = connectToFriend(friend)
+
     fun connectToFriend(friend: Friend) {
         if (!friend.isSharing) {
             _uiState.update {
