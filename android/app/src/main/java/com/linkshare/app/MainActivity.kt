@@ -104,7 +104,14 @@ fun LinkoApp() {
 }
 private fun now() = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
 
-@Composable private fun AppBar(title: String, onBack: () -> Unit) { Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) { Box(Alignment.Center, Modifier.size(44.dp).clickable { onBack() }) { Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }; Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold) } }
+@Composable private fun AppBar(title: String, onBack: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(44.dp).clickable { onBack() }, contentAlignment = Alignment.Center) {
+            Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono)
+        }
+        Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
+    }
+}
 
 private val titles = mapOf(
     "create_account" to "Create Account", "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Key Revoked", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account"
@@ -120,7 +127,9 @@ private val items = listOf(NavItem("HOME","HOME",Screen.HomeEngine.route,"⌂"),
         items.forEach { item ->
             val selected = active == item.tab
             Column(Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Alignment.Center, Modifier.size(40.dp,28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha=.12f) else Color.Transparent)) { Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp) }
+                Box(modifier = Modifier.size(40.dp,28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha=.12f) else Color.Transparent), contentAlignment = Alignment.Center) {
+                    Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp)
+                }
                 Spacer(Modifier.height(4.dp)); Text(item.label, color = if (selected) Blue else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             }
         }
