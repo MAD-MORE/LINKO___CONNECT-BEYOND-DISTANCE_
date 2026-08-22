@@ -1,0 +1,1 @@
+Connectivity integration is intentionally isolated from the Compose UI. Runtime networking should be configured through BuildConfig and a single LinkoConnectivity entry point.
