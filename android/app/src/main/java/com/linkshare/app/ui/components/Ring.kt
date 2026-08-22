@@ -81,7 +81,7 @@ fun Ring(color: Color, size: Dp = 160.dp, pulse: Boolean = false, idle: Boolean 
         if (label != null) {
             Canvas(modifier = Modifier.size(size)) {
                 val measured = textMeasurer.measure(label, style = TextStyle(fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, fontSize = 9.5.sp, letterSpacing = 0.2.sp, color = color))
-                drawText(textLayoutResult = measured, topLeft = Offset((this.size.width - measured.size.width) / 2f, (this.size.height - measured.size.height) / 2f))
+                drawText(measured, topLeft = Offset((this.size.width - measured.size.width) / 2f, (this.size.height - measured.size.height) / 2f))
             }
         }
     }
