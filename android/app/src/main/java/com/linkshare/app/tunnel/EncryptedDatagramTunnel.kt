@@ -44,7 +44,7 @@ class EncryptedDatagramTunnel(
         val buffer = ByteArray(MAX_FRAME + sessionHeader.size + 2)
         val packet = DatagramPacket(buffer, buffer.size)
         socket.receive(packet)
-        val separator = buffer.indexOf(0, 0)
+        val separator = findSeparator(buffer, sessionHeader.size, packet.length)
         if (separator != sessionHeader.size || !buffer.copyOfRange(0, separator).contentEquals(sessionHeader)) return null
         val targetRole = buffer[separator + 1].toInt()
         if (targetRole != if (role == Role.RECEIVER) 0 else 1) return null
@@ -62,6 +62,11 @@ class EncryptedDatagramTunnel(
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun findSeparator(buffer: ByteArray, expected: Int, length: Int): Int {
+        if (expected >= length) return -1
+        return if (buffer[expected].toInt() == 0) expected else -1
     }
 
     override fun close() = socket.close()
