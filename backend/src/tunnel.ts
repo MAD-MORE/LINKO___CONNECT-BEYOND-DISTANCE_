@@ -2,22 +2,24 @@ import dgram from "node:dgram";
 import { randomBytes } from "node:crypto";
 import { decryptPacket, encryptPacket } from "./crypto.js";
 
+export type TunnelRole = "receiver" | "provider";
 export interface TunnelPeer { address: string; port: number }
-export interface TunnelSession { id: string; key: Buffer; receiver?: TunnelPeer }
+export interface TunnelSession {
+  id: string;
+  key: Buffer;
+  receiver?: TunnelPeer;
+  provider?: TunnelPeer;
+}
 
 export function createTunnelKey(): Buffer {
   return randomBytes(32);
 }
 
-export interface ProviderPacketForwarder {
-  forward(sessionId: string, packet: Buffer): Promise<Buffer | null>;
-}
-
-/** Authenticated UDP tunnel endpoint. Network access stays behind the provider adapter. */
+/** Encrypted two-peer relay. It terminates LINKO's authenticated frame only to validate it,
+ * then re-encrypts the plaintext with the same session key before delivering to the other peer. */
 export class UdpTunnelEndpoint {
   private readonly socket = dgram.createSocket("udp4");
   private readonly sessions = new Map<string, TunnelSession>();
-  private forwarder?: ProviderPacketForwarder;
 
   constructor(private readonly bindPort: number) {}
 
@@ -30,47 +32,41 @@ export class UdpTunnelEndpoint {
     this.sessions.delete(sessionId);
   }
 
-  setForwarder(forwarder: ProviderPacketForwarder): void {
-    this.forwarder = forwarder;
-  }
-
   start(): void {
-    this.socket.on("message", async (wire, remote) => {
-      const separator = wire.indexOf(0);
-      if (separator <= 0 || separator > 128) return;
-      const sessionId = wire.subarray(0, separator).toString("utf8");
+    this.socket.on("message", (wire, remote) => {
+      const sessionEnd = wire.indexOf(0);
+      if (sessionEnd <= 0 || sessionEnd > 128) return;
+      const roleCode = wire[sessionEnd + 1];
+      const senderRole: TunnelRole = roleCode === 0 ? "receiver" : roleCode === 1 ? "provider" : (() => { throw new Error("invalid_tunnel_role"); })();
+      const sessionId = wire.subarray(0, sessionEnd).toString("utf8");
       const session = this.sessions.get(sessionId);
       if (!session) return;
 
       try {
-        const plaintext = decryptPacket(session.key, wire.subarray(separator + 1));
-        session.receiver = { address: remote.address, port: remote.port };
-        const response = await this.forwarder?.forward(sessionId, Buffer.from(plaintext));
-        if (response) this.send(sessionId, response);
+        const plaintext = decryptPacket(session.key, wire.subarray(sessionEnd + 2));
+        const peer = { address: remote.address, port: remote.port };
+        if (senderRole === "receiver") session.receiver = peer;
+        else session.provider = peer;
+
+        const targetRole: TunnelRole = senderRole === "receiver" ? "provider" : "receiver";
+        const target = targetRole === "receiver" ? session.receiver : session.provider;
+        if (!target || (senderRole === "receiver" ? !session.provider : !session.receiver)) return;
+
+        const frame = encryptPacket(session.key, plaintext);
+        const header = Buffer.concat([
+          Buffer.from(session.id), Buffer.from([0]), Buffer.from([targetRole === "receiver" ? 0 : 1])
+        ]);
+        this.socket.send(Buffer.concat([header, frame]), target.port, target.address);
       } catch {
-        // Invalid authentication, malformed frames and unavailable sessions are dropped.
+        // Drop malformed, expired, or unauthenticated datagrams.
       }
     });
     this.socket.bind(this.bindPort);
   }
 
-  send(sessionId: string, plaintext: Uint8Array): void {
-    const session = this.sessions.get(sessionId);
-    if (!session?.receiver) throw new Error("tunnel_peer_unavailable");
-    const frame = encryptPacket(session.key, plaintext);
-    const wire = Buffer.concat([Buffer.from(sessionId), Buffer.from([0]), frame]);
-    this.socket.send(wire, session.receiver.port, session.receiver.address);
-  }
-
   close(): void {
     this.socket.close();
+    for (const session of this.sessions.values()) session.key.fill(0);
     this.sessions.clear();
-  }
-}
-
-/** Safe default: prevents accidental forwarding until a real provider adapter is configured. */
-export class UnconfiguredProviderForwarder implements ProviderPacketForwarder {
-  async forward(): Promise<Buffer | null> {
-    throw new Error("provider_network_forwarder_not_configured");
   }
 }
