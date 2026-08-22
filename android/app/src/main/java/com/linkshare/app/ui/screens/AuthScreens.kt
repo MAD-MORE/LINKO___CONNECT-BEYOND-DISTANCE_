@@ -1,5 +1,8 @@
 package com.linkshare.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -27,9 +30,7 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
-    ) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(8.dp))
         Text("Sign In", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
