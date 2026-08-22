@@ -22,7 +22,7 @@ import com.linkshare.app.ui.theme.*
 fun SettingsScreen(onProfile: () -> Unit, onDevices: () -> Unit, onFriends: () -> Unit, onBlocked: () -> Unit, onHistory: () -> Unit, onSecurity: () -> Unit, onPrivacy: () -> Unit, onDataRetention: () -> Unit, onDeleteAccount: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().background(Surface).padding(horizontal = 16.dp, vertical = 20.dp)) {
-            Box(Alignment.Center, Modifier.size(56.dp).clip(CircleShape).background(Blue.copy(alpha = 0.13f)).border(2.dp, Blue.copy(alpha = 0.35f), CircleShape)) { Text("P", color = Blue, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
+            Box(modifier = Modifier.size(56.dp).clip(CircleShape).background(Blue.copy(alpha = 0.13f)).border(2.dp, Blue.copy(alpha = 0.35f), CircleShape), contentAlignment = Alignment.Center) { Text("P", color = Blue, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
             Spacer(Modifier.width(16.dp)); Column { Text("Padmore", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Text("@padmore", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(5.dp)); StatusChip("VERIFIED", Green) }
         }
         Column(Modifier.padding(horizontal = 16.dp)) {
