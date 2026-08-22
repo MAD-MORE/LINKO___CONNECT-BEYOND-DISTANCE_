@@ -4,6 +4,7 @@ sealed class Screen(val route: String) {
     object Welcome         : Screen("welcome")
     object SignIn          : Screen("sign_in")
     object SignUp          : Screen("sign_up")
+    object ForgotPassword  : Screen("forgot_password")
     object CreateAccount   : Screen("create_account")
     object Verify          : Screen("verify")
     object Profile         : Screen("profile")
@@ -48,7 +49,7 @@ sealed class Screen(val route: String) {
 
 val onboardingScreens = setOf(
     Screen.Welcome.route, Screen.SignIn.route, Screen.SignUp.route,
-    Screen.CreateAccount.route, Screen.Verify.route,
+    Screen.ForgotPassword.route, Screen.CreateAccount.route, Screen.Verify.route,
     Screen.Profile.route, Screen.RegisterDevice.route, Screen.Permissions.route,
 )
 
