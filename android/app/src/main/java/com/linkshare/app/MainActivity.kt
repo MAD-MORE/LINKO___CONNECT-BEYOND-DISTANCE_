@@ -22,7 +22,6 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.*
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoRuntime
-import com.linkshare.app.network.LinkoRuntimeConfig
 import com.linkshare.app.ui.screens.*
 import com.linkshare.app.ui.theme.*
 
@@ -92,7 +91,11 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                             }
                         },
                         onCreateAccount = { nav.navigate(Screen.SignUp.route) },
+                        onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) },
                     )
+                }
+                composable(Screen.ForgotPassword.route) {
+                    ForgotPasswordScreen { nav.navigate(Screen.SignIn.route) }
                 }
                 composable(Screen.CreateAccount.route) {
                     CreateAccountScreen { nav.navigate(Screen.Verify.route) }
@@ -208,10 +211,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
 @Composable
 private fun AppBar(title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier.size(44.dp).clickable { onBack() },
-            contentAlignment = Alignment.Center,
-        ) {
+        Box(modifier = Modifier.size(44.dp).clickable { onBack() }, contentAlignment = Alignment.Center) {
             Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono)
         }
         Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
@@ -219,7 +219,7 @@ private fun AppBar(title: String, onBack: () -> Unit) {
 }
 
 private val titles = mapOf(
-    "sign_in" to "Sign In", "sign_up" to "Create Account", "create_account" to "Create Account",
+    "sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "create_account" to "Create Account",
     "verify" to "Verify Account", "profile" to "Profile", "register_device" to "Register Device",
     "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends",
     "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request",
@@ -249,26 +249,12 @@ private fun BottomNav(route: String, nav: NavController) {
     Row(Modifier.fillMaxWidth().background(Surface).border(1.dp, Border)) {
         items.forEach { item ->
             val selected = active == item.tab
-            Column(
-                Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier.size(40.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(
-                        if (selected) Blue.copy(alpha = .12f) else Color.Transparent
-                    ),
-                    contentAlignment = Alignment.Center,
-                ) {
+            Column(Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(modifier = Modifier.size(40.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha = .12f) else Color.Transparent), contentAlignment = Alignment.Center) {
                     Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp)
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    item.label,
-                    color = if (selected) Blue else TextMuted,
-                    fontSize = 9.sp,
-                    fontFamily = JetBrainsMono,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text(item.label, color = if (selected) Blue else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             }
         }
     }
