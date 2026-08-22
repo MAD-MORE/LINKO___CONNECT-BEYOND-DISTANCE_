@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Base64
+import com.linkshare.app.tunnel.ProviderGateway
 import com.linkshare.app.tunnel.RelayTunnelClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,10 +20,12 @@ class LinkShareVpnService : VpnService() {
         const val EXTRA_SESSION_KEY = "linko.session_key"
         const val EXTRA_RELAY_ENDPOINT = "linko.relay_endpoint"
         const val EXTRA_RELAY_TOKEN = "linko.relay_token"
+        const val EXTRA_PROVIDER_MODE = "linko.provider_mode"
     }
 
     private var tunnelInterface: ParcelFileDescriptor? = null
     private var relay: RelayTunnelClient? = null
+    private var providerGateway: ProviderGateway? = null
     private var ioJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -31,13 +34,34 @@ class LinkShareVpnService : VpnService() {
         val keyText = intent.getStringExtra(EXTRA_SESSION_KEY) ?: return START_NOT_STICKY
         val endpoint = intent.getStringExtra(EXTRA_RELAY_ENDPOINT) ?: return START_NOT_STICKY
         val token = intent.getStringExtra(EXTRA_RELAY_TOKEN) ?: return START_NOT_STICKY
-        val key = runCatching { Base64.decode(keyText, Base64.NO_WRAP) }.getOrNull()
-            ?: return START_NOT_STICKY
+        val providerMode = intent.getBooleanExtra(EXTRA_PROVIDER_MODE, false)
+        val key = runCatching { Base64.decode(keyText, Base64.NO_WRAP) }.getOrNull() ?: return START_NOT_STICKY
         if (key.size != 32 || !endpoint.startsWith("wss://") || token.isBlank()) return START_NOT_STICKY
 
-        tunnelInterface?.close()
-        relay?.close()
+        tunnelInterface?.close(); tunnelInterface = null
+        relay?.close(); relay = null
+        providerGateway?.close(); providerGateway = null
 
+        if (providerMode) {
+            providerGateway = ProviderGateway { packet -> relay?.sendPacket(packet) == true }
+            relay = RelayTunnelClient(endpoint, token, sessionId, peerId, key) { packet ->
+                providerGateway?.forwardIpv4(packet)
+            }
+            ioJob?.cancel()
+            ioJob = CoroutineScope(Dispatchers.IO).launch {
+                if (relay?.connect() != true) stopSelf()
+            }
+            return START_NOT_STICKY
+        }
+
+        relay = RelayTunnelClient(endpoint, token, sessionId, peerId, key) { packet ->
+            runCatching {
+                FileOutputStream(tunnelInterface?.fileDescriptor ?: return@runCatching).use { output ->
+                    output.write(packet)
+                    output.flush()
+                }
+            }
+        }
         tunnelInterface = Builder()
             .setSession("LINKO tunnel")
             .addAddress("10.48.0.2", 32)
@@ -45,15 +69,6 @@ class LinkShareVpnService : VpnService() {
             .establish()
 
         val pfd = tunnelInterface ?: return START_NOT_STICKY
-        relay = RelayTunnelClient(endpoint, token, sessionId, peerId, key) { packet ->
-            runCatching {
-                FileOutputStream(pfd.fileDescriptor).use { output ->
-                    output.write(packet)
-                    output.flush()
-                }
-            }
-        }
-
         ioJob?.cancel()
         ioJob = CoroutineScope(Dispatchers.IO).launch {
             val connected = relay?.connect() == true
@@ -74,12 +89,10 @@ class LinkShareVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        ioJob?.cancel()
-        ioJob = null
-        relay?.close()
-        relay = null
-        tunnelInterface?.close()
-        tunnelInterface = null
+        ioJob?.cancel(); ioJob = null
+        providerGateway?.close(); providerGateway = null
+        relay?.close(); relay = null
+        tunnelInterface?.close(); tunnelInterface = null
         super.onDestroy()
     }
 }
