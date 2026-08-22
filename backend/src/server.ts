@@ -24,6 +24,9 @@ const tunnelHost = process.env.TUNNEL_HOST;
 const tunnelEndpoint = tunnelPort > 0 ? new UdpTunnelEndpoint(tunnelPort) : null;
 if (tunnelEndpoint) tunnelEndpoint.start();
 
+const supabaseUrl = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
+const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+
 function json(res: ServerResponse, status: number, body: unknown, requestId: string) {
   res.writeHead(status, { "content-type": "application/json", "x-request-id": requestId, "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -43,6 +46,26 @@ function bearer(req: IncomingMessage) {
   return value?.startsWith("Bearer ") ? verifyDeviceToken(value.slice(7)) : null;
 }
 
+function supabaseBearer(req: IncomingMessage) {
+  const value = req.headers.authorization;
+  return value?.startsWith("Bearer ") ? value.slice(7).trim() : null;
+}
+
+async function verifySupabaseUser(accessToken: string): Promise<{ id: string; email?: string }> {
+  if (!supabaseUrl || !supabasePublishableKey) throw new Error("supabase_auth_not_configured");
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: supabasePublishableKey,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) throw new Error("supabase_auth_invalid");
+  const user = await response.json() as { id?: string; email?: string };
+  if (!user.id) throw new Error("supabase_user_invalid");
+  return { id: user.id, email: user.email };
+}
+
 const server = createServer(async (req, res) => {
   const requestId = req.headers["x-request-id"]?.toString() || randomUUID();
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -59,6 +82,18 @@ const server = createServer(async (req, res) => {
         }
       }
       return json(res, 200, { service: "linko-control-plane", status: "ok", database, persistence: database, relay: tunnelEndpoint ? "enabled" : "disabled" }, requestId);
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/devices/register") {
+      const accessToken = supabaseBearer(req);
+      if (!accessToken) return json(res, 401, { error: "supabase_auth_required", requestId }, requestId);
+      const user = await verifySupabaseUser(accessToken);
+      const input = await body(req);
+      if (typeof input.publicKey !== "string" || typeof input.name !== "string" || !Array.isArray(input.roles)) return json(res, 400, { error: "invalid_device", requestId }, requestId);
+      const roles = input.roles.filter((role): role is "provider" | "receiver" => role === "provider" || role === "receiver");
+      if (!roles.length) return json(res, 400, { error: "device_role_required", requestId }, requestId);
+      const device = await store.registerDevice({ userId: user.id, publicKey: input.publicKey, name: input.name, roles });
+      return json(res, 201, { device, accessToken: issueDeviceToken(device.userId, device.id), user: { id: user.id, email: user.email } }, requestId);
     }
 
     if (req.method === "POST" && url.pathname === "/v1/devices") {
@@ -148,7 +183,7 @@ const server = createServer(async (req, res) => {
     return json(res, 404, { error: "not_found", requestId }, requestId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "internal_error";
-    const status = message.startsWith("invalid_") || message.includes("required") ? 400 : message.includes("not_found") ? 404 : 409;
+    const status = message.startsWith("invalid_") || message.includes("required") ? 400 : message.includes("not_found") ? 404 : message.startsWith("supabase_auth") ? 401 : 409;
     return json(res, status, { error: message, requestId }, requestId);
   }
 });
