@@ -4,78 +4,12 @@ import type { Device, Session, SessionState } from "./types.js";
 export class ControlPlaneStore {
   private readonly devices = new Map<string, Device>();
   private readonly sessions = new Map<string, Session>();
-
-  registerDevice(input: Omit<Device, "id" | "lastSeenAt">): Device {
-    const device: Device = { ...input, id: randomUUID(), lastSeenAt: Date.now() };
-    this.devices.set(device.id, device);
-    return device;
-  }
-
-  getDevice(id: string): Device | undefined {
-    return this.devices.get(id);
-  }
-
-  touchDevice(id: string): Device {
-    const device = this.devices.get(id);
-    if (!device || device.revokedAt) throw new Error("device_not_available");
-    device.lastSeenAt = Date.now();
-    return device;
-  }
-
-  revokeDevice(id: string): void {
-    const device = this.devices.get(id);
-    if (!device) throw new Error("device_not_found");
-    device.revokedAt = Date.now();
-    for (const session of this.sessions.values()) {
-      if (session.receiverDeviceId === id || session.providerDeviceId === id) {
-        if (!["revoked", "expired", "denied"].includes(session.state)) {
-          session.state = "revoked";
-          session.revokedAt = Date.now();
-        }
-      }
-    }
-  }
-
-  createSession(receiverDeviceId: string, providerDeviceId: string, ttlSeconds = 300): Session {
-    const receiver = this.getDevice(receiverDeviceId);
-    const provider = this.getDevice(providerDeviceId);
-    if (!receiver || receiver.revokedAt) throw new Error("receiver_not_available");
-    if (!provider || provider.revokedAt) throw new Error("provider_not_available");
-    if (!receiver.roles.includes("receiver")) throw new Error("receiver_role_required");
-    if (!provider.roles.includes("provider")) throw new Error("provider_role_required");
-
-    const now = Date.now();
-    const session: Session = {
-      id: randomUUID(), receiverDeviceId, providerDeviceId,
-      state: "requested", createdAt: now, expiresAt: now + ttlSeconds * 1000
-    };
-    this.sessions.set(session.id, session);
-    return session;
-  }
-
-  transitionSession(id: string, next: SessionState): Session {
-    const session = this.sessions.get(id);
-    if (!session) throw new Error("session_not_found");
-    if (session.expiresAt <= Date.now() && !["expired", "revoked", "denied"].includes(session.state)) {
-      session.state = "expired";
-      throw new Error("session_expired");
-    }
-
-    const allowed: Record<SessionState, SessionState[]> = {
-      requested: ["approved", "denied", "expired", "revoked"],
-      approved: ["signaling", "revoked", "expired"],
-      signaling: ["connected", "revoked", "expired"],
-      connected: ["revoked", "expired"],
-      revoked: [], expired: [], denied: []
-    };
-    if (!allowed[session.state].includes(next)) throw new Error(`invalid_transition:${session.state}->${next}`);
-    session.state = next;
-    if (next === "approved") session.approvedAt = Date.now();
-    if (next === "revoked") session.revokedAt = Date.now();
-    return session;
-  }
-
-  getSession(id: string): Session | undefined {
-    return this.sessions.get(id);
-  }
+  registerDevice(input: Omit<Device, "id" | "lastSeenAt">): Device { const device: Device = { ...input, id: randomUUID(), lastSeenAt: Date.now() }; this.devices.set(device.id, device); return device; }
+  getDevice(id: string): Device | undefined { return this.devices.get(id); }
+  listPendingProviderSessions(providerDeviceId: string): Session[] { return [...this.sessions.values()].filter(s => s.providerDeviceId === providerDeviceId && s.state === "requested" && s.expiresAt > Date.now()); }
+  touchDevice(id: string): Device { const device = this.devices.get(id); if (!device || device.revokedAt) throw new Error("device_not_available"); device.lastSeenAt = Date.now(); return device; }
+  revokeDevice(id: string): void { const device = this.devices.get(id); if (!device) throw new Error("device_not_found"); device.revokedAt = Date.now(); for (const session of this.sessions.values()) if ((session.receiverDeviceId === id || session.providerDeviceId === id) && !["revoked","expired","denied"].includes(session.state)) { session.state = "revoked"; session.revokedAt = Date.now(); } }
+  createSession(receiverDeviceId: string, providerDeviceId: string, ttlSeconds = 300): Session { const receiver = this.getDevice(receiverDeviceId); const provider = this.getDevice(providerDeviceId); if (!receiver || receiver.revokedAt) throw new Error("receiver_not_available"); if (!provider || provider.revokedAt) throw new Error("provider_not_available"); if (!receiver.roles.includes("receiver")) throw new Error("receiver_role_required"); if (!provider.roles.includes("provider")) throw new Error("provider_role_required"); const now = Date.now(); const session: Session = { id: randomUUID(), receiverDeviceId, providerDeviceId, state: "requested", createdAt: now, expiresAt: now + ttlSeconds * 1000 }; this.sessions.set(session.id, session); return session; }
+  transitionSession(id: string, next: SessionState): Session { const session = this.sessions.get(id); if (!session) throw new Error("session_not_found"); if (session.expiresAt <= Date.now() && !["expired","revoked","denied"].includes(session.state)) { session.state = "expired"; throw new Error("session_expired"); } const allowed: Record<SessionState, SessionState[]> = { requested:["approved","denied","expired","revoked"], approved:["signaling","revoked","expired"], signaling:["connected","revoked","expired"], connected:["revoked","expired"], revoked:[], expired:[], denied:[] }; if (!allowed[session.state].includes(next)) throw new Error(`invalid_transition:${session.state}->${next}`); session.state = next; if (next === "approved") session.approvedAt = Date.now(); if (next === "revoked") session.revokedAt = Date.now(); return session; }
+  getSession(id: string): Session | undefined { return this.sessions.get(id); }
 }
