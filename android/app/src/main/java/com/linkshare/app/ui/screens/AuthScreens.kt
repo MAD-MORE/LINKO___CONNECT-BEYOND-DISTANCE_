@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () -> Unit) {
+fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () -> Unit, onForgotPassword: () -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -47,7 +47,9 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
             Spacer(Modifier.height(12.dp))
             LinkoCard { Text(it, color = if (it == "Authenticated") Green else Yellow, fontSize = 11.sp, fontFamily = JetBrainsMono) }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(8.dp))
+        GhostButton("FORGOT PASSWORD?", onForgotPassword)
+        Spacer(Modifier.height(8.dp))
         PrimaryButton(if (busy) "SIGNING IN…" else "SIGN IN", onClick = {
             if (busy) return@PrimaryButton
             busy = true
@@ -72,8 +74,10 @@ fun SignInScreen(auth: LinkoAuth, onSignedIn: () -> Unit, onCreateAccount: () ->
 private fun friendlyAuthError(result: AuthResult): String = when (result.message) {
     "valid_email_required" -> "Enter a valid email address."
     "password_min_8_chars" -> "Password must be at least 8 characters."
+    "password_max_72_chars" -> "Password is too long. Use 72 characters or fewer."
     "session_missing" -> "Your session has expired. Please sign in again."
     "invalid_credentials" -> "Incorrect email or password."
+    "too_many_requests" -> "Too many attempts. Please wait and try again."
     else -> result.message.replace('_', ' ')
 }
 
