@@ -88,7 +88,9 @@ fun LinkoApp() {
             }
         }
         if (!onboarding) BottomNav(route, nav)
-        Box(Alignment.Center, Modifier.fillMaxWidth().height(22.dp)) { Box(Modifier.width(100.dp).height(4.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = .2f))) }
+        Box(modifier = Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(100.dp).height(4.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = .2f)))
+        }
     }
 }
 
