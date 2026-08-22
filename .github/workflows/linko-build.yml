@@ -1,17 +1,15 @@
 name: LINKO Android Build
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build:
+    name: Build LINKO APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,7 +28,7 @@ jobs:
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
+          gradle-version: '8.9'
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
       - name: Upload APK
