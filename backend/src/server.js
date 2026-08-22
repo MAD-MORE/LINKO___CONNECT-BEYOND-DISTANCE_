@@ -55,8 +55,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && (parts[3] === 'approve' || parts[3] === 'deny')) {
         const body = await readBody(req);
         if (!body.providerId || body.providerId !== request.provider_id) return json(res, 403, { error: 'provider is not authorized for this request' });
-        const nextStatus = parts[3] === 'approve' ? 'approved' : 'denied';
-        return json(res, 200, await requireStore().setRequestStatus(parts[2], nextStatus));
+        return json(res, 200, await requireStore().setRequestStatus(parts[2], parts[3] === 'approve' ? 'approved' : 'denied'));
       }
       if (req.method === 'POST' && parts[3] === 'session') {
         if (request.status !== 'approved') return json(res, 409, { error: 'request is not approved' });
@@ -67,6 +66,28 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === 'v1' && parts[1] === 'sessions' && parts[2]) {
       const session = await requireStore().getSession(parts[2]);
       if (!session || new Date(session.expires_at).getTime() <= Date.now()) return json(res, 404, { error: 'session not found or expired' });
+
+      if (req.method === 'POST' && parts[3] === 'key') {
+        const body = await readBody(req);
+        if (!['receiver', 'provider'].includes(body.role) || typeof body.publicKey !== 'string' || body.publicKey.length < 32 || body.publicKey.length > 8192) {
+          return json(res, 400, { error: 'invalid public-key payload' });
+        }
+        const updated = await requireStore().setSessionPublicKey(session.id, body.role, body.publicKey);
+        return json(res, 200, {
+          sessionId: updated.id,
+          receiverPublicKey: updated.receiver_public_key || null,
+          providerPublicKey: updated.provider_public_key || null,
+        });
+      }
+
+      if (req.method === 'GET' && parts[3] === 'key') {
+        return json(res, 200, {
+          sessionId: session.id,
+          receiverPublicKey: session.receiver_public_key || null,
+          providerPublicKey: session.provider_public_key || null,
+        });
+      }
+
       if (req.method === 'POST' && parts[3] === 'negotiate') {
         const body = await readBody(req);
         if (!['offer', 'answer', 'candidate'].includes(body.type) || typeof body.payload !== 'string' || !body.payload) return json(res, 400, { error: 'invalid negotiation envelope' });
