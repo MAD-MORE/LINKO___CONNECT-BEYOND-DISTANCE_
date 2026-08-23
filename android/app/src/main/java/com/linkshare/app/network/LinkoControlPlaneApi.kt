@@ -33,6 +33,7 @@ class LinkoControlPlaneApi(
 
     override suspend fun denyRequest(requestId: String) = withContext(Dispatchers.IO) {
         request("POST", "/v1/sessions/$requestId/transition", JSONObject().put("state", "denied"))
+        Unit
     }
 
     suspend fun getPendingProviderRequests(): List<ProviderRequest> = withContext(Dispatchers.IO) {
