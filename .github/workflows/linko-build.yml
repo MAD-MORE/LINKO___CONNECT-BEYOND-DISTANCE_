@@ -1,4 +1,4 @@
-name: LINKO Android Build
+name: LINKO Build & Integrity
 
 on:
   push:
@@ -11,7 +11,38 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  backend:
+    name: Backend contract and test gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Verify backend package metadata
+        run: |
+          test -f package.json
+          test -f tsconfig.json
+
+      - name: Install backend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Backend tests
+        run: npm test
+
+  android:
     name: Build LINKO APK
     runs-on: ubuntu-latest
     defaults:
@@ -42,30 +73,20 @@ jobs:
 
       - name: Verify Android project
         run: |
+          set -euo pipefail
           test -f settings.gradle.kts
           test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f gradle.properties
           test -f scripts/validate_kotlin.py
+          test -f scripts/verify_linko_integrity.py
           echo "Building commit: $(git -C .. rev-parse HEAD)"
 
-      # Keep this normalization deterministic while the prototype UI remains the source of truth.
-      - name: Normalize Compose imports before compilation
-        run: |
-          set -euo pipefail
-          AUTH_DIR="app/src/main/java/com/linkshare/app/ui/screens"
-          grep -q '^import androidx.compose.foundation.background$' "$AUTH_DIR/SignUpScreen.kt" || \
-            sed -i '2i import androidx.compose.foundation.background' "$AUTH_DIR/SignUpScreen.kt"
-          grep -q '^import androidx.compose.foundation.background$' "$AUTH_DIR/AuthScreens.kt" || \
-            sed -i '2i import androidx.compose.foundation.background' "$AUTH_DIR/AuthScreens.kt"
-          grep -q '^import androidx.compose.ui.draw.clip$' "$AUTH_DIR/AuthScreens.kt" || \
-            sed -i '2i import androidx.compose.ui.draw.clip' "$AUTH_DIR/AuthScreens.kt"
-          grep -q '^import com.linkshare.app.BuildConfig$' app/src/main/java/com/linkshare/app/network/LinkoRuntimeConfig.kt || \
-            sed -i '2i import com.linkshare.app.BuildConfig' app/src/main/java/com/linkshare/app/network/LinkoRuntimeConfig.kt
+      - name: Cross-layer LINKO integrity gate
+        run: python3 scripts/verify_linko_integrity.py
 
       - name: Kotlin structural preflight
-        run: |
-          python3 scripts/validate_kotlin.py
+        run: python3 scripts/validate_kotlin.py
 
       - name: Kotlin compile preflight
         env:
@@ -73,25 +94,43 @@ jobs:
           LINKO_SUPABASE_URL: ${{ vars.LINKO_SUPABASE_URL }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ vars.LINKO_SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          set -euo pipefail
           gradle :app:compileDebugKotlin --stacktrace --no-build-cache \
             -PLINKO_CONTROL_PLANE_URL="$LINKO_CONTROL_PLANE_URL" \
             -PLINKO_SUPABASE_URL="$LINKO_SUPABASE_URL" \
             -PLINKO_SUPABASE_PUBLISHABLE_KEY="$LINKO_SUPABASE_PUBLISHABLE_KEY"
 
-      - name: Build debug APK (clean, no build cache)
+      - name: Android lint gate
         env:
           LINKO_CONTROL_PLANE_URL: ${{ vars.LINKO_CONTROL_PLANE_URL }}
           LINKO_SUPABASE_URL: ${{ vars.LINKO_SUPABASE_URL }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ vars.LINKO_SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          set -euo pipefail
+          gradle :app:lintDebug --stacktrace --no-build-cache \
+            -PLINKO_CONTROL_PLANE_URL="$LINKO_CONTROL_PLANE_URL" \
+            -PLINKO_SUPABASE_URL="$LINKO_SUPABASE_URL" \
+            -PLINKO_SUPABASE_PUBLISHABLE_KEY="$LINKO_SUPABASE_PUBLISHABLE_KEY"
+
+      - name: Clean debug APK build
+        env:
+          LINKO_CONTROL_PLANE_URL: ${{ vars.LINKO_CONTROL_PLANE_URL }}
+          LINKO_SUPABASE_URL: ${{ vars.LINKO_SUPABASE_URL }}
+          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ vars.LINKO_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
           gradle clean assembleDebug --stacktrace --no-build-cache \
             -PLINKO_CONTROL_PLANE_URL="$LINKO_CONTROL_PLANE_URL" \
             -PLINKO_SUPABASE_URL="$LINKO_SUPABASE_URL" \
             -PLINKO_SUPABASE_PUBLISHABLE_KEY="$LINKO_SUPABASE_PUBLISHABLE_KEY"
 
-      - name: Verify APK exists
+      - name: Verify APK and manifest outputs
         run: |
-          test -n "$(find . -path '*/build/outputs/apk/debug/*.apk' -type f -print -quit)"
+          set -euo pipefail
+          apk="$(find . -path '*/build/outputs/apk/debug/*.apk' -type f -print -quit)"
+          test -n "$apk"
+          test -s "$apk"
+          echo "APK=$apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
