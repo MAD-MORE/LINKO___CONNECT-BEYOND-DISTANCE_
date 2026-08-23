@@ -14,7 +14,8 @@ class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
-    private val auth = LinkoAuth(context)
+    private val appContext = context.applicationContext
+    private val auth = LinkoAuth(appContext)
     private val api by lazy {
         LinkoControlPlaneApi(
             baseUrl = LinkoRuntimeConfig.controlPlaneUrl,
@@ -31,13 +32,19 @@ class LinkoRuntime(
     private val deviceRegistrar by lazy { LinkoDeviceRegistrar(LinkoRuntimeConfig.controlPlaneUrl, auth) }
 
     fun start() {
-        if (!LinkoRuntimeConfig.isConfigured()) { Log.w(TAG, "LINKO control plane is not configured; APK is offline-only"); return }
+        if (!LinkoRuntimeConfig.isConfigured()) {
+            Log.w(TAG, "LINKO control plane is not configured; APK is offline-only")
+            return
+        }
         scope.launch {
             runCatching {
                 if (auth.isSignedIn() && !auth.hasRegisteredDevice()) deviceRegistrar.ensureRegistered()
                 api.health()
-            }.onSuccess { health -> Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}") }
-             .onFailure { Log.e(TAG, "LINKO runtime bootstrap failed", it) }
+            }.onSuccess { health ->
+                Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}")
+            }.onFailure { error ->
+                Log.e(TAG, "LINKO runtime bootstrap failed", error)
+            }
         }
     }
 
@@ -45,6 +52,18 @@ class LinkoRuntime(
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
     suspend fun getFriends(): List<Friend> = friendApi.getFriends()
 
-    fun stop() = scope.cancel()
+    fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
+        LinkoEngineBridge.connect(providerDeviceId, onState)
+    }
+
+    fun disconnect() {
+        LinkoEngineBridge.disconnect()
+    }
+
+    fun stop() {
+        disconnect()
+        scope.cancel()
+    }
+
     companion object { private const val TAG = "LINKO_RUNTIME" }
 }
