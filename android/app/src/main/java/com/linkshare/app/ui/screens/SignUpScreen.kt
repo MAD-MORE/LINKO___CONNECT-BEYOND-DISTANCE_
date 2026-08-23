@@ -78,14 +78,17 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { auth.signUp(normalizedEmail, password, displayName.trim()) }
                         if (result.success) {
-                            // Signup is the only account-creation request. Never call signIn()
-                            // automatically after a successful signup: that creates a second Auth
-                            // request and can trigger Supabase's rate limiter. With verification
-                            // disabled, a successful signup should already return a usable session.
                             if (!auth.currentAccessToken().isNullOrBlank()) {
-                                runCatching { LinkoFriendsApiHolder.api.ensureProfile(displayName.trim()) }
-                                busy = false
-                                onRegistered()
+                                val profileResult = withContext(Dispatchers.IO) {
+                                    runCatching { LinkoFriendsApiHolder.api.ensureProfile(displayName.trim()) }
+                                }
+                                if (profileResult.isSuccess) {
+                                    busy = false
+                                    onRegistered()
+                                } else {
+                                    busy = false
+                                    message = "Profile could not be saved. Check your connection and try again."
+                                }
                             } else {
                                 busy = false
                                 message = "Account created. Please sign in to continue."
