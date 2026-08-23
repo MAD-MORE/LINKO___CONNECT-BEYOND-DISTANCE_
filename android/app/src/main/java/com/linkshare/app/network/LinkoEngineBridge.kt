@@ -35,14 +35,14 @@ object LinkoEngineBridge {
                 val session = control.requestAccess(providerDeviceId)
                 repeat(40) {
                     delay(1_500L)
-                    val config = runCatching { control.tunnelConfig(session.id) }.getOrNull() ?: return@repeat
+                    val config = runCatching { control.tunnelConfig(session.sessionId) }.getOrNull() ?: return@repeat
                     val endpoint = config.optJSONObject("endpoint") ?: return@repeat
                     val host = endpoint.optString("host")
                     val port = endpoint.optInt("port", -1)
                     val key = runCatching { java.util.Base64.getUrlDecoder().decode(config.optString("key")) }.getOrNull()
                     if (host.isBlank() || port !in 1..65535 || key?.size != 32) return@repeat
                     onState("connecting")
-                    tunnel.startVpnTunnel(host, port, session.id, key)
+                    tunnel.startVpnTunnel(host, port, session.sessionId, key)
                     onState("connected")
                     return@launch
                 }
