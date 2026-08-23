@@ -1,3 +1,4 @@
+# LINKO release gate: every PR must pass backend, Android integrity, Kotlin, lint, clean-build and APK artifact checks.
 name: LINKO Build & Integrity
 
 on:
