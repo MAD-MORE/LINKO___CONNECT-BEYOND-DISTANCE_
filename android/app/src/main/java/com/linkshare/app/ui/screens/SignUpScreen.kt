@@ -73,9 +73,20 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { auth.signUp(normalizedEmail, password, displayName.trim()) }
                         if (result.success) {
-                            runCatching { LinkoFriendsApiHolder.api.ensureProfile(displayName.trim()) }
-                            busy = false
-                            onRegistered()
+                            // Some Supabase configurations return a successful signup without an access token.
+                            // Never enter the authenticated app in that state: recover the session by signing in.
+                            val sessionReady = withContext(Dispatchers.IO) {
+                                if (!auth.currentAccessToken().isNullOrBlank()) true
+                                else auth.signIn(normalizedEmail, password).success
+                            }
+                            if (sessionReady && !auth.currentAccessToken().isNullOrBlank()) {
+                                runCatching { LinkoFriendsApiHolder.api.ensureProfile(displayName.trim()) }
+                                busy = false
+                                onRegistered()
+                            } else {
+                                busy = false
+                                message = "Account created. Please sign in to continue."
+                            }
                         } else {
                             busy = false
                             message = friendlyAuthError(result)
