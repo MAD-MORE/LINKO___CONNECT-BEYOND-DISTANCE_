@@ -1,8 +1,12 @@
 package com.linkshare.app.ui.screens
 
+import android.Manifest
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -20,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.auth.LinkoDeviceIdentity
 import com.linkshare.app.provider.LinkoProviderService
@@ -35,7 +40,12 @@ fun ProviderReadyScreen() {
     val deviceId = remember(rawId) { "LNK-" + rawId.replace("-", "").uppercase().take(8).padEnd(8, '0') }
     var copied by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { LinkoProviderService.start(context) }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
+        }
+        LinkoProviderService.start(context)
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(8.dp))
