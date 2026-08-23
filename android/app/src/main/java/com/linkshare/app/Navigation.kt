@@ -32,6 +32,7 @@ sealed class Screen(val route: String) {
     object Usage : Screen("usage")
     object SessionDetails : Screen("session_details")
     object SessionHistory : Screen("session_history")
+    object ProviderReady : Screen("provider_ready")
     object ProviderIncoming : Screen("provider_incoming")
     object ProviderAuthorization : Screen("provider_authorization")
     object ProviderSharingSetup : Screen("provider_sharing_setup")
@@ -50,15 +51,8 @@ sealed class Screen(val route: String) {
     object DeleteAccount : Screen("delete_account")
 }
 
-val onboardingScreens = setOf(
-    Screen.Welcome.route, Screen.SignIn.route, Screen.SignUp.route,
-    Screen.ForgotPassword.route, Screen.SignupOtp.route, Screen.RecoveryOtp.route,
-    Screen.PasswordReset.route, Screen.CreateAccount.route, Screen.Verify.route,
-    Screen.Profile.route, Screen.RegisterDevice.route, Screen.Permissions.route,
-)
-
+val onboardingScreens = setOf(Screen.Welcome.route, Screen.SignIn.route, Screen.SignUp.route, Screen.ForgotPassword.route, Screen.SignupOtp.route, Screen.RecoveryOtp.route, Screen.PasswordReset.route, Screen.CreateAccount.route, Screen.Verify.route, Screen.Profile.route, Screen.RegisterDevice.route, Screen.Permissions.route)
 val bottomNavScreens = setOf(Screen.HomeEngine.route, Screen.Friends.route, Screen.SessionHistory.route, Screen.Settings.route)
-
 fun activeNavTab(route: String?): String = when {
     route == null -> "HOME"
     route.startsWith("home") || route.startsWith("rx") || route.startsWith("connected") || route.startsWith("network") || route.startsWith("usage") || route.startsWith("session_details") || route.startsWith("provider") || route.startsWith("connection") || route.startsWith("reconnect") -> "HOME"
