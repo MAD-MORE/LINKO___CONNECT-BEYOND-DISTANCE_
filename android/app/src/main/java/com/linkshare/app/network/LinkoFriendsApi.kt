@@ -35,6 +35,42 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
+    /**
+     * Returns the current user's friends from the service. As a compatibility
+     * guard, accepted requests are merged into the friend list as well. This
+     * makes friendship symmetric for both the sender and accepter even if an
+     * older deployed Edge Function only materializes the accepted friendship
+     * for one side in its /friends response.
+     */
+    suspend fun friends(): JSONObject = withContext(Dispatchers.IO) {
+        val friendsJson = get("/friends")
+        val friends = friendsJson.optJSONArray("friends") ?: JSONArray()
+        val requestsJson = get("/requests")
+        val requests = requestsJson.optJSONArray("requests") ?: JSONArray()
+
+        val existingIds = mutableSetOf<String>()
+        for (i in 0 until friends.length()) {
+            friends.optJSONObject(i)?.let { item ->
+                item.optString("user_id").takeIf { it.isNotBlank() }?.let(existingIds::add)
+            }
+        }
+
+        for (i in 0 until requests.length()) {
+            val request = requests.optJSONObject(i) ?: continue
+            if (request.optString("status") != "accepted") continue
+
+            val profile = request.optJSONObject("profile") ?: continue
+            val userId = profile.optString("user_id")
+            if (userId.isBlank() || !existingIds.add(userId)) continue
+
+            friends.put(JSONObject(profile.toString()).apply {
+                put("relationship_status", "friend")
+            })
+        }
+
+        return@withContext JSONObject(friendsJson.toString()).put("friends", friends)
+    }
+
     /** Idempotent friend request operation. */
     suspend fun sendRequest(receiverUserId: String): JSONObject = withContext(Dispatchers.IO) {
         post("/requests", JSONObject().put("receiverUserId", receiverUserId))
@@ -44,7 +80,6 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
     suspend fun respond(requestId: String, accepted: Boolean): JSONObject = withContext(Dispatchers.IO) {
         post("/requests/respond", JSONObject().put("requestId", requestId).put("status", if (accepted) "accepted" else "declined"))
     }
-    suspend fun friends(): JSONObject = withContext(Dispatchers.IO) { get("/friends") }
 
     private fun get(path: String): JSONObject = request("GET", path, null)
     private fun post(path: String, body: JSONObject): JSONObject = request("POST", path, body)
@@ -63,7 +98,7 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
             }
         }
         try {
-            body?.let { connection.outputStream.use { stream -> stream.write(it.toString().toByteArray(Charsets.UTF_8)) } }
+            body?.let { payload -> connection.outputStream.use { stream -> stream.write(payload.toString().toByteArray(Charsets.UTF_8)) } }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
