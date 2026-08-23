@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.LinkoFriendsApi
+import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
@@ -23,6 +25,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         linkoAuth = LinkoAuth(this)
+        LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
         linkoRuntime = LinkoRuntime(this)
         linkoRuntime.start()
         requestEnginePermissions()
@@ -40,9 +43,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestVpnConsentIfNeeded() {
         val intent: Intent? = VpnService.prepare(this)
-        if (intent != null) {
-            startActivityForResult(intent, REQUEST_VPN)
-        }
+        if (intent != null) startActivityForResult(intent, REQUEST_VPN)
     }
 
     @Deprecated("Kept for Android compatibility; VPN consent is delivered through the activity result")
