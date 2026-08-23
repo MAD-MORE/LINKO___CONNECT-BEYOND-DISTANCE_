@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "app" / "src" / "main" / "java"
 PRIVATE_DECL = re.compile(r"^\s+private\s+(?:fun|val|var|class|object|interface|typealias)\b")
 EXPR_FUN = re.compile(r"\bfun\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*(?::[^=\{\n]+)?=\s*")
+FUN_DECL = re.compile(r"\bfun\s+[A-Za-z_][A-Za-z0-9_]*\s*\(")
 
 
 def sanitize(line: str, state: dict[str, bool]) -> str:
@@ -90,9 +91,6 @@ def check_expression_body(lines: list[str], start: int) -> int | None:
     if not match:
         return None
     body = header[match.end():].strip()
-    # The problematic form is `fun x(...) = try { ... return ... }` or a
-    # block-valued expression. A plain single-expression function has no
-    # legitimate return statement to scan for.
     if "{" not in body and not body.startswith(("try", "run", "with", "runCatching")):
         return None
     depth = delta(body)
@@ -112,18 +110,34 @@ def check_file(path: Path) -> list[str]:
     cleans = [sanitize(line, state) for line in lines]
     errors: list[str] = []
     depth = 0
+    function_body_depths: list[int] = []
 
     for number, clean in enumerate(cleans, 1):
-        if PRIVATE_DECL.match(lines[number - 1]) and depth > 0:
-            errors.append(f"{path.relative_to(ROOT)}:{number}: private declaration nested inside a block")
+        before = depth
+
+        # A private declaration is invalid when it is nested in a function,
+        # but perfectly valid as a class member. Track function-body depth
+        # separately from ordinary class/object braces.
+        function_body_depths[:] = [d for d in function_body_depths if before >= d]
+        if PRIVATE_DECL.match(lines[number - 1]) and function_body_depths:
+            errors.append(f"{path.relative_to(ROOT)}:{number}: private declaration nested inside a function")
+
         if EXPR_FUN.search(clean):
             bad = check_expression_body(lines, number - 1)
             if bad is not None:
                 errors.append(f"{path.relative_to(ROOT)}:{bad}: return inside expression-body function declared near line {number}")
+
         depth += delta(clean)
         if depth < 0:
             errors.append(f"{path.relative_to(ROOT)}:{number}: unexpected closing brace")
             depth = 0
+
+        if FUN_DECL.search(clean) and "{" in clean:
+            # Only keep an open function body. One-line functions that close
+            # on the same line do not create a nested scope.
+            if depth > before:
+                function_body_depths.append(before + 1)
+
     if depth != 0:
         errors.append(f"{path.relative_to(ROOT)}: unbalanced braces (depth {depth})")
     if state.get("block") or state.get("string") or state.get("triple"):
