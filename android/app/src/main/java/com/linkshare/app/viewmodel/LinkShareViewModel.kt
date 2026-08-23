@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Production connection orchestrator: UI actions are backed by real control-plane and VPN calls. */
+/** Production connection orchestrator. UI actions are backed by real control-plane and VPN calls. */
 class LinkShareViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ConnectionUiState())
     val uiState: StateFlow<ConnectionUiState> = _uiState.asStateFlow()
@@ -30,7 +30,8 @@ class LinkShareViewModel : ViewModel() {
 
     fun setMode(mode: AppMode) = _uiState.update { it.copy(mode = mode, eventMessage = null) }
 
-    fun toggleHostSharing(context: Context) {
+    fun toggleHostSharing() {
+        val context = engineContext ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
         if (_uiState.value.hostSharingEnabled) {
             LinkoProviderService.stop(context)
             _uiState.update { it.copy(hostSharingEnabled = false, incomingRequest = null, eventMessage = "Sharing stopped.") }
@@ -40,32 +41,18 @@ class LinkShareViewModel : ViewModel() {
         }
     }
 
-    fun startIncomingRequestPolling(api: LinkoControlPlaneApi) {
-        if (requestPollJob?.isActive == true) return
-        requestPollJob = viewModelScope.launch(Dispatchers.IO) {
-            while (true) {
-                runCatching { api.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
-                    if (request != null) _uiState.update {
-                        it.copy(incomingRequest = IncomingRequest(request.id, "LINKO user", "L", request.receiverDeviceId, "REMOTE", "NOW"))
-                    }
-                }
-                delay(3_000L)
-            }
-        }
-    }
-
-    fun approveIncomingRequest(api: LinkoControlPlaneApi) {
+    fun approveIncomingRequest() {
+        val api = controlPlaneApi ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
         val request = _uiState.value.incomingRequest ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                api.approveRequest(request.id)
-                api.transition(request.id, "signaling")
-            }.onSuccess { _uiState.update { it.copy(incomingRequest = null, eventMessage = "Request approved. Preparing the secure tunnel…") } }
-             .onFailure { error -> _uiState.update { it.copy(eventMessage = error.message ?: "Approval failed") } }
+            runCatching { api.approveRequest(request.id) }
+                .onSuccess { _uiState.update { it.copy(incomingRequest = null, eventMessage = "Request approved. Preparing the secure tunnel…") } }
+                .onFailure { error -> _uiState.update { it.copy(eventMessage = error.message ?: "Approval failed") } }
         }
     }
 
-    fun denyIncomingRequest(api: LinkoControlPlaneApi) {
+    fun denyIncomingRequest() {
+        val api = controlPlaneApi ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
         val request = _uiState.value.incomingRequest ?: return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { api.denyRequest(request.id) }
@@ -74,7 +61,10 @@ class LinkShareViewModel : ViewModel() {
         }
     }
 
-    fun connectToFriend(friend: Friend, api: LinkoControlPlaneApi, tunnelCoordinator: TunnelCoordinator) {
+    fun connectToFriend(friend: Friend) {
+        val api = controlPlaneApi
+        val coordinator = tunnelCoordinator
+        if (api == null || coordinator == null) return _uiState.update { it.copy(activeFriend = friend, connectionPhase = ConnectionPhase.Failed, eventMessage = "Engine is still initializing.") }
         connectionJob?.cancel()
         _uiState.update { it.copy(activeFriend = friend, connectionPhase = ConnectionPhase.Requesting, retryAttempt = 0, eventMessage = "Requesting access from ${friend.name}…") }
         connectionJob = viewModelScope.launch(Dispatchers.IO) {
@@ -95,12 +85,10 @@ class LinkShareViewModel : ViewModel() {
                         val key = runCatching { java.util.Base64.getUrlDecoder().decode(keyText) }.getOrNull() ?: return@repeat
                         if (key.size != 32) return@repeat
                         _uiState.update { it.copy(connectionPhase = ConnectionPhase.Handshaking, retryAttempt = attempt + 1, eventMessage = "Approved. Starting the encrypted VPN tunnel…") }
-                        tunnelCoordinator.startVpnTunnel(host, port, session.id, key)
+                        coordinator.startVpnTunnel(host, port, session.id, key)
                         connected = true
                         _uiState.update { it.copy(connectionPhase = ConnectionPhase.Connected, retryAttempt = 0, eventMessage = "Connected. Internet traffic is routed through ${friend.name}.") }
-                    } catch (_: LinkoNetworkException) {
-                        // The session is still waiting for provider approval/configuration.
-                    }
+                    } catch (_: LinkoNetworkException) { }
                 }
                 if (!connected) throw IllegalStateException("connection_timeout")
             } catch (error: Exception) {
@@ -109,23 +97,39 @@ class LinkShareViewModel : ViewModel() {
         }
     }
 
-    fun connectToFriend(friend: Friend) = _uiState.update { it.copy(activeFriend = friend, connectionPhase = ConnectionPhase.Failed, eventMessage = "Connection service is not initialized.") }
-
-    fun disconnect(tunnelCoordinator: TunnelCoordinator) {
+    fun disconnect() {
         connectionJob?.cancel()
-        tunnelCoordinator.stopVpnTunnel()
+        tunnelCoordinator?.stopVpnTunnel()
         _uiState.update { it.copy(connectionPhase = ConnectionPhase.Idle, activeFriend = null, retryAttempt = 0, eventMessage = "Disconnected. The VPN tunnel is closed.") }
     }
 
-    fun disconnect() = _uiState.update { it.copy(connectionPhase = ConnectionPhase.Idle, activeFriend = null, retryAttempt = 0, eventMessage = "Disconnected.") }
+    fun onVpnPermissionResult(granted: Boolean) = _uiState.update { it.copy(hasVpnPermission = granted, eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting.") }
 
-    fun onVpnPermissionResult(granted: Boolean) = _uiState.update {
-        it.copy(hasVpnPermission = granted, eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting.")
+    private fun startRequestPolling(api: LinkoControlPlaneApi) {
+        if (requestPollJob?.isActive == true) return
+        requestPollJob = viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                runCatching { api.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
+                    if (request != null) _uiState.update { it.copy(incomingRequest = IncomingRequest(request.id, "LINKO user", "L", request.receiverDeviceId, "REMOTE", "NOW")) }
+                }
+                delay(3_000L)
+            }
+        }
     }
 
-    override fun onCleared() {
-        requestPollJob?.cancel()
-        connectionJob?.cancel()
-        super.onCleared()
+    override fun onCleared() { requestPollJob?.cancel(); connectionJob?.cancel(); super.onCleared() }
+
+    companion object {
+        private var engineContext: Context? = null
+        private var controlPlaneApi: LinkoControlPlaneApi? = null
+        private var tunnelCoordinator: TunnelCoordinator? = null
+
+        fun configure(context: Context, api: LinkoControlPlaneApi, coordinator: TunnelCoordinator) {
+            engineContext = context.applicationContext
+            controlPlaneApi = api
+            tunnelCoordinator = coordinator
+        }
+
+        fun startEnginePolling(viewModel: LinkShareViewModel) { controlPlaneApi?.let(viewModel::startRequestPolling) }
     }
 }
