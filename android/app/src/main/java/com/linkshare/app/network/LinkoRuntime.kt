@@ -9,7 +9,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-/** Application-scoped connectivity bootstrap. It does not alter the UI. */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -19,30 +18,22 @@ class LinkoRuntime(
         LinkoControlPlaneApi(
             baseUrl = LinkoRuntimeConfig.controlPlaneUrl,
             accessTokenProvider = { auth.currentLinkoToken() },
+            deviceIdProvider = { auth.currentDeviceId() },
         )
     }
-    private val deviceRegistrar by lazy {
-        LinkoDeviceRegistrar(LinkoRuntimeConfig.controlPlaneUrl, auth)
-    }
+    private val deviceRegistrar by lazy { LinkoDeviceRegistrar(LinkoRuntimeConfig.controlPlaneUrl, auth) }
 
     fun start() {
-        if (!LinkoRuntimeConfig.isConfigured()) {
-            Log.w(TAG, "LINKO control plane is not configured; APK is offline-only")
-            return
-        }
+        if (!LinkoRuntimeConfig.isConfigured()) { Log.w(TAG, "LINKO control plane is not configured; APK is offline-only"); return }
         scope.launch {
             runCatching {
-                if (auth.isSignedIn() && !auth.hasRegisteredDevice()) {
-                    deviceRegistrar.ensureRegistered()
-                }
+                if (auth.isSignedIn() && !auth.hasRegisteredDevice()) deviceRegistrar.ensureRegistered()
                 api.health()
-            }
-                .onSuccess { health -> Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}") }
-                .onFailure { Log.e(TAG, "LINKO runtime bootstrap failed", it) }
+            }.onSuccess { health -> Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}") }
+             .onFailure { Log.e(TAG, "LINKO runtime bootstrap failed", it) }
         }
     }
 
     fun stop() = scope.cancel()
-
     companion object { private const val TAG = "LINKO_RUNTIME" }
 }
