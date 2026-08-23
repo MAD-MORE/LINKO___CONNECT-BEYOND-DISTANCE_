@@ -3,18 +3,23 @@ name: LINKO Build & Integrity
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: linko-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend contract and test gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -26,9 +31,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package.json
 
       - name: Verify backend package metadata
         run: |
+          set -euo pipefail
           test -f package.json
           test -f tsconfig.json
 
@@ -44,6 +52,7 @@ jobs:
   android:
     name: Build LINKO APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: android
@@ -61,7 +70,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
@@ -80,6 +92,7 @@ jobs:
           test -f scripts/validate_kotlin.py
           test -f scripts/verify_linko_integrity.py
           echo "Building commit: $(git -C .. rev-parse HEAD)"
+          gradle --version
 
       - name: Cross-layer LINKO integrity gate
         run: python3 scripts/verify_linko_integrity.py
@@ -123,7 +136,7 @@ jobs:
             -PLINKO_SUPABASE_URL="$LINKO_SUPABASE_URL" \
             -PLINKO_SUPABASE_PUBLISHABLE_KEY="$LINKO_SUPABASE_PUBLISHABLE_KEY"
 
-      - name: Verify APK and manifest outputs
+      - name: Verify APK output
         run: |
           set -euo pipefail
           apk="$(find . -path '*/build/outputs/apk/debug/*.apk' -type f -print -quit)"
