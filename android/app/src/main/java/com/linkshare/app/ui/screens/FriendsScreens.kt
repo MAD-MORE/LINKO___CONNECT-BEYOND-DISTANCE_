@@ -21,6 +21,7 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
     var friends by remember{mutableStateOf<List<FriendSearchResult>>(emptyList())}
     var incoming by remember{mutableStateOf<List<org.json.JSONObject>>(emptyList())}
     var outgoing by remember{mutableStateOf<List<org.json.JSONObject>>(emptyList())}
+    var resolved by remember{mutableStateOf<List<org.json.JSONObject>>(emptyList())}
     var loading by remember{mutableStateOf(true)}
     var message by remember{mutableStateOf<String?>(null)}
     val scope=rememberCoroutineScope()
@@ -48,6 +49,13 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
                     for(i in 0 until r.length()){
                         val o=r.optJSONObject(i)?:continue
                         if(!o.optBoolean("incoming")&&o.optString("status")=="pending")add(o)
+                    }
+                }
+                resolved=buildList{
+                    for(i in 0 until r.length()){
+                        val o=r.optJSONObject(i)?:continue
+                        val status=o.optString("status")
+                        if(!o.optBoolean("incoming")&&(status=="accepted"||status=="declined"))add(o)
                     }
                 }
             }catch(e:Exception){message=e.message?:"Unable to load friends"}
@@ -113,7 +121,25 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
                     Spacer(Modifier.height(3.dp))
                     Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
                     Spacer(Modifier.height(6.dp))
-                    Text("REQUEST SENT • WAITING FOR ACCEPTANCE",color=Yellow,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
+                    Text("PENDING • WAITING FOR ACCEPTANCE",color=Yellow,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        if(resolved.isNotEmpty()){
+            Text("REQUEST HISTORY",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            resolved.take(10).forEach{request->
+                val profile=request.optJSONObject("profile")
+                val status=request.optString("status")
+                val accepted=status=="accepted"
+                LinkoCard{
+                    Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
+                    Spacer(Modifier.height(3.dp))
+                    Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
+                    Spacer(Modifier.height(6.dp))
+                    Text(if(accepted)"ACCEPTED • YOU ARE NOW FRIENDS"else"DECLINED • REQUEST NOT ACCEPTED",color=if(accepted)Green else Red,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -123,7 +149,7 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
             LinkoCard{
                 Text("NO FRIENDS YET",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                Text("Find a real LINKO user by their LINKO ID or name.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)
+                Text("Find a real LINKO user by their LINKO ID or username.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)
             }
         }else{
             friends.forEach{f->
@@ -131,7 +157,7 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
                     Column(Modifier.fillMaxWidth().clickable{LinkoFriendsApiHolder.selected=f;onFriendTap()}){
                         Text(f.displayName,color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
                         Text(f.linkoId,color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
-                        Text("FRIEND",color=Green,fontSize=10.sp,fontFamily=JetBrainsMono)
+                        Text("FRIEND • CONNECT USING LINKO ID OR USERNAME",color=Green,fontSize=10.sp,fontFamily=JetBrainsMono)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -157,9 +183,9 @@ fun FindFriendsScreen(onSearch:()->Unit){
         Spacer(Modifier.height(8.dp))
         Text("Find Friends",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text("Search real LINKO users by ID or name",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono)
+        Text("Search real LINKO users by ID or username",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono)
         Spacer(Modifier.height(20.dp))
-        LinkoInput("SEARCH",query,{query=it},"LNK-XXXXXXXX","Enter a LINKO ID or name")
+        LinkoInput("SEARCH",query,{query=it},"LNK-XXXXXXXX","Enter a LINKO ID or username")
         Spacer(Modifier.height(14.dp))
         message?.let{Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(8.dp))}
         results.forEach{f->
@@ -210,7 +236,7 @@ fun FriendProfileScreen(onSendRequest:()->Unit){
 
     Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){
         Spacer(Modifier.height(24.dp))
-        Ring(Blue,120.dp,label="DEVICE")
+        Ring(Blue,120.dp,label="USER")
         Spacer(Modifier.height(16.dp))
         Text(friend?.displayName?:"LINKO USER",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
@@ -218,7 +244,7 @@ fun FriendProfileScreen(onSendRequest:()->Unit){
         Spacer(Modifier.height(28.dp))
         LinkoCard{InfoRow("STATUS",if(friend?.isSharing==true)"SHARING"else"AVAILABLE",friend?.deviceName?:"Real LINKO account",accent=if(friend?.isSharing==true)Green else Blue)}
         Spacer(Modifier.height(8.dp))
-        Text(when(relationship){"friend"->"You are already friends.";"outgoing_pending"->"Your friend request is waiting for acceptance.";"incoming_pending"->"This user has already sent you a request. Open Friends to accept it.";else->"Not connected yet."},color=TextSub,fontSize=11.sp,fontFamily=JetBrainsMono)
+        Text(when(relationship){"friend"->"You are already friends. Connect using this LINKO ID or username.";"outgoing_pending"->"Your friend request is waiting for acceptance.";"incoming_pending"->"This user has already sent you a request. Open Friends to accept it.";else->"Not connected yet. Send a request using this LINKO ID or username."},color=TextSub,fontSize=11.sp,fontFamily=JetBrainsMono)
         message?.let{Spacer(Modifier.height(10.dp));Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono)}
         Spacer(Modifier.weight(1f))
         PrimaryButton(buttonLabel,{
