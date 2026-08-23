@@ -76,7 +76,7 @@ class LinkShareViewModel : ViewModel() {
                     delay(1_500L)
                     if (connected) return@repeat
                     try {
-                        val config = api.tunnelConfig(session.id)
+                        val config = api.tunnelConfig(session.sessionId)
                         val endpoint = config.optJSONObject("endpoint") ?: return@repeat
                         val host = endpoint.optString("host")
                         val port = endpoint.optInt("port", -1)
@@ -85,7 +85,7 @@ class LinkShareViewModel : ViewModel() {
                         val key = runCatching { java.util.Base64.getUrlDecoder().decode(keyText) }.getOrNull() ?: return@repeat
                         if (key.size != 32) return@repeat
                         _uiState.update { it.copy(connectionPhase = ConnectionPhase.Handshaking, retryAttempt = attempt + 1, eventMessage = "Approved. Starting the encrypted VPN tunnel…") }
-                        coordinator.startVpnTunnel(host, port, session.id, key)
+                        coordinator.startVpnTunnel(host, port, session.sessionId, key)
                         connected = true
                         _uiState.update { it.copy(connectionPhase = ConnectionPhase.Connected, retryAttempt = 0, eventMessage = "Connected. Internet traffic is routed through ${friend.name}.") }
                     } catch (_: LinkoNetworkException) { }
