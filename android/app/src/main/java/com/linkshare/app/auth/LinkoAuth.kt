@@ -2,6 +2,7 @@ package com.linkshare.app.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.linkshare.app.network.LinkoRuntimeConfig
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -14,6 +15,12 @@ class LinkoAuth(context: Context) {
         val normalized = email.trim().lowercase()
         val body = JSONObject().put("email", normalized).put("password", password)
             .put("data", JSONObject().put("display_name", displayName.trim()))
+        if (LinkoRuntimeConfig.isConfigured()) {
+            return requestAbsolute(
+                LinkoRuntimeConfig.controlPlaneUrl.trimEnd('/') + "/v1/auth/signup",
+                "POST", body, saveTokens = true, sendSupabaseApiKey = false
+            )
+        }
         return request("/auth/v1/signup", "POST", body, saveTokens = true)
     }
 
@@ -34,9 +41,7 @@ class LinkoAuth(context: Context) {
         prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply()
     }
 
-    fun clearLinkoSession() {
-        prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
-    }
+    fun clearLinkoSession() { prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply() }
 
     fun signOut() {
         prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN)
@@ -71,14 +76,17 @@ class LinkoAuth(context: Context) {
         return request("/auth/v1/resend", "POST", JSONObject().put("type", type).put("email", normalized), saveTokens = false)
     }
 
-    private fun request(path: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean): AuthResult {
+    private fun request(path: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean): AuthResult =
+        requestAbsolute(BASE_URL + path, method, body, accessToken, saveTokens, true)
+
+    private fun requestAbsolute(url: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean, sendSupabaseApiKey: Boolean): AuthResult {
         return try {
-            val connection = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 doOutput = method != "GET"
-                setRequestProperty("apikey", PUBLISHABLE_KEY)
+                if (sendSupabaseApiKey) setRequestProperty("apikey", PUBLISHABLE_KEY)
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "application/json")
                 accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
@@ -98,13 +106,7 @@ class LinkoAuth(context: Context) {
                         edit.apply()
                     }
                 }
-                AuthResult(true, when {
-                    path.endsWith("/signup") -> if (json.has("access_token")) "authenticated" else "account_created"
-                    path.endsWith("/verify") -> "verified"
-                    path.endsWith("/user") -> "password_updated"
-                    json.has("access_token") -> "authenticated"
-                    else -> "ok"
-                }, false, userId)
+                AuthResult(true, if (json.has("access_token")) "authenticated" else "account_created", false, userId)
             } finally { connection.disconnect() }
         } catch (e: Exception) {
             AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
