@@ -1,5 +1,11 @@
 package com.linkshare.app.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -45,11 +51,10 @@ fun CreateAccountScreen(onContinue: () -> Unit) {
 @Composable
 fun VerifyScreen(onVerify: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Spacer(Modifier.height(8.dp)); Text("Verify Account", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp)); Text("Confirm your identity securely", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(8.dp)); Text("Verify Account", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Text("Confirm your identity securely", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(24.dp))
         LinkoCard {
             Text("VERIFICATION CODE", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp); Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) { repeat(6) { Box(modifier = Modifier.size(40.dp, 50.dp).clip(RoundedCornerShape(10.dp)).background(Card2).border(1.dp, Border, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Text("·", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) } } }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) { repeat(6) { Box(modifier = Modifier.size(40.dp, 50.dp).clip(RoundedCornerShape(10.dp)).background(Card2).border(1.dp, Border, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { Text("·", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) } }
             Spacer(Modifier.height(14.dp)); Text("Short-lived verification code", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
         }
         GhostButton("Resend code") {}; Spacer(Modifier.weight(1f)); PrimaryButton("VERIFY", onVerify); Spacer(Modifier.height(24.dp))
@@ -76,8 +81,45 @@ fun RegisterDeviceScreen(onRegister: () -> Unit) {
 
 @Composable
 fun PermissionsScreen(onAllow: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var notificationGranted by remember {
+        mutableStateOf(Build.VERSION.SDK_INT < 33 || androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }
+
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationGranted = granted
+        requestVpnPermission(context, onAllow)
+    }
+
+    val vpnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) onAllow()
+    }
+
+    fun continueWithPermissions() {
+        if (Build.VERSION.SDK_INT >= 33 && !notificationGranted) {
+            notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        val prepareIntent = VpnService.prepare(context)
+        if (prepareIntent == null) onAllow() else vpnLauncher.launch(prepareIntent)
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(8.dp)); Text("Permissions", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Text("Allow Linko to operate the connection engine", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(20.dp))
-        LinkoCard { SettingsRow({ Text("📶", fontSize = 18.sp) }, "Network", "Connection and tunnel access", Blue) }; Spacer(Modifier.height(10.dp)); LinkoCard { SettingsRow({ Text("🔔", fontSize = 18.sp) }, "Notifications", "Session and request updates", Yellow) }; Spacer(Modifier.weight(1f)); PrimaryButton("ALLOW & CONTINUE", onAllow); Spacer(Modifier.height(24.dp))
+        LinkoCard { SettingsRow({ Text("📶", fontSize = 18.sp) }, "Private VPN tunnel", if (VpnService.prepare(context) == null) "Ready" else "Required for secure connections", Blue) }
+        Spacer(Modifier.height(10.dp)); LinkoCard { SettingsRow({ Text("🔔", fontSize = 18.dp) }, "Notifications", if (notificationGranted) "Ready" else "Required for connection requests", Yellow) }
+        Spacer(Modifier.height(10.dp)); LinkoCard { SettingsRow({ Text("🌐", fontSize = 18.sp) }, "Internet access", "Required to reach the LINKO service", Green) }
+        Spacer(Modifier.weight(1f)); PrimaryButton("ALLOW & CONTINUE", ::continueWithPermissions); Spacer(Modifier.height(24.dp))
     }
+}
+
+private fun requestVpnPermission(context: android.content.Context, onAllowed: () -> Unit) {
+    val prepareIntent = VpnService.prepare(context)
+    if (prepareIntent == null) onAllowed()
 }
