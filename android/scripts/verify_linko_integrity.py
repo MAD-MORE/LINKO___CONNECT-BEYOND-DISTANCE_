@@ -8,7 +8,29 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 ANDROID_SRC = ROOT / "app" / "src" / "main"
 KOTLIN = ANDROID_SRC / "java" / "com" / "linkshare" / "app"
-REQUIRED_FILES = [ROOT / "settings.gradle.kts", ROOT / "build.gradle.kts", ROOT / "app" / "build.gradle.kts", ROOT / "app" / "src" / "main" / "AndroidManifest.xml", KOTLIN / "MainActivity.kt", KOTLIN / "Navigation.kt", KOTLIN / "ui" / "LinkShareApp.kt", KOTLIN / "ui" / "screens" / "LinkoApp.kt", KOTLIN / "ui" / "screens" / "SignUpScreen.kt", KOTLIN / "ui" / "screens" / "AuthScreens.kt", KOTLIN / "ui" / "screens" / "FriendsScreens.kt", KOTLIN / "viewmodel" / "LinkShareViewModel.kt", KOTLIN / "network" / "LinkoRuntime.kt", KOTLIN / "network" / "LinkoRuntimeConfig.kt", KOTLIN / "network" / "LinkoEngineBridge.kt", KOTLIN / "network" / "LinkoControlPlaneApi.kt", KOTLIN / "network" / "LinkoFriendsApi.kt", KOTLIN / "network" / "LinkoDeviceRegistrar.kt", KOTLIN / "network" / "LinkoSignalingClient.kt", KOTLIN / "vpn" / "LinkShareVpnService.kt", KOTLIN / "provider" / "LinkoProviderService.kt"]
+REQUIRED_FILES = [
+    ROOT / "settings.gradle.kts",
+    ROOT / "build.gradle.kts",
+    ROOT / "app" / "build.gradle.kts",
+    ROOT / "app" / "src" / "main" / "AndroidManifest.xml",
+    KOTLIN / "MainActivity.kt",
+    KOTLIN / "Navigation.kt",
+    KOTLIN / "ui" / "LinkShareApp.kt",
+    KOTLIN / "ui" / "screens" / "LinkoApp.kt",
+    KOTLIN / "ui" / "screens" / "SignUpScreen.kt",
+    KOTLIN / "ui" / "screens" / "AuthScreens.kt",
+    KOTLIN / "ui" / "screens" / "FriendsScreens.kt",
+    KOTLIN / "viewmodel" / "LinkShareViewModel.kt",
+    KOTLIN / "network" / "LinkoRuntime.kt",
+    KOTLIN / "network" / "LinkoRuntimeConfig.kt",
+    KOTLIN / "network" / "LinkoEngineBridge.kt",
+    KOTLIN / "network" / "LinkoControlPlaneApi.kt",
+    KOTLIN / "network" / "LinkoFriendsApi.kt",
+    KOTLIN / "network" / "LinkoDeviceRegistrar.kt",
+    KOTLIN / "network" / "LinkoSignalingClient.kt",
+    KOTLIN / "vpn" / "LinkShareVpnService.kt",
+    KOTLIN / "provider" / "LinkoProviderService.kt",
+]
 FORBIDDEN_PRODUCTION_REFERENCES = ("MockLinkShareRepository", "mockFriends", "fakeFriends", "FakeLinkoFriendsApi")
 FRIEND_EDGE_BASE = "https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-friends"
 FRIEND_PATHS = ("/profile", "/search?q=", "/requests", "/requests/respond", "/friends")
@@ -16,6 +38,11 @@ FRIEND_PATHS = ("/profile", "/search?q=", "/requests", "/requests/respond", "/fr
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def normalize_backend_source(source: str) -> str:
+    """Normalize JS/TS escaped URL slashes so route checks compare semantics, not syntax."""
+    return source.replace("\\/", "/")
 
 
 def fail(errors: list[str]) -> int:
@@ -35,8 +62,18 @@ def contains_session_contract(source: str, semantic_path: str) -> bool:
     return prefix in source and suffix in source
 
 
+def backend_has_dynamic_route(source: str, variable_name: str, path_suffix: str) -> bool:
+    """Check a real url.pathname.match() dynamic route independent of slash escaping."""
+    pattern = (
+        rf"{re.escape(variable_name)}\s*=\s*url\.pathname\.match\("
+        rf"/\^/v1/sessions/\(\[\^/\]\+\)/{re.escape(path_suffix)}\$/"
+    )
+    return re.search(pattern, normalize_backend_source(source)) is not None
+
+
 def main() -> int:
     errors: list[str] = []
+
     for path in REQUIRED_FILES:
         if not path.is_file():
             errors.append(f"missing required file: {path.relative_to(REPO)}")
@@ -101,22 +138,25 @@ def main() -> int:
     backend_server = REPO / "backend" / "src" / "server.ts"
     if backend_server.is_file():
         server = read(backend_server)
+        normalized_server = normalize_backend_source(server)
         for token in ("/v1/sessions", "/v1/devices/register", "/v1/sessions/"):
-            if token not in server:
+            if token not in normalized_server:
                 errors.append(f"backend control plane missing contract token: {token}")
-        # The backend declares these routes as RegExp literals, so slashes are escaped.
-        # Validate the actual route structure used by server.ts rather than looking for
-        # an unescaped '/signaling/ticket' substring.
-        if "\\/signaling\\/ticket" not in server:
+        if not backend_has_dynamic_route(normalized_server, "signalTicketMatch", "signaling/ticket"):
             errors.append("backend control plane missing signaling ticket route")
-        if not re.search(r'url\.pathname\.match\(/\^\\/v1\\/sessions/\(\[\^/\]\+\)\\/signaling\$/', server):
+        if not backend_has_dynamic_route(normalized_server, "signalMatch", "signaling"):
             errors.append("backend control plane missing signaling route")
+        if not re.search(r'if \(req\.method === "POST" && signalTicketMatch\)', normalized_server):
+            errors.append("backend signaling ticket handler is not POST-wired")
+        if not re.search(r'if \(signalMatch && \(req\.method === "POST" \|\| req\.method === "GET"\)\)', normalized_server):
+            errors.append("backend signaling handler is not GET/POST-wired")
 
     gradle = read(ROOT / "app" / "build.gradle.kts")
     if "buildConfig = true" not in gradle:
         errors.append("Android buildConfig feature is disabled")
     if "LINKO_CONTROL_PLANE_URL" not in gradle:
         errors.append("LINKO_CONTROL_PLANE_URL is not wired into BuildConfig")
+
     return fail(errors)
 
 
