@@ -47,10 +47,22 @@ object LinkoEngineBridge {
                     return@launch
                 }
                 onState("connection_timeout")
-            } catch (e: Exception) {
-                onState(e.message ?: "connection_failed")
-            }
+            } catch (e: Exception) { onState(e.message ?: "connection_failed") }
         }
+    }
+
+    fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
+        val control = api ?: return onState("engine_not_initialized")
+        scope?.launch { runCatching { control.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
+            if (request == null) onState("no_pending_request") else runCatching { control.approveRequest(request.id) }.onSuccess { onState("approved") }.onFailure { onState(it.message ?: "approval_failed") }
+        }.onFailure { onState(it.message ?: "request_lookup_failed") } }
+    }
+
+    fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
+        val control = api ?: return onState("engine_not_initialized")
+        scope?.launch { runCatching { control.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
+            if (request == null) onState("no_pending_request") else runCatching { control.denyRequest(request.id) }.onSuccess { onState("denied") }.onFailure { onState(it.message ?: "decline_failed") }
+        }.onFailure { onState(it.message ?: "request_lookup_failed") } }
     }
 
     fun disconnect() {
