@@ -72,7 +72,7 @@ def main() -> int:
     backend_server = REPO / "backend" / "src" / "server.ts"
     if backend_server.is_file():
         server = read(backend_server)
-        for token in ("/v1/sessions", "/v1/devices/register", "/signaling/ticket", "/signaling"):
+        for token in ("/v1/sessions", "/v1/devices/register", "/v1/sessions/", "/signaling/ticket", "/signaling"):
             if token not in server: errors.append(f"backend control plane missing contract token: {token}")
     gradle = read(ROOT / "app" / "build.gradle.kts")
     if "buildConfig = true" not in gradle: errors.append("Android buildConfig feature is disabled")
