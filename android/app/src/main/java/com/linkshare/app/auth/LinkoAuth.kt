@@ -33,7 +33,11 @@ class LinkoAuth(context: Context) {
             .put("data", JSONObject().put("display_name", displayName.trim()))
         val created = handleAuth("/auth/v1/signup", "POST", body, saveTokens = false)
         if (!created.success) return created
-        return sendSignupOtp(normalized)
+        // Supabase sends the signup confirmation email from /signup when email
+        // confirmations are enabled. Do not call /otp here: that would create
+        // a second email request and can immediately trigger the email rate limit.
+        prefs.edit().putString(KEY_PENDING_EMAIL, normalized).apply()
+        AuthResult(true, "confirmation_email_sent", false, created.userId)
     }
 
     fun signIn(email: String, password: String): AuthResult {
