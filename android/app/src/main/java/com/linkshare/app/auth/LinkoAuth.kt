@@ -12,7 +12,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Supabase Auth plus persistent LINKO session credentials. */
+/** Supabase Auth plus persistent LINKO session credentials. All auth flows are driven by the app UI. */
 class LinkoAuth(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("linko_auth", Context.MODE_PRIVATE)
@@ -22,22 +22,76 @@ class LinkoAuth(context: Context) {
     fun currentLinkoToken(): String? = readSecret(KEY_LINKO)
     fun currentDeviceId(): String? = prefs.getString(KEY_DEVICE_ID, null)
     fun currentUserId(): String? = prefs.getString(KEY_USER_ID, null)
+    fun pendingVerificationEmail(): String? = prefs.getString(KEY_PENDING_EMAIL, null)
     fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
     fun hasRegisteredDevice(): Boolean = !currentLinkoToken().isNullOrBlank() && !currentDeviceId().isNullOrBlank()
 
     fun signUp(email: String, password: String, displayName: String): AuthResult {
         validate(email, password)
-        val body = JSONObject()
-            .put("email", email.trim())
-            .put("password", password)
-            .put("data", JSONObject().put("display_name", displayName.trim()))
-        return handleAuth("/auth/v1/signup", "POST", body, saveTokens = true)
+        val normalized = email.trim().lowercase()
+        val body = JSONObject().put("email", normalized).put("password", password).put("data", JSONObject().put("display_name", displayName.trim()))
+        val result = handleAuth("/auth/v1/signup", "POST", body, saveTokens = true)
+        if (result.success) prefs.edit().putString(KEY_PENDING_EMAIL, normalized).apply()
+        return result
     }
 
     fun signIn(email: String, password: String): AuthResult {
         validate(email, password)
-        val body = JSONObject().put("email", email.trim()).put("password", password)
+        val body = JSONObject().put("email", email.trim().lowercase()).put("password", password)
         return handleAuth("/auth/v1/token?grant_type=password", "POST", body, saveTokens = true)
+    }
+
+    fun sendSignupOtp(email: String): AuthResult = sendOtp(email, "signup")
+
+    fun verifySignupOtp(email: String, token: String): AuthResult {
+        val result = verifyOtp(email, token, "signup")
+        if (result.success) prefs.edit().remove(KEY_PENDING_EMAIL).apply()
+        return result
+    }
+
+    fun sendRecoveryOtp(email: String): AuthResult = sendOtp(email, "recovery")
+
+    fun verifyRecoveryOtp(email: String, token: String): AuthResult = verifyOtp(email, token, "recovery")
+
+    fun updatePassword(newPassword: String): AuthResult {
+        if (newPassword.length !in 8..72) return AuthResult(false, "password_min_8_chars", false)
+        val token = currentAccessToken() ?: return AuthResult(false, "session_missing", false)
+        return handleAuth("/auth/v1/user", "PUT", JSONObject().put("password", newPassword), false, token)
+    }
+
+    private fun sendOtp(email: String, type: String): AuthResult {
+        val normalized = email.trim().lowercase()
+        if (!EMAIL_REGEX.matches(normalized)) return AuthResult(false, "valid_email_required", false)
+        return try {
+            val body = JSONObject().put("email", normalized).put("type", type)
+            val response = request("/auth/v1/otp", "POST", body, null)
+            if (response.first in 200..299) {
+                prefs.edit().putString(KEY_PENDING_EMAIL, normalized).apply()
+                AuthResult(true, "otp_sent", false)
+            } else AuthResult(false, parseError(response.second, response.first), false)
+        } catch (e: Exception) { AuthResult(false, e.message ?: "network_error", false) }
+    }
+
+    private fun verifyOtp(email: String, token: String, type: String): AuthResult {
+        val normalized = email.trim().lowercase()
+        if (!EMAIL_REGEX.matches(normalized)) return AuthResult(false, "valid_email_required", false)
+        if (!token.matches(Regex("^\\d{6}$"))) return AuthResult(false, "otp_invalid", false)
+        return try {
+            val body = JSONObject().put("email", normalized).put("token", token).put("type", type)
+            val response = request("/auth/v1/verify", "POST", body, null)
+            if (response.first !in 200..299) return AuthResult(false, parseError(response.second, response.first), false)
+            val json = JSONObject(response.second.ifBlank { "{}" })
+            val access = json.optString("access_token").takeIf { it.isNotBlank() }
+            val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }
+            val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() }
+            if (access != null) {
+                writeSecret(KEY_ACCESS, access)
+                refresh?.let { writeSecret(KEY_REFRESH, it) }
+                userId?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
+            }
+            prefs.edit().remove(KEY_PENDING_EMAIL).apply()
+            AuthResult(true, "verified", access != null, userId)
+        } catch (e: Exception) { AuthResult(false, e.message ?: "network_error", false) }
     }
 
     fun refresh(): AuthResult {
@@ -70,11 +124,7 @@ class LinkoAuth(context: Context) {
     private fun handleAuth(path: String, method: String, body: JSONObject?, saveTokens: Boolean, token: String? = null): AuthResult {
         return try {
             val response = request(path, method, body, token)
-            if (response.first !in 200..299) {
-                val obj = JSONObject(response.second.ifBlank { "{}" })
-                val message = obj.optString("msg").ifBlank { obj.optString("error_description") }.ifBlank { obj.optString("message") }.ifBlank { "auth_http_${response.first}" }
-                return AuthResult(false, message, false)
-            }
+            if (response.first !in 200..299) return AuthResult(false, parseError(response.second, response.first), false)
             val json = JSONObject(response.second.ifBlank { "{}" })
             val access = json.optString("access_token").takeIf { it.isNotBlank() }
             val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }
@@ -85,9 +135,7 @@ class LinkoAuth(context: Context) {
                 userId?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
             }
             AuthResult(true, "ok", access != null, userId)
-        } catch (e: Exception) {
-            AuthResult(false, e.message ?: "network_error", false)
-        }
+        } catch (e: Exception) { AuthResult(false, e.message ?: "network_error", false) }
     }
 
     private fun request(path: String, method: String, body: JSONObject?, accessToken: String?): Pair<Int, String> {
@@ -108,13 +156,19 @@ class LinkoAuth(context: Context) {
         } finally { connection.disconnect() }
     }
 
+    private fun parseError(body: String, status: Int): String = try {
+        val obj = JSONObject(body.ifBlank { "{}" })
+        val raw = obj.optString("msg").ifBlank { obj.optString("error_description") }.ifBlank { obj.optString("message") }.ifBlank { "auth_http_$status" }
+        if (status == 429) "too_many_requests" else raw
+    } catch (_: Exception) { if (status == 429) "too_many_requests" else "auth_http_$status" }
+
     private fun validate(email: String, password: String) {
         require(email.contains('@') && email.contains('.')) { "valid_email_required" }
         require(password.length >= 8) { "password_min_8_chars" }
     }
 
     private fun clear() {
-        prefs.edit().remove(KEY_ACCESS).remove(KEY_REFRESH).remove(KEY_LINKO).remove(KEY_DEVICE_ID).remove(KEY_USER_ID).apply()
+        prefs.edit().remove(KEY_ACCESS).remove(KEY_REFRESH).remove(KEY_LINKO).remove(KEY_DEVICE_ID).remove(KEY_USER_ID).remove(KEY_PENDING_EMAIL).apply()
     }
 
     private fun writeSecret(key: String, value: String) {
@@ -150,8 +204,10 @@ class LinkoAuth(context: Context) {
         private const val KEY_LINKO = "linko_device_token"
         private const val KEY_DEVICE_ID = "linko_device_id"
         private const val KEY_USER_ID = "linko_user_id"
+        private const val KEY_PENDING_EMAIL = "pending_verification_email"
         private const val BASE_URL = "https://pbnvssbtshvesqwhckfa.supabase.co"
         private const val PUBLISHABLE_KEY = "sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9"
+        private val EMAIL_REGEX = Regex("^[A-Za-z0-9.!#${'$'}%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+${'$'}")
     }
 }
 
