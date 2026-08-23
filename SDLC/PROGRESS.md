@@ -26,6 +26,7 @@ The frozen `Implement Prototype (1).zip` Kotlin + Jetpack Compose implementation
 - The previous parchment/light `LinkShareApp` UI is no longer the active Android entry point.
 - Build/APK verification is still pending and must be completed before this UI integration is considered verified.
 - Networking, signaling, relay and production tunnel behavior remain separate from this UI integration.
+- Provider identity model: permanent Device ID is used for friend add/connect; temporary Request Key is used for connection requests.
 
 ## Phase 1 — Product Discovery
 
@@ -112,5 +113,6 @@ Phase 2: COMPLETE / APPROVED / BASELINED
 Phase 3: CURRENT
 Current step: 3.1 — Architecture Principles & Constraints
 UI: Prototype Kotlin/Compose integrated into main; build verification pending
+Identity: permanent Device ID for friend add/connect; temporary Request Key for connection requests
 Next: establish architecture constraints and principles derived from the approved requirements, then verify the integrated Android UI with a real build/APK.
 ```
