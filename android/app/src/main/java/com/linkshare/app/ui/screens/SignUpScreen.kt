@@ -45,7 +45,12 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
     val now = System.currentTimeMillis()
     val cooldownActive = cooldownUntil > now
 
-    LaunchedEffect(cooldownUntil) { if (cooldownUntil > System.currentTimeMillis()) { kotlinx.coroutines.delay((cooldownUntil - System.currentTimeMillis()).coerceAtLeast(1L)); cooldownUntil = 0L } }
+    LaunchedEffect(cooldownUntil) {
+        if (cooldownUntil > System.currentTimeMillis()) {
+            kotlinx.coroutines.delay((cooldownUntil - System.currentTimeMillis()).coerceAtLeast(1L))
+            cooldownUntil = 0L
+        }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(8.dp)); Text("Create Account", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
@@ -73,13 +78,11 @@ fun LinkoSignUpScreen(auth: LinkoAuth, onRegistered: () -> Unit) {
                     scope.launch {
                         val result = withContext(Dispatchers.IO) { auth.signUp(normalizedEmail, password, displayName.trim()) }
                         if (result.success) {
-                            // Some Supabase configurations return a successful signup without an access token.
-                            // Never enter the authenticated app in that state: recover the session by signing in.
-                            val sessionReady = withContext(Dispatchers.IO) {
-                                if (!auth.currentAccessToken().isNullOrBlank()) true
-                                else auth.signIn(normalizedEmail, password).success
-                            }
-                            if (sessionReady && !auth.currentAccessToken().isNullOrBlank()) {
+                            // Signup is the only account-creation request. Never call signIn()
+                            // automatically after a successful signup: that creates a second Auth
+                            // request and can trigger Supabase's rate limiter. With verification
+                            // disabled, a successful signup should already return a usable session.
+                            if (!auth.currentAccessToken().isNullOrBlank()) {
                                 runCatching { LinkoFriendsApiHolder.api.ensureProfile(displayName.trim()) }
                                 busy = false
                                 onRegistered()
