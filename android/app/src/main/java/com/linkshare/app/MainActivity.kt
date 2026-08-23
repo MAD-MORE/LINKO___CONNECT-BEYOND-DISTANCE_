@@ -11,9 +11,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoFriendsApi
 import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoRuntime
+import com.linkshare.app.tunnel.TunnelCoordinator
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
 
@@ -26,6 +28,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         linkoAuth = LinkoAuth(this)
         LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
+        LinkoEngineBridge.configure(this)
         linkoRuntime = LinkoRuntime(this)
         linkoRuntime.start()
         requestEnginePermissions()
