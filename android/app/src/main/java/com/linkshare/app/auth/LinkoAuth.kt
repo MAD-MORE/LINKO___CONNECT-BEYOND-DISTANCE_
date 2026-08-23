@@ -12,14 +12,9 @@ class LinkoAuth(context: Context) {
     fun signUp(email: String, password: String, displayName: String): AuthResult {
         validate(email, password)
         val normalized = email.trim().lowercase()
-        if (prefs.getString(KEY_PENDING_EMAIL, null) == normalized) {
-            return AuthResult(false, "signup_pending_verification")
-        }
         val body = JSONObject().put("email", normalized).put("password", password)
             .put("data", JSONObject().put("display_name", displayName.trim()))
-        val created = request("/auth/v1/signup", "POST", body, saveTokens = false)
-        if (created.success) prefs.edit().putString(KEY_PENDING_EMAIL, normalized).apply()
-        return created
+        return request("/auth/v1/signup", "POST", body, saveTokens = true)
     }
 
     fun signIn(email: String, password: String): AuthResult {
@@ -30,7 +25,7 @@ class LinkoAuth(context: Context) {
 
     fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
     fun currentAccessToken(): String? = prefs.getString(KEY_ACCESS_TOKEN, null)
-    fun pendingVerificationEmail(): String? = prefs.getString(KEY_PENDING_EMAIL, null)
+    fun pendingVerificationEmail(): String? = null
     fun currentLinkoToken(): String? = prefs.getString(KEY_LINKO_TOKEN, null)
     fun currentDeviceId(): String? = prefs.getString(KEY_DEVICE_ID, null)
     fun hasRegisteredDevice(): Boolean = !currentDeviceId().isNullOrBlank() && !currentLinkoToken().isNullOrBlank()
@@ -44,12 +39,12 @@ class LinkoAuth(context: Context) {
     }
 
     fun signOut() {
-        prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_PENDING_EMAIL)
+        prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN)
             .remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).apply()
     }
 
-    suspend fun verifySignupOtp(email: String, code: String): AuthResult = verifyOtp(email, code, "signup")
-    suspend fun sendSignupOtp(email: String): AuthResult = resendOtp(email, "signup")
+    suspend fun verifySignupOtp(email: String, code: String): AuthResult = AuthResult(false, "verification_disabled")
+    suspend fun sendSignupOtp(email: String): AuthResult = AuthResult(false, "verification_disabled")
     suspend fun verifyRecoveryOtp(email: String, code: String): AuthResult = verifyOtp(email, code, "recovery")
     suspend fun sendRecoveryOtp(email: String): AuthResult = resendOtp(email, "recovery")
 
@@ -67,9 +62,7 @@ class LinkoAuth(context: Context) {
     private fun verifyOtp(email: String, code: String, type: String): AuthResult {
         val normalized = email.trim().lowercase()
         if (!emailRegex.matches(normalized) || code.length != 6 || !code.all(Char::isDigit)) return AuthResult(false, "verification_code_invalid")
-        return request("/auth/v1/verify", "POST", JSONObject().put("email", normalized).put("token", code).put("type", type), saveTokens = true).also {
-            if (it.success && type == "signup") prefs.edit().remove(KEY_PENDING_EMAIL).apply()
-        }
+        return request("/auth/v1/verify", "POST", JSONObject().put("email", normalized).put("token", code).put("type", type), saveTokens = true)
     }
 
     private fun resendOtp(email: String, type: String): AuthResult {
@@ -106,13 +99,12 @@ class LinkoAuth(context: Context) {
                     }
                 }
                 AuthResult(true, when {
-                    path.endsWith("/signup") -> "confirmation_email_sent"
-                    path.endsWith("/resend") -> "otp_sent"
+                    path.endsWith("/signup") -> if (json.has("access_token")) "authenticated" else "account_created"
                     path.endsWith("/verify") -> "verified"
                     path.endsWith("/user") -> "password_updated"
                     json.has("access_token") -> "authenticated"
                     else -> "ok"
-                }, path.endsWith("/signup") && json.optString("access_token").isBlank(), userId)
+                }, false, userId)
             } finally { connection.disconnect() }
         } catch (e: Exception) {
             AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
@@ -133,7 +125,6 @@ class LinkoAuth(context: Context) {
         private const val BASE_URL = "https://pbnvssbtshvesqwhckfa.supabase.co"
         private const val PUBLISHABLE_KEY = "sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9"
         private const val TIMEOUT_MS = 15_000
-        private const val KEY_PENDING_EMAIL = "pending_signup_email"
         private const val KEY_ACCESS_TOKEN = "supabase_access_token"
         private const val KEY_REFRESH_TOKEN = "supabase_refresh_token"
         private const val KEY_DEVICE_ID = "linko_device_id"
