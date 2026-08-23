@@ -33,8 +33,26 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
+    /**
+     * Idempotent friend request operation.
+     * A duplicate pending request is treated as the existing state rather than
+     * surfaced as an error, so repeated taps/retries cannot create request spam.
+     */
     suspend fun sendRequest(receiverUserId: String): JSONObject = withContext(Dispatchers.IO) {
-        post("/requests", JSONObject().put("receiverUserId", receiverUserId))
+        try {
+            post("/requests", JSONObject().put("receiverUserId", receiverUserId))
+        } catch (e: LinkoNetworkException) {
+            val code = e.message.orEmpty().lowercase()
+            val duplicate = e.statusCode == 409 ||
+                code.contains("already") ||
+                code.contains("duplicate") ||
+                code.contains("pending") ||
+                code.contains("request_exists")
+            if (!duplicate) throw e
+            JSONObject()
+                .put("status", "already_pending")
+                .put("receiver_user_id", receiverUserId)
+        }
     }
 
     suspend fun requests(): JSONObject = withContext(Dispatchers.IO) { get("/requests") }
