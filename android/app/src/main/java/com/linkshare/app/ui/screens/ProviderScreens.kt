@@ -31,19 +31,29 @@ import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
 
+private object ProviderReadyAlgorithm {
+    fun displayId(auth: LinkoAuth, identity: LinkoDeviceIdentity): String {
+        val source = auth.currentDeviceId()?.takeIf { it.isNotBlank() } ?: identity.deviceFingerprint()
+        return "LNK-" + source.replace("-", "").uppercase().take(8).padEnd(8, '0')
+    }
+
+    fun requestNotificationPermission(context: Context) {
+        if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
+        }
+    }
+}
+
 @Composable
 fun ProviderReadyScreen() {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
     val identity = remember { LinkoDeviceIdentity() }
-    val rawId = remember { auth.currentDeviceId()?.takeIf { it.isNotBlank() } ?: identity.deviceFingerprint() }
-    val deviceId = remember(rawId) { "LNK-" + rawId.replace("-", "").uppercase().take(8).padEnd(8, '0') }
+    val deviceId = remember { ProviderReadyAlgorithm.displayId(auth, identity) }
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
-        }
+        ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
     }
 
