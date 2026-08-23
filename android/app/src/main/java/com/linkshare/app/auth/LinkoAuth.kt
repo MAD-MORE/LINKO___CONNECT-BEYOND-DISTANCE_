@@ -10,15 +10,20 @@ import java.net.URL
 class LinkoAuth(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("linko_auth", Context.MODE_PRIVATE)
 
+    /**
+     * Account creation uses Supabase Auth directly.
+     * The control plane is required for device/session coordination, not for
+     * basic account creation, so a missing control-plane deployment can no
+     * longer block signup.
+     */
     fun signUp(email: String, password: String, displayName: String): AuthResult {
         validate(email, password)
         val normalized = email.trim().lowercase()
-        if (BuildConfig.LINKO_CONTROL_PLANE_URL.isBlank()) return AuthResult(false, "control_plane_not_configured")
         val body = JSONObject()
             .put("email", normalized)
             .put("password", password)
             .put("data", JSONObject().put("display_name", displayName.trim()))
-        return controlPlaneRequest("/v1/auth/signup", body)
+        return request("/auth/v1/signup", "POST", body, saveTokens = true)
     }
 
     fun signIn(email: String, password: String): AuthResult {
@@ -63,37 +68,6 @@ class LinkoAuth(context: Context) {
         require(password.length >= 6) { "Password must be at least 6 characters" }
     }
 
-    private fun controlPlaneRequest(path: String, body: JSONObject): AuthResult {
-        return try {
-            val baseUrl = BuildConfig.LINKO_CONTROL_PLANE_URL.trim().removeSuffix("/")
-            val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = TIMEOUT_MS
-                readTimeout = TIMEOUT_MS
-                doOutput = true
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("Content-Type", "application/json")
-            }
-            try {
-                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-                val status = connection.responseCode
-                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                if (status !in 200..299) return AuthResult(false, parseError(response, status))
-                val json = JSONObject(response.ifBlank { "{}" })
-                val access = json.optString("access_token").takeIf { it.isNotBlank() }
-                if (access == null) return AuthResult(false, "signup_session_missing")
-                val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access)
-                json.optString("refresh_token").takeIf { it.isNotBlank() }?.let { edit.putString(KEY_REFRESH_TOKEN, it) }
-                edit.apply()
-                val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() }
-                AuthResult(true, "authenticated", false, userId)
-            } finally { connection.disconnect() }
-        } catch (e: Exception) {
-            AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
-        }
-    }
-
     private fun verifyOtp(email: String, code: String, type: String): AuthResult {
         val normalized = email.trim().lowercase()
         if (!emailRegex.matches(normalized) || code.length != 6 || !code.all(Char::isDigit)) return AuthResult(false, "verification_code_invalid")
@@ -127,18 +101,25 @@ class LinkoAuth(context: Context) {
                 val json = JSONObject(response.ifBlank { "{}" })
                 val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() }
                 if (saveTokens) {
-                    json.optString("access_token").takeIf { it.isNotBlank() }?.let { access ->
+                    val access = json.optString("access_token").takeIf { it.isNotBlank() }
+                    val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }
+                    if (access != null) {
                         val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access)
-                        json.optString("refresh_token").takeIf { it.isNotBlank() }?.let { edit.putString(KEY_REFRESH_TOKEN, it) }
+                        refresh?.let { edit.putString(KEY_REFRESH_TOKEN, it) }
                         edit.apply()
                     }
                 }
-                AuthResult(true, when {
-                    path.endsWith("/verify") -> "verified"
-                    path.endsWith("/user") -> "password_updated"
-                    json.has("access_token") -> "authenticated"
-                    else -> "ok"
-                }, false, userId)
+                AuthResult(
+                    true,
+                    when {
+                        path.endsWith("/verify") -> "verified"
+                        path.endsWith("/user") -> "password_updated"
+                        json.has("access_token") -> "authenticated"
+                        else -> "account_created"
+                    },
+                    false,
+                    userId,
+                )
             } finally { connection.disconnect() }
         } catch (e: Exception) {
             AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
