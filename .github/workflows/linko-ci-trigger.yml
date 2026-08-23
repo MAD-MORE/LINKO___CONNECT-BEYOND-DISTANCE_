@@ -1,0 +1,14 @@
+name: LINKO CI Trigger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/linko-ci-trigger.yml'
+
+jobs:
+  verify-trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm LINKO CI trigger
+        run: echo "LINKO CI trigger started successfully"
