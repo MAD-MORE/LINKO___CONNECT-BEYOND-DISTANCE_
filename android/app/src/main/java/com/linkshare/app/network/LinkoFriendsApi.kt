@@ -35,13 +35,7 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
-    /**
-     * Returns the current user's friends from the service. As a compatibility
-     * guard, accepted requests are merged into the friend list as well. This
-     * makes friendship symmetric for both the sender and accepter even if an
-     * older deployed Edge Function only materializes the accepted friendship
-     * for one side in its /friends response.
-     */
+    /** Returns the current user's friends, including accepted requests missing from /friends. */
     suspend fun friends(): JSONObject = withContext(Dispatchers.IO) {
         val friendsJson = get("/friends")
         val friends = friendsJson.optJSONArray("friends") ?: JSONArray()
@@ -68,7 +62,7 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
             })
         }
 
-        return@withContext JSONObject(friendsJson.toString()).put("friends", friends)
+        JSONObject(friendsJson.toString()).put("friends", friends)
     }
 
     /** Idempotent friend request operation. */
