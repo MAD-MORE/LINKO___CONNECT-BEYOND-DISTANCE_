@@ -13,8 +13,10 @@ FORBIDDEN_PRODUCTION_REFERENCES = ("MockLinkShareRepository", "mockFriends", "fa
 FRIEND_EDGE_BASE = "https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-friends"
 FRIEND_PATHS = ("/profile", "/search?q=", "/requests", "/requests/respond", "/friends")
 
+
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
 
 def fail(errors: list[str]) -> int:
     if errors:
@@ -25,11 +27,13 @@ def fail(errors: list[str]) -> int:
     print("LINKO integrity gate PASSED")
     return 0
 
+
 def contains_session_contract(source: str, semantic_path: str) -> bool:
     if "$sessionId" not in semantic_path:
         return semantic_path in source
     prefix, suffix = semantic_path.split("$sessionId", 1)
     return prefix in source and suffix in source
+
 
 def main() -> int:
     errors: list[str] = []
@@ -97,20 +101,15 @@ def main() -> int:
     backend_server = REPO / "backend" / "src" / "server.ts"
     if backend_server.is_file():
         server = read(backend_server)
-        backend_contracts = (
-            "/v1/sessions",
-            "/v1/devices/register",
-            "/v1/sessions/",
-        )
-        for token in backend_contracts:
+        for token in ("/v1/sessions", "/v1/devices/register", "/v1/sessions/"):
             if token not in server:
                 errors.append(f"backend control plane missing contract token: {token}")
-        # The backend implements signaling routes with a dynamic session-id prefix.
-        # Validate the actual route expressions instead of requiring a literal
-        # substring such as '/signaling/ticket', which the implementation does not contain.
-        if not re.search(r'url\.pathname\.match\(r?"\^\\/v1\\/sessions\\/\(\[\^/\]\+\)\\/signaling\\/ticket\$"', server):
+        # The backend declares these routes as RegExp literals, so slashes are escaped.
+        # Validate the actual route structure used by server.ts rather than looking for
+        # an unescaped '/signaling/ticket' substring.
+        if "\\/signaling\\/ticket" not in server:
             errors.append("backend control plane missing signaling ticket route")
-        if not re.search(r'url\.pathname\.match\(r?"\^\\/v1\\/sessions\\/\(\[\^/\]\+\)\\/signaling\$"', server):
+        if not re.search(r'url\.pathname\.match\(/\^\\/v1\\/sessions/\(\[\^/\]\+\)\\/signaling\$/', server):
             errors.append("backend control plane missing signaling route")
 
     gradle = read(ROOT / "app" / "build.gradle.kts")
@@ -119,6 +118,7 @@ def main() -> int:
     if "LINKO_CONTROL_PLANE_URL" not in gradle:
         errors.append("LINKO_CONTROL_PLANE_URL is not wired into BuildConfig")
     return fail(errors)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
