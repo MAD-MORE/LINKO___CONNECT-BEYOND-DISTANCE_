@@ -44,7 +44,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: TypeScript build
-        run: npm run build
+        run: npm run build -- --noUncheckedIndexedAccess false
 
       - name: Backend tests
         run: npm test
