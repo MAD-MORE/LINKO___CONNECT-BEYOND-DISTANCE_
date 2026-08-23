@@ -81,6 +81,8 @@ to authenticated
 using ((select auth.uid()) = receiver_id and status = 'pending')
 with check ((select auth.uid()) = receiver_id and status in ('accepted', 'declined', 'pending'));
 
-revoke execute on function public.ensure_linko_profile(uuid, text) from anon, authenticated;
-revoke execute on function public.handle_new_linko_user() from anon, authenticated;
-revoke execute on function public.search_linko_users(text, uuid) from anon, authenticated;
+-- Internal helpers are not public APIs. The linko-friends Edge Function uses
+-- the service role and remains the only public friend-service entry point.
+revoke execute on function public.ensure_linko_profile(uuid, text) from public, anon, authenticated;
+revoke execute on function public.handle_new_linko_user() from public, anon, authenticated;
+revoke execute on function public.search_linko_users(text, uuid) from public, anon, authenticated;
