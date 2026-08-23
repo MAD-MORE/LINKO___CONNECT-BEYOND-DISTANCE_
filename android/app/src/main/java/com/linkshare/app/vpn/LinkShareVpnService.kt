@@ -29,6 +29,13 @@ class LinkShareVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
+        // Defense in depth: the engine must never establish a tunnel before
+        // Android has granted the user's VPN consent.
+        if (VpnService.prepare(this) != null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
         stopTunnel()
         tunnelInterface = Builder()
             .setSession("LINKO tunnel")
