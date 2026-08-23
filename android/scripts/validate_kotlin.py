@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
-"""Fast Kotlin structural preflight for LINKO CI.
-
-This is intentionally a guard, not a replacement for kotlinc. It catches
-common edit/merge regressions before the full Android build:
-- unbalanced braces while ignoring strings/comments
-- `return` inside expression-body functions (`fun x() = ...`)
-- top-level-only `private` declarations accidentally nested in a function
-"""
+"""Fast Kotlin structural preflight for LINKO CI."""
 from __future__ import annotations
 
 from pathlib import Path
 import re
-import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "app" / "src" / "main" / "java"
-
 PRIVATE_DECL = re.compile(r"^\s+private\s+(?:fun|val|var|class|object|interface|typealias)\b")
 EXPR_FUN = re.compile(r"\bfun\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*(?::[^=\{\n]+)?=\s*")
 
 
 def sanitize(line: str, state: dict[str, bool]) -> str:
-    out = []
+    out: list[str] = []
     i = 0
     in_block = state.get("block", False)
     in_string = state.get("string", False)
@@ -77,8 +68,8 @@ def sanitize(line: str, state: dict[str, bool]) -> str:
                     j += 1
                     break
                 j += 1
-            out.append(" ")
             i = j
+            out.append(" ")
             continue
         out.append(line[i])
         i += 1
@@ -88,35 +79,51 @@ def sanitize(line: str, state: dict[str, bool]) -> str:
     return "".join(out)
 
 
-def check_file(path: Path) -> list[str]:
-    errors: list[str] = []
+def delta(clean: str) -> int:
+    return clean.count("{") - clean.count("}")
+
+
+def check_expression_body(lines: list[str], start: int) -> int | None:
     state: dict[str, bool] = {}
-    depth = 0
+    header = sanitize(lines[start], state)
+    match = EXPR_FUN.search(header)
+    if not match:
+        return None
+    body = header[match.end():].strip()
+    # The problematic form is `fun x(...) = try { ... return ... }` or a
+    # block-valued expression. A plain single-expression function has no
+    # legitimate return statement to scan for.
+    if "{" not in body and not body.startswith(("try", "run", "with", "runCatching")):
+        return None
+    depth = delta(body)
+    for idx in range(start + 1, len(lines)):
+        clean = sanitize(lines[idx], {})
+        if re.search(r"\breturn\b", clean):
+            return idx + 1
+        depth += delta(clean)
+        if depth <= 0:
+            break
+    return None
+
+
+def check_file(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
+    state: dict[str, bool] = {}
+    cleans = [sanitize(line, state) for line in lines]
+    errors: list[str] = []
+    depth = 0
 
-    for number, raw in enumerate(lines, 1):
-        clean = sanitize(raw, state)
-        stripped = clean.strip()
-
-        if stripped and depth == 0 and not raw.startswith((" ", "\t")):
-            pass
-        if PRIVATE_DECL.match(raw) and depth > 0:
-            errors.append(f"{path.relative_to(ROOT)}:{number}: private declaration appears nested inside a block")
-
+    for number, clean in enumerate(cleans, 1):
+        if PRIVATE_DECL.match(lines[number - 1]) and depth > 0:
+            errors.append(f"{path.relative_to(ROOT)}:{number}: private declaration nested inside a block")
         if EXPR_FUN.search(clean):
-            for look in range(number, min(number + 25, len(lines))):
-                next_clean = sanitize(lines[look], {})
-                if re.search(r"\breturn\b", next_clean):
-                    errors.append(f"{path.relative_to(ROOT)}:{look + 1}: return inside expression-body function declared near line {number}")
-                    break
-                if "=" in next_clean and look > number and ("fun " in next_clean or "class " in next_clean):
-                    break
-
-        depth += clean.count("{") - clean.count("}")
+            bad = check_expression_body(lines, number - 1)
+            if bad is not None:
+                errors.append(f"{path.relative_to(ROOT)}:{bad}: return inside expression-body function declared near line {number}")
+        depth += delta(clean)
         if depth < 0:
             errors.append(f"{path.relative_to(ROOT)}:{number}: unexpected closing brace")
             depth = 0
-
     if depth != 0:
         errors.append(f"{path.relative_to(ROOT)}: unbalanced braces (depth {depth})")
     if state.get("block") or state.get("string") or state.get("triple"):
@@ -126,9 +133,7 @@ def check_file(path: Path) -> list[str]:
 
 def main() -> int:
     files = sorted(SOURCE.rglob("*.kt"))
-    failures: list[str] = []
-    for path in files:
-        failures.extend(check_file(path))
+    failures = [error for path in files for error in check_file(path)]
     if failures:
         print("Kotlin preflight FAILED")
         print("\n".join(f"- {item}" for item in failures))
