@@ -21,6 +21,7 @@ const tunnelEndpoint = tunnelPort > 0 ? new UdpTunnelEndpoint(tunnelPort) : null
 if (tunnelEndpoint) tunnelEndpoint.start();
 const supabaseUrl = (process.env.SUPABASE_URL ?? "").replace(/\/$/, "");
 const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY ?? "";
 
 function json(res: ServerResponse, status: number, body: unknown, requestId: string) { res.writeHead(status, { "content-type": "application/json", "x-request-id": requestId, "cache-control": "no-store" }); res.end(JSON.stringify(body)); }
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk)); if (!chunks.length) return {}; const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8")); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_json_body"); return value as Record<string, unknown>; }
@@ -28,24 +29,57 @@ function bearer(req: IncomingMessage) { const value = req.headers.authorization;
 function supabaseBearer(req: IncomingMessage) { const value = req.headers.authorization; return value?.startsWith("Bearer ") ? value.slice(7).trim() : null; }
 async function verifySupabaseUser(accessToken: string): Promise<{ id: string; email?: string }> { if (!supabaseUrl || !supabasePublishableKey) throw new Error("supabase_auth_not_configured"); const response = await fetch(`${supabaseUrl}/auth/v1/user`, { headers: { apikey: supabasePublishableKey, Authorization: `Bearer ${accessToken}`, Accept: "application/json" } }); if (!response.ok) throw new Error("supabase_auth_invalid"); const user = await response.json() as { id?: string; email?: string }; if (!user.id) throw new Error("supabase_user_invalid"); return { id: user.id, email: user.email }; }
 
+async function supabaseRequest(path: string, method: string, key: string, payload: Record<string, unknown>) {
+  const response = await fetch(`${supabaseUrl}${path}`, {
+    method,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try { data = JSON.parse(text) as Record<string, unknown>; } catch { /* handled by caller */ }
+  return { response, data };
+}
+
 const server = createServer(async (req, res) => {
   const requestId = req.headers["x-request-id"]?.toString() || randomUUID();
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   try {
     if (req.method === "GET" && url.pathname === "/health") { let database = "memory"; if (postgresStore) { try { await postgresStore.health(); database = "postgres"; } catch { return json(res, 503, { service: "linko-control-plane", status: "degraded", database: "unreachable", relay: tunnelEndpoint ? "enabled" : "disabled", requestId }, requestId); } } return json(res, 200, { service: "linko-control-plane", status: "ok", database, persistence: database, relay: tunnelEndpoint ? "enabled" : "disabled" }, requestId); }
+
+    // LINKO account creation does not require email verification.
+    // The privileged Supabase secret stays on the control plane and is never shipped to Android.
+    if (req.method === "POST" && url.pathname === "/v1/auth/signup") {
+      if (!supabaseUrl || !supabasePublishableKey || !supabaseSecretKey) return json(res, 503, { error: "supabase_signup_not_configured", requestId }, requestId);
+      const input = await body(req);
+      if (typeof input.email !== "string" || typeof input.password !== "string") return json(res, 400, { error: "invalid_signup", requestId }, requestId);
+      if (input.password.length < 6 || input.password.length > 72) return json(res, 400, { error: "password_length_invalid", requestId }, requestId);
+      const email = input.email.trim().toLowerCase();
+      const signup = await supabaseRequest("/auth/v1/signup", "POST", supabasePublishableKey, {
+        email,
+        password: input.password,
+        data: input.data ?? {},
+      });
+      if (!signup.response.ok) return json(res, signup.response.status, { error: String(signup.data.msg ?? signup.data.message ?? signup.data.error ?? "signup_failed").toLowerCase().replaceAll(" ", "_"), requestId }, requestId);
+      const user = signup.data.user as { id?: string; email?: string } | undefined;
+      if (!user?.id) return json(res, 502, { error: "signup_user_missing", requestId }, requestId);
+
+      const confirm = await supabaseRequest(`/auth/v1/admin/users/${encodeURIComponent(user.id)}`, "PUT", supabaseSecretKey, { email_confirm: true });
+      if (!confirm.response.ok) return json(res, 502, { error: "signup_confirmation_failed", requestId }, requestId);
+
+      const login = await supabaseRequest("/auth/v1/token?grant_type=password", "POST", supabasePublishableKey, { email, password: input.password });
+      if (!login.response.ok) return json(res, 502, { error: "signup_session_failed", requestId }, requestId);
+      return json(res, 201, { access_token: login.data.access_token, refresh_token: login.data.refresh_token, user: login.data.user ?? user, message: "authenticated" }, requestId);
+    }
+
     if (req.method === "POST" && url.pathname === "/v1/devices/register") { const accessToken = supabaseBearer(req); if (!accessToken) return json(res, 401, { error: "supabase_auth_required", requestId }, requestId); const user = await verifySupabaseUser(accessToken); const input = await body(req); if (typeof input.publicKey !== "string" || typeof input.name !== "string" || !Array.isArray(input.roles)) return json(res, 400, { error: "invalid_device", requestId }, requestId); const roles = input.roles.filter((role): role is "provider" | "receiver" => role === "provider" || role === "receiver"); if (!roles.length) return json(res, 400, { error: "device_role_required", requestId }, requestId); const device = await store.registerDevice({ userId: user.id, publicKey: input.publicKey, name: input.name, roles }); return json(res, 201, { device, accessToken: issueDeviceToken(device.userId, device.id), user: { id: user.id, email: user.email } }, requestId); }
     if (req.method === "POST" && url.pathname === "/v1/devices") { if (!isBootstrapSecret(req.headers["x-linko-bootstrap"]?.toString())) return json(res, 401, { error: "bootstrap_auth_required", requestId }, requestId); const input = await body(req); if (typeof input.userId !== "string" || typeof input.publicKey !== "string" || typeof input.name !== "string" || !Array.isArray(input.roles)) return json(res, 400, { error: "invalid_device", requestId }, requestId); const roles = input.roles.filter((role): role is "provider" | "receiver" => role === "provider" || role === "receiver"); if (!roles.length) return json(res, 400, { error: "device_role_required", requestId }, requestId); const device = await store.registerDevice({ userId: input.userId, publicKey: input.publicKey, name: input.name, roles }); return json(res, 201, { device, accessToken: issueDeviceToken(device.userId, device.id) }, requestId); }
 
     const token = bearer(req); if (!token) return json(res, 401, { error: "authentication_required", requestId }, requestId);
     const authenticatedDevice = await store.getDevice(token.deviceId); if (!authenticatedDevice || authenticatedDevice.userId !== token.sub || authenticatedDevice.revokedAt) return json(res, 401, { error: "device_not_authorized", requestId }, requestId);
 
-    if (req.method === "GET" && url.pathname === "/v1/provider/requests") {
-      if (!authenticatedDevice.roles.includes("provider")) return json(res, 403, { error: "provider_role_required", requestId }, requestId);
-      const sessions = await store.listPendingProviderSessions(authenticatedDevice.id);
-      return json(res, 200, { requests: sessions }, requestId);
-    }
+    if (req.method === "GET" && url.pathname === "/v1/provider/requests") { if (!authenticatedDevice.roles.includes("provider")) return json(res, 403, { error: "provider_role_required", requestId }, requestId); const sessions = await store.listPendingProviderSessions(authenticatedDevice.id); return json(res, 200, { requests: sessions }, requestId); }
     if (req.method === "POST" && url.pathname === "/v1/devices/presence") { const device = await store.touchDevice(authenticatedDevice.id); return json(res, 200, { deviceId: device.id, lastSeenAt: device.lastSeenAt }, requestId); }
-
     if (req.method === "POST" && url.pathname === "/v1/sessions") { const input = await body(req); if (typeof input.receiverDeviceId !== "string" || typeof input.providerDeviceId !== "string") return json(res, 400, { error: "invalid_session_request", requestId }, requestId); if (authenticatedDevice.id !== input.receiverDeviceId && authenticatedDevice.id !== input.providerDeviceId) return json(res, 403, { error: "session_party_required", requestId }, requestId); const session = await store.createSession(input.receiverDeviceId, input.providerDeviceId); const key = createSessionTunnelKey(session.id); if (tunnelEndpoint) tunnelEndpoint.addSession(session.id, key); return json(res, 201, session, requestId); }
     const transitionMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/transition$/);
     if (req.method === "POST" && transitionMatch) { const session = await store.getSession(transitionMatch[1]); if (!session) return json(res, 404, { error: "session_not_found", requestId }, requestId); if (session.receiverDeviceId !== authenticatedDevice.id && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "session_party_required", requestId }, requestId); const input = await body(req); if (typeof input.state !== "string") return json(res, 400, { error: "state_required", requestId }, requestId); const next = input.state as SessionState; if (next === "approved" && session.providerDeviceId !== authenticatedDevice.id) return json(res, 403, { error: "provider_approval_required", requestId }, requestId); const updated = await store.transitionSession(session.id, next); if (["revoked", "expired", "denied"].includes(next)) { revokeSessionTunnelKey(session.id); tunnelEndpoint?.removeSession(session.id); } return json(res, 200, updated, requestId); }
