@@ -2,7 +2,7 @@ package com.linkshare.app.auth
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.linkshare.app.network.LinkoRuntimeConfig
+import com.linkshare.app.BuildConfig
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -13,15 +13,12 @@ class LinkoAuth(context: Context) {
     fun signUp(email: String, password: String, displayName: String): AuthResult {
         validate(email, password)
         val normalized = email.trim().lowercase()
-        val body = JSONObject().put("email", normalized).put("password", password)
+        if (BuildConfig.LINKO_CONTROL_PLANE_URL.isBlank()) return AuthResult(false, "control_plane_not_configured")
+        val body = JSONObject()
+            .put("email", normalized)
+            .put("password", password)
             .put("data", JSONObject().put("display_name", displayName.trim()))
-        if (LinkoRuntimeConfig.isConfigured()) {
-            return requestAbsolute(
-                LinkoRuntimeConfig.controlPlaneUrl.trimEnd('/') + "/v1/auth/signup",
-                "POST", body, saveTokens = true, sendSupabaseApiKey = false
-            )
-        }
-        return request("/auth/v1/signup", "POST", body, saveTokens = true)
+        return controlPlaneRequest("/v1/auth/signup", body)
     }
 
     fun signIn(email: String, password: String): AuthResult {
@@ -41,7 +38,9 @@ class LinkoAuth(context: Context) {
         prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply()
     }
 
-    fun clearLinkoSession() { prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply() }
+    fun clearLinkoSession() {
+        prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
+    }
 
     fun signOut() {
         prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN)
@@ -64,6 +63,37 @@ class LinkoAuth(context: Context) {
         require(password.length >= 6) { "Password must be at least 6 characters" }
     }
 
+    private fun controlPlaneRequest(path: String, body: JSONObject): AuthResult {
+        return try {
+            val baseUrl = BuildConfig.LINKO_CONTROL_PLANE_URL.trim().removeSuffix("/")
+            val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+                doOutput = true
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (status !in 200..299) return AuthResult(false, parseError(response, status))
+                val json = JSONObject(response.ifBlank { "{}" })
+                val access = json.optString("access_token").takeIf { it.isNotBlank() }
+                if (access == null) return AuthResult(false, "signup_session_missing")
+                val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access)
+                json.optString("refresh_token").takeIf { it.isNotBlank() }?.let { edit.putString(KEY_REFRESH_TOKEN, it) }
+                edit.apply()
+                val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() }
+                AuthResult(true, "authenticated", false, userId)
+            } finally { connection.disconnect() }
+        } catch (e: Exception) {
+            AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
+        }
+    }
+
     private fun verifyOtp(email: String, code: String, type: String): AuthResult {
         val normalized = email.trim().lowercase()
         if (!emailRegex.matches(normalized) || code.length != 6 || !code.all(Char::isDigit)) return AuthResult(false, "verification_code_invalid")
@@ -76,17 +106,14 @@ class LinkoAuth(context: Context) {
         return request("/auth/v1/resend", "POST", JSONObject().put("type", type).put("email", normalized), saveTokens = false)
     }
 
-    private fun request(path: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean): AuthResult =
-        requestAbsolute(BASE_URL + path, method, body, accessToken, saveTokens, true)
-
-    private fun requestAbsolute(url: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean, sendSupabaseApiKey: Boolean): AuthResult {
+    private fun request(path: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean): AuthResult {
         return try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 doOutput = method != "GET"
-                if (sendSupabaseApiKey) setRequestProperty("apikey", PUBLISHABLE_KEY)
+                setRequestProperty("apikey", PUBLISHABLE_KEY)
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "application/json")
                 accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
@@ -106,7 +133,12 @@ class LinkoAuth(context: Context) {
                         edit.apply()
                     }
                 }
-                AuthResult(true, if (json.has("access_token")) "authenticated" else "account_created", false, userId)
+                AuthResult(true, when {
+                    path.endsWith("/verify") -> "verified"
+                    path.endsWith("/user") -> "password_updated"
+                    json.has("access_token") -> "authenticated"
+                    else -> "ok"
+                }, false, userId)
             } finally { connection.disconnect() }
         } catch (e: Exception) {
             AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error")
