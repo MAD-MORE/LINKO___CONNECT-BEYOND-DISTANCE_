@@ -19,12 +19,17 @@ class LinkoControlPlaneApi(
         parseFriends(json.optJSONArray("friends") ?: JSONArray())
     }
 
-    suspend fun searchUsers(query: String): List<Friend> = withContext(Dispatchers.IO) {
-        val clean = query.trim()
-        if (clean.length < 2) return@withContext emptyList()
-        val encoded = java.net.URLEncoder.encode(clean, "UTF-8")
-        val json = request("GET", "/search?q=$encoded")
-        parseFriends(json.optJSONArray("results") ?: JSONArray())
+    suspend fun searchUsers(query: String): List<Friend> {
+        return withContext(Dispatchers.IO) {
+            val clean = query.trim()
+            if (clean.length < 2) {
+                emptyList()
+            } else {
+                val encoded = java.net.URLEncoder.encode(clean, "UTF-8")
+                val json = request("GET", "/search?q=$encoded")
+                parseFriends(json.optJSONArray("results") ?: JSONArray())
+            }
+        }
     }
 
     suspend fun sendFriendRequest(userId: String): Boolean = withContext(Dispatchers.IO) {
