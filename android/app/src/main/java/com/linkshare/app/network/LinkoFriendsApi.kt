@@ -28,31 +28,16 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
                     deviceId = item.optString("device_id").takeIf { it.isNotBlank() },
                     deviceName = item.optString("device_name").takeIf { it.isNotBlank() },
                     isSharing = item.optBoolean("is_sharing", false),
+                    relationshipStatus = item.optString("relationship_status", "none"),
+                    requestId = item.optString("request_id").takeIf { it.isNotBlank() && it != "null" },
                 ))
             }
         }
     }
 
-    /**
-     * Idempotent friend request operation.
-     * A duplicate pending request is treated as the existing state rather than
-     * surfaced as an error, so repeated taps/retries cannot create request spam.
-     */
+    /** Idempotent friend request operation. */
     suspend fun sendRequest(receiverUserId: String): JSONObject = withContext(Dispatchers.IO) {
-        try {
-            post("/requests", JSONObject().put("receiverUserId", receiverUserId))
-        } catch (e: LinkoNetworkException) {
-            val code = e.message.orEmpty().lowercase()
-            val duplicate = e.statusCode == 409 ||
-                code.contains("already") ||
-                code.contains("duplicate") ||
-                code.contains("pending") ||
-                code.contains("request_exists")
-            if (!duplicate) throw e
-            JSONObject()
-                .put("status", "already_pending")
-                .put("receiver_user_id", receiverUserId)
-        }
+        post("/requests", JSONObject().put("receiverUserId", receiverUserId))
     }
 
     suspend fun requests(): JSONObject = withContext(Dispatchers.IO) { get("/requests") }
@@ -96,4 +81,6 @@ data class FriendSearchResult(
     val deviceId: String?,
     val deviceName: String?,
     val isSharing: Boolean,
+    val relationshipStatus: String = "none",
+    val requestId: String? = null,
 )
