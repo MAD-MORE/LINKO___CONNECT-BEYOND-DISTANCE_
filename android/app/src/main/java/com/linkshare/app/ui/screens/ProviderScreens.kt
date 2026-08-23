@@ -27,15 +27,18 @@ import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.auth.LinkoDeviceIdentity
+import com.linkshare.app.auth.LinkoRequestKey
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
 
 private object ProviderReadyAlgorithm {
-    fun displayId(auth: LinkoAuth, identity: LinkoDeviceIdentity): String {
+    fun deviceId(auth: LinkoAuth, identity: LinkoDeviceIdentity): String {
         val source = auth.currentDeviceId()?.takeIf { it.isNotBlank() } ?: identity.deviceFingerprint()
-        return "LNK-" + source.replace("-", "").uppercase().take(8).padEnd(8, '0')
+        return if (source.startsWith("LNK-", ignoreCase = true)) source.uppercase() else "LNK-${source.replace("-", "").uppercase()}"
     }
+
+    fun requestKey(context: Context): String = LinkoRequestKey(context).current()
 
     fun requestNotificationPermission(context: Context) {
         if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -49,7 +52,8 @@ fun ProviderReadyScreen() {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
     val identity = remember { LinkoDeviceIdentity() }
-    val deviceId = remember { ProviderReadyAlgorithm.displayId(auth, identity) }
+    val requestKey = remember { ProviderReadyAlgorithm.requestKey(context) }
+    val deviceId = remember { ProviderReadyAlgorithm.deviceId(auth, identity) }
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -67,21 +71,24 @@ fun ProviderReadyScreen() {
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(start = 12.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("FRIENDS CAN ENTER THIS ID TO CONNECT", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                Text(deviceId, color = Green, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Text("TEMPORARY REQUEST KEY", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                Text(requestKey, color = Green, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Text("Valid for 10 minutes", color = TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono)
             }
             IconButton(onClick = {
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("LINKO device ID", deviceId))
+                clipboard.setPrimaryClip(ClipData.newPlainText("LINKO request key", requestKey))
                 copied = true
-            }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy device ID", tint = Green) }
+            }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy request key", tint = Green) }
         }
         if (copied) Text("COPIED", color = Green, fontSize = 9.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
         Spacer(Modifier.height(16.dp))
         LinkoCard {
+            InfoRow("DEVICE ID", deviceId, "Permanent ID friends use to add/connect to you", Blue, true)
+            Spacer(Modifier.height(12.dp))
             InfoRow("STATUS", "LISTENING", "Waiting for a real friend request", Green, true)
             Spacer(Modifier.height(12.dp))
-            Text("LINKO keeps the provider listener running when the app is in the background.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+            Text("The request key is temporary. Your Device ID never changes unless you rotate it in Settings.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
         Spacer(Modifier.weight(1f))
         Text("Incoming requests appear as a LINKO notification with ACCEPT and DECLINE.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono)
