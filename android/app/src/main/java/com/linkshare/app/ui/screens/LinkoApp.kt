@@ -38,7 +38,9 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
         Box(Modifier.weight(1f)) {
             NavHost(navController = nav, startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
-                composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.SignupOtp.route) { popUpTo(Screen.SignUp.route) { inclusive = true } } } }
+                // Signup now relies on Supabase's single confirmation email from /signup.
+                // After account creation, return to Sign In rather than sending a second OTP.
+                composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.SignUp.route) { inclusive = true } } } }
                 composable(Screen.SignupOtp.route) { SignupOtpScreen(auth, onVerified = { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onBack = { nav.navigate(Screen.SignUp.route) { popUpTo(Screen.SignupOtp.route) { inclusive = true } } }) }
                 composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { runtime.start(); nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }) }
                 composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
