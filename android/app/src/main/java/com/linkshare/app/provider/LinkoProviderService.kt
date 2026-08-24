@@ -22,7 +22,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.util.Base64
 
@@ -62,8 +61,18 @@ class LinkoProviderService : Service() {
         scope.launch {
             runCatching {
                 api.transition(requestId, "approved")
+                startApproved(requestId)
+            }.onFailure {
+                stopRunner(requestId)
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection failed", "The secure connection could not be started"))
+            }
+        }
+    }
+
+    private fun startApproved(requestId: String) {
+        scope.launch {
+            runCatching {
                 api.transition(requestId, "signaling")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection approved", "Preparing a secure connection…"))
                 establishEngine(requestId)
             }.onFailure {
                 stopRunner(requestId)
@@ -154,6 +163,7 @@ class LinkoProviderService : Service() {
         when (intent?.action) {
             ACTION_ACCEPT -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(::accept)
             ACTION_DECLINE -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(::decline)
+            ACTION_START_APPROVED -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(::startApproved)
         }
         return START_STICKY
     }
@@ -170,6 +180,7 @@ class LinkoProviderService : Service() {
     companion object {
         const val ACTION_ACCEPT = "com.linkshare.app.provider.ACCEPT"
         const val ACTION_DECLINE = "com.linkshare.app.provider.DECLINE"
+        const val ACTION_START_APPROVED = "com.linkshare.app.provider.START_APPROVED"
         const val EXTRA_REQUEST_ID = "request_id"
         private const val CHANNEL_ID = "linko_provider"
         private const val NOTIFICATION_ID = 7001
