@@ -12,6 +12,7 @@ import com.linkshare.app.network.FriendSearchResult
 import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
+import com.linkshare.app.network.LinkoStateMachine
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
 import kotlinx.coroutines.launch
@@ -26,6 +27,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
     var incoming by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var outgoing by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var history by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var presence by remember { mutableStateOf<Map<String, LinkoStateMachine.Availability>>(emptyMap()) }
     var message by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
 
@@ -65,12 +67,30 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
         LinkoRealtimeManager.events.collect { event ->
             when (event) {
                 is LinkoRealtimeEvent.FriendRequestReceived,
+                is LinkoRealtimeEvent.FriendRequestSent,
                 is LinkoRealtimeEvent.FriendRequestAccepted,
                 is LinkoRealtimeEvent.FriendRequestDeclined,
                 is LinkoRealtimeEvent.FriendRemoved,
-                is LinkoRealtimeEvent.PresenceChanged -> reload()
-                else -> Unit
+                is LinkoRealtimeEvent.SessionStateChanged -> reload()
+                is LinkoRealtimeEvent.PresenceChanged -> {
+                    val userPresence = event.presence
+                    presence = presence + (userPresence.userId to LinkoStateMachine.availabilityFromPresence(userPresence.state, userPresence.online))
+                }
+                is LinkoRealtimeEvent.TransportError -> message = "Realtime connection unavailable"
             }
+        }
+    }
+
+    fun statusFor(friend: FriendSearchResult): Pair<String, androidx.compose.ui.graphics.Color> {
+        val state = presence[friend.userId]
+        return when (state) {
+            LinkoStateMachine.Availability.SHARING -> "SHARING NOW" to Green
+            LinkoStateMachine.Availability.CONNECTED -> "CONNECTED" to Green
+            LinkoStateMachine.Availability.CONNECTING -> "CONNECTING" to Yellow
+            LinkoStateMachine.Availability.READY -> "READY TO CONNECT" to Green
+            LinkoStateMachine.Availability.ONLINE -> "ONLINE" to Green
+            LinkoStateMachine.Availability.OFFLINE -> "OFFLINE" to Red
+            null -> "CHECKING STATUS" to TextMuted
         }
     }
 
@@ -92,9 +112,9 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
                     Text(profile?.optString("linko_id", "") ?: "", color = Blue, fontSize = 11.sp, fontFamily = JetBrainsMono)
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth()) {
-                        PrimaryButton("ACCEPT", { scope.launch { runCatching { api.respond(request.optString("id"), true) }.onFailure { message = it.message ?: "Accept failed" } } }, color = Green)
+                        PrimaryButton("ACCEPT", { scope.launch { api.respond(request.optString("id"), true) } }, color = Green)
                         Spacer(Modifier.width(8.dp))
-                        PrimaryButton("DECLINE", { scope.launch { runCatching { api.respond(request.optString("id"), false) }.onFailure { message = it.message ?: "Decline failed" } } }, color = Red, outline = true)
+                        PrimaryButton("DECLINE", { scope.launch { api.respond(request.optString("id"), false) } }, color = Red, outline = true)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -108,6 +128,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
                 val profile = request.optJSONObject("profile")
                 LinkoCard {
                     Text(profile?.optString("display_name", "LINKO User") ?: "LINKO User", color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(profile?.optString("linko_id", "") ?: "", color = Blue, fontSize = 11.sp, fontFamily = JetBrainsMono)
                     Text("PENDING • WAITING FOR ACCEPTANCE", color = Yellow, fontSize = 10.sp, fontFamily = JetBrainsMono)
                 }
             }
@@ -121,6 +142,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
                 val accepted = request.optString("status") == "accepted"
                 LinkoCard {
                     Text(profile?.optString("display_name", "LINKO User") ?: "LINKO User", color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(profile?.optString("linko_id", "") ?: "", color = Blue, fontSize = 11.sp, fontFamily = JetBrainsMono)
                     Text(if (accepted) "ACCEPTED • YOU ARE NOW FRIENDS" else "DECLINED • REQUEST NOT ACCEPTED", color = if (accepted) Green else Red, fontSize = 10.sp, fontFamily = JetBrainsMono)
                 }
             }
@@ -134,13 +156,15 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
             }
         } else {
             friends.forEach { friend ->
+                val (status, statusColor) = statusFor(friend)
                 LinkoCard {
                     Column(Modifier.fillMaxWidth().clickable { LinkoFriendsApiHolder.selected = friend; onFriendTap() }) {
                         Text(friend.displayName, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                         Text(friend.linkoId, color = Blue, fontSize = 11.sp, fontFamily = JetBrainsMono)
-                        Text(if (friend.isSharing) "ONLINE • SHARING NOW" else "ONLINE • PROVIDER READY", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                        Text("FRIEND • $status", color = statusColor, fontSize = 10.sp, fontFamily = JetBrainsMono)
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
 
