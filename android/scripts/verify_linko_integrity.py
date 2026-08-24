@@ -41,7 +41,6 @@ def read(path: Path) -> str:
 
 
 def normalize_backend_source(source: str) -> str:
-    """Normalize JS/TS escaped URL slashes so route checks compare semantics, not syntax."""
     return source.replace("\\/", "/")
 
 
@@ -63,7 +62,6 @@ def contains_session_contract(source: str, semantic_path: str) -> bool:
 
 
 def backend_has_dynamic_route(source: str, variable_name: str, path_suffix: str) -> bool:
-    """Check a real url.pathname.match() dynamic route independent of slash escaping."""
     pattern = (
         rf"{re.escape(variable_name)}\s*=\s*url\.pathname\.match\("
         rf"/\^/v1/sessions/\(\[\^/\]\+\)/{re.escape(path_suffix)}\$/"
@@ -89,7 +87,10 @@ def main() -> int:
                 errors.append(f"forbidden mock reference '{token}' in {path.relative_to(REPO)}")
 
     friends_api = read(KOTLIN / "network" / "LinkoFriendsApi.kt")
-    if FRIEND_EDGE_BASE not in friends_api:
+    # The endpoint host is configured through BuildConfig; do not hard-code the
+    # production Supabase project URL into Android source. Require the same
+    # configured host plus the deployed function path.
+    if "BuildConfig.LINKO_SUPABASE_URL" not in friends_api or "/functions/v1/linko-friends" not in friends_api:
         errors.append("friend API is not wired to the configured Supabase Edge Function")
     for path in FRIEND_PATHS:
         if path not in friends_api:
