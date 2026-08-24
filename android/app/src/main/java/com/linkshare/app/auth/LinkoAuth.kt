@@ -21,7 +21,7 @@ class LinkoAuth(context: Context) {
         validate(email, password)
         val result = request("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim().lowercase()).put("password", password), saveTokens = true)
         if (!result.success) return result
-        // A device may have previously belonged to another account. Never reuse that account's UI identity.
+        // Never reuse another account's cached identity on a shared/test device.
         prefs.edit().remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
         refreshAccountIdentity()
         return AuthResult(true, "authenticated", false, result.userId, result.profileJson)
@@ -29,6 +29,7 @@ class LinkoAuth(context: Context) {
 
     fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
     fun currentAccessToken(): String? = prefs.getString(KEY_ACCESS_TOKEN, null)
+    fun currentUserId(): String? = prefs.getString(KEY_USER_ID, null)
     fun pendingVerificationEmail(): String? = null
     fun currentLinkoToken(): String? = prefs.getString(KEY_LINKO_TOKEN, null)
     fun currentDeviceId(): String? = prefs.getString(KEY_DEVICE_ID, null)
@@ -41,15 +42,16 @@ class LinkoAuth(context: Context) {
         val token = currentAccessToken() ?: return AuthResult(false, "session_required", true)
         return request("/auth/v1/user", "GET", JSONObject(), token, false).also { result ->
             if (result.success) {
+                result.userId?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
                 val name = result.profileJson?.optJSONObject("user_metadata")?.optString("display_name")?.trim().takeIf { !it.isNullOrBlank() }
                 if (name != null) saveProfile(name, null)
             }
         }
     }
 
-    fun saveLinkoSession(deviceId: String, linkoToken: String, userId: String?) { prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply() }
+    fun saveLinkoSession(deviceId: String, linkoToken: String, userId: String?) { prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply(); userId?.takeIf { it.isNotBlank() }?.let { prefs.edit().putString(KEY_USER_ID, it).apply() } }
     fun clearLinkoSession() { prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply() }
-    fun signOut() { prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).apply() }
+    fun signOut() { prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_USER_ID).remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).apply() }
 
     suspend fun verifySignupOtp(email: String, code: String): AuthResult = AuthResult(false, "verification_disabled")
     suspend fun sendSignupOtp(email: String): AuthResult = AuthResult(false, "verification_disabled")
@@ -71,8 +73,8 @@ class LinkoAuth(context: Context) {
             val connection = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply { requestMethod = method; connectTimeout = TIMEOUT_MS; readTimeout = TIMEOUT_MS; doOutput = method != "GET"; setRequestProperty("apikey", PUBLISHABLE_KEY); setRequestProperty("Accept", "application/json"); setRequestProperty("Content-Type", "application/json"); accessToken?.let { setRequestProperty("Authorization", "Bearer $it") } }
             try {
                 if (method != "GET") connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-                val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream; val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty(); if (status !in 200..299) return AuthResult(false, parseError(response, status)); val json = JSONObject(response.ifBlank { "{}" }); val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() }
-                if (saveTokens) { val access = json.optString("access_token").takeIf { it.isNotBlank() }; val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }; if (access != null) { val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access); refresh?.let { edit.putString(KEY_REFRESH_TOKEN, it) }; edit.apply() } }
+                val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream; val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty(); if (status !in 200..299) return AuthResult(false, parseError(response, status)); val json = JSONObject(response.ifBlank { "{}" }); val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() } ?: json.optString("id").takeIf { it.isNotBlank() }
+                if (saveTokens) { val access = json.optString("access_token").takeIf { it.isNotBlank() }; val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }; if (access != null) { val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access); refresh?.let { edit.putString(KEY_REFRESH_TOKEN, it) }; userId?.let { edit.putString(KEY_USER_ID, it) }; edit.apply() } }
                 AuthResult(true, when { path.endsWith("/verify") -> "verified"; path.endsWith("/user") -> "account_loaded"; json.has("access_token") -> "authenticated"; else -> "account_created" }, false, userId, json)
             } finally { connection.disconnect() }
         } catch (e: Exception) { AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error") }
@@ -86,6 +88,7 @@ class LinkoAuth(context: Context) {
         private const val TIMEOUT_MS = 15_000
         private const val KEY_ACCESS_TOKEN = "supabase_access_token"
         private const val KEY_REFRESH_TOKEN = "supabase_refresh_token"
+        private const val KEY_USER_ID = "supabase_user_id"
         private const val KEY_DEVICE_ID = "linko_device_id"
         private const val KEY_LINKO_TOKEN = "linko_access_token"
         private const val KEY_DISPLAY_NAME = "account_display_name"
