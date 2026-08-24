@@ -16,6 +16,9 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         post("/profile", JSONObject().put("displayName", displayName ?: "LINKO User"))
     }
 
+    /** Loads the authoritative account profile. It is never hard-coded to a device or default user. */
+    suspend fun profile(): JSONObject = withContext(Dispatchers.IO) { get("/profile") }
+
     suspend fun search(query: String): List<FriendSearchResult> = withContext(Dispatchers.IO) {
         val json = get("/search?q=" + java.net.URLEncoder.encode(query.trim(), "UTF-8"))
         val array = json.optJSONArray("results") ?: JSONArray()
@@ -27,18 +30,13 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
-    /** Returns the current user's friends and preserves live device/presence fields when supplied by the service. */
     suspend fun friends(): JSONObject = withContext(Dispatchers.IO) {
         val friendsJson = get("/friends")
         val friends = friendsJson.optJSONArray("friends") ?: JSONArray()
         val requestsJson = get("/requests")
         val requests = requestsJson.optJSONArray("requests") ?: JSONArray()
-
         val existingIds = mutableSetOf<String>()
-        for (i in 0 until friends.length()) {
-            friends.optJSONObject(i)?.optString("user_id")?.takeIf { it.isNotBlank() }?.let(existingIds::add)
-        }
-
+        for (i in 0 until friends.length()) friends.optJSONObject(i)?.optString("user_id")?.takeIf { it.isNotBlank() }?.let(existingIds::add)
         for (i in 0 until requests.length()) {
             val request = requests.optJSONObject(i) ?: continue
             if (request.optString("status") != "accepted") continue
@@ -47,21 +45,15 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
             if (userId.isBlank() || !existingIds.add(userId)) continue
             friends.put(JSONObject(profile.toString()).apply { put("relationship_status", "friend") })
         }
-
         JSONObject(friendsJson.toString()).put("friends", friends)
     }
 
-    suspend fun sendRequest(receiverUserId: String): JSONObject = withContext(Dispatchers.IO) {
-        post("/requests", JSONObject().put("receiverUserId", receiverUserId))
-    }
-
+    suspend fun sendRequest(receiverUserId: String): JSONObject = withContext(Dispatchers.IO) { post("/requests", JSONObject().put("receiverUserId", receiverUserId)) }
     suspend fun requests(): JSONObject = withContext(Dispatchers.IO) { get("/requests") }
-
     suspend fun respond(requestId: String, accepted: Boolean): JSONObject = withContext(Dispatchers.IO) {
         post("/requests/respond", JSONObject().put("requestId", requestId).put("status", if (accepted) "accepted" else "declined"))
     }
 
-    /** Removes the accepted friend relationship by deleting its persisted request row. */
     suspend fun removeFriend(userId: String): Boolean = withContext(Dispatchers.IO) {
         val current = requests()
         val array = current.optJSONArray("requests") ?: JSONArray()
@@ -81,13 +73,9 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
     }
 
     private fun parseFriend(item: JSONObject): FriendSearchResult = FriendSearchResult(
-        userId = item.optString("user_id"),
-        linkoId = item.optString("linko_id"),
-        displayName = item.optString("display_name"),
-        deviceId = item.optString("device_id").takeIf { it.isNotBlank() },
-        deviceName = item.optString("device_name").takeIf { it.isNotBlank() },
-        isSharing = item.optBoolean("is_sharing", false),
-        relationshipStatus = item.optString("relationship_status", "none"),
+        userId = item.optString("user_id"), linkoId = item.optString("linko_id"), displayName = item.optString("display_name"),
+        deviceId = item.optString("device_id").takeIf { it.isNotBlank() }, deviceName = item.optString("device_name").takeIf { it.isNotBlank() },
+        isSharing = item.optBoolean("is_sharing", false), relationshipStatus = item.optString("relationship_status", "none"),
         requestId = item.optString("request_id").takeIf { it.isNotBlank() && it != "null" },
     )
 
@@ -98,35 +86,23 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
         val url = "${BuildConfig.LINKO_SUPABASE_URL}/rest/v1/friend_requests?id=eq.${java.net.URLEncoder.encode(requestId, "UTF-8")}"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "DELETE"
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Accept", "application/json")
+            requestMethod = "DELETE"; connectTimeout = 10_000; readTimeout = 15_000
+            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY); setRequestProperty("Authorization", "Bearer $token"); setRequestProperty("Accept", "application/json")
         }
         try {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) throw LinkoNetworkException(JSONObject(text.ifBlank { "{}" }).optString("message", "http_$status"), status)
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 
     private fun request(method: String, path: String, body: JSONObject?): JSONObject {
         val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Accept", "application/json")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-            }
+            requestMethod = method; connectTimeout = 10_000; readTimeout = 15_000
+            setRequestProperty("Authorization", "Bearer $token"); setRequestProperty("Accept", "application/json")
+            if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json") }
         }
         try {
             body?.let { payload -> connection.outputStream.use { stream -> stream.write(payload.toString().toByteArray(Charsets.UTF_8)) } }
@@ -136,19 +112,11 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
             val json = JSONObject(text.ifBlank { "{}" })
             if (status !in 200..299) throw LinkoNetworkException(json.optString("error", "http_$status"), status)
             return json
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 }
 
 data class FriendSearchResult(
-    val userId: String,
-    val linkoId: String,
-    val displayName: String,
-    val deviceId: String?,
-    val deviceName: String?,
-    val isSharing: Boolean,
-    val relationshipStatus: String = "none",
-    val requestId: String? = null,
+    val userId: String, val linkoId: String, val displayName: String, val deviceId: String?, val deviceName: String?,
+    val isSharing: Boolean, val relationshipStatus: String = "none", val requestId: String? = null,
 )
