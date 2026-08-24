@@ -17,7 +17,6 @@ import io.github.jan.supabase.realtime.Realtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -29,13 +28,7 @@ import kotlinx.serialization.Serializable
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * App-wide realtime coordinator.
- *
- * The database remains authoritative; realtime is the event transport that tells the
- * Android state layer when it must refresh authoritative state. This prevents stale UI
- * while avoiding trusting websocket payloads as authorization decisions.
- */
+/** App-wide realtime transport for friendship, presence and session state. */
 object LinkoRealtimeManager {
     private const val FRIEND_CHANNEL = "linko-friend-events"
     private const val PRESENCE_CHANNEL = "linko-presence"
@@ -48,8 +41,7 @@ object LinkoRealtimeManager {
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
 
-    @Volatile
-    private var foreground = false
+    @Volatile private var foreground = false
     private var client: SupabaseClient? = null
     private var friendChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
     private var sessionChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
@@ -111,7 +103,7 @@ object LinkoRealtimeManager {
         channel.postgresChangeFlow<PostgresAction>(schema = "public") {
             table = "friend_requests"
         }
-            .onEach { action -> handleFriendChange(action) }
+            .onEach(::handleFriendChange)
             .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error")) }
             .launchIn(scope)
         channel.subscribe(blockUntilSubscribed = true)
@@ -125,9 +117,12 @@ object LinkoRealtimeManager {
         }
             .onEach { action ->
                 val record = recordToJson(action)
-                val sessionId = record?.optString("id")?.takeIf { it.isNotBlank() }
-                val state = record?.optString("state")?.takeIf { it.isNotBlank() }
-                _events.tryEmit(LinkoRealtimeEvent.SessionStateChanged(sessionId, state))
+                _events.tryEmit(
+                    LinkoRealtimeEvent.SessionStateChanged(
+                        record?.optString("id")?.takeIf { it.isNotBlank() },
+                        record?.optString("state")?.takeIf { it.isNotBlank() },
+                    ),
+                )
             }
             .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
             .launchIn(scope)
@@ -138,19 +133,15 @@ object LinkoRealtimeManager {
         val channel = supabase.realtime.channel(PRESENCE_CHANNEL)
         presenceChannel = channel
         channel.presenceDataFlow<LinkoPresence>()
-            .onEach { states ->
-                states.flatten().forEach { state ->
-                    _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(state))
-                }
-            }
+            .onEach { states -> states.forEach { _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(it)) } }
             .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
             .launchIn(scope)
         channel.subscribe(blockUntilSubscribed = true)
 
-        val currentUserId = auth?.currentAccessToken()?.let { tokenSubject(it) }
-        val linkoId = runCatching { auth?.let { contextAuth -> contextAuth.currentDeviceId() } }.getOrNull()
-        if (currentUserId != null) {
-            channel.track(LinkoPresence(currentUserId, linkoId.orEmpty(), "online", true))
+        val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
+        val deviceId = auth?.currentDeviceId().orEmpty()
+        if (!currentUserId.isNullOrBlank()) {
+            channel.track(LinkoPresence(currentUserId, deviceId, "online", true))
         }
     }
 
@@ -165,7 +156,7 @@ object LinkoRealtimeManager {
         when (action) {
             is PostgresAction.Insert -> {
                 if (receiverId == userId) notify(LinkoRealtimeEvent.FriendRequestReceived(id))
-                else if (senderId == userId) _events.tryEmit(LinkoRealtimeEvent.FriendRequestSent(id))
+                if (senderId == userId) _events.tryEmit(LinkoRealtimeEvent.FriendRequestSent(id))
             }
             is PostgresAction.Update, is PostgresAction.Select -> {
                 if (senderId != userId && receiverId != userId) return
@@ -183,35 +174,29 @@ object LinkoRealtimeManager {
 
     private fun notify(event: LinkoRealtimeEvent) {
         _events.tryEmit(event)
-        if (!foreground) {
-            val title = when (event) {
-                is LinkoRealtimeEvent.FriendRequestReceived -> "New LINKO friend request"
-                is LinkoRealtimeEvent.FriendRequestAccepted -> "LINKO friend request accepted"
-                is LinkoRealtimeEvent.FriendRequestDeclined -> "LINKO friend request declined"
-                is LinkoRealtimeEvent.FriendRemoved -> "LINKO friend removed"
-                else -> return
-            }
-            val text = when (event) {
-                is LinkoRealtimeEvent.FriendRequestReceived -> "Open LINKO to accept or decline the request."
-                is LinkoRealtimeEvent.FriendRequestAccepted -> "You are now friends."
-                is LinkoRealtimeEvent.FriendRequestDeclined -> "The request was declined."
-                is LinkoRealtimeEvent.FriendRemoved -> "Your friendship list changed."
-                else -> "LINKO state changed."
-            }
-            postNotification(title, text)
+        if (foreground) return
+        val title = when (event) {
+            is LinkoRealtimeEvent.FriendRequestReceived -> "New LINKO friend request"
+            is LinkoRealtimeEvent.FriendRequestAccepted -> "LINKO friend request accepted"
+            is LinkoRealtimeEvent.FriendRequestDeclined -> "LINKO friend request declined"
+            is LinkoRealtimeEvent.FriendRemoved -> "LINKO friend removed"
+            else -> return
         }
+        val text = when (event) {
+            is LinkoRealtimeEvent.FriendRequestReceived -> "Open LINKO to accept or decline the request."
+            is LinkoRealtimeEvent.FriendRequestAccepted -> "You are now friends."
+            is LinkoRealtimeEvent.FriendRequestDeclined -> "The request was declined."
+            is LinkoRealtimeEvent.FriendRemoved -> "Your friendship list changed."
+            else -> return
+        }
+        postNotification(title, text)
     }
 
     private fun postNotification(title: String, text: String) {
         val context = appContext ?: return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pending = PendingIntent.getActivity(
-            context,
-            NOTIFICATION_ID,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val pending = PendingIntent.getActivity(context, NOTIFICATION_ID, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
@@ -227,13 +212,7 @@ object LinkoRealtimeManager {
         val context = appContext ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(
-            NotificationChannel(
-                NOTIFICATION_CHANNEL,
-                "LINKO Realtime",
-                NotificationManager.IMPORTANCE_HIGH,
-            ),
-        )
+        manager.createNotificationChannel(NotificationChannel(NOTIFICATION_CHANNEL, "LINKO Realtime", NotificationManager.IMPORTANCE_HIGH))
     }
 
     private fun recordToJson(action: PostgresAction): JSONObject? = runCatching {
@@ -246,7 +225,8 @@ object LinkoRealtimeManager {
     private fun tokenSubject(token: String): String? = runCatching {
         val parts = token.split('.')
         if (parts.size < 2) return null
-        val payload = String(java.util.Base64.getUrlDecoder().decode(parts[1]))
+        val raw = parts[1].let { it + "=".repeat((4 - it.length % 4) % 4) }
+        val payload = String(java.util.Base64.getUrlDecoder().decode(raw))
         JSONObject(payload).optString("sub").takeIf { it.isNotBlank() }
     }.getOrNull()
 }
