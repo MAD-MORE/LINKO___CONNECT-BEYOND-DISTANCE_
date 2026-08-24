@@ -1,7 +1,9 @@
 package com.linkshare.app.network
 
 import android.content.Context
+import android.content.Intent
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.tunnel.TunnelCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,11 +16,14 @@ object LinkoEngineBridge {
     private var api: LinkoControlPlaneApi? = null
     private var coordinator: TunnelCoordinator? = null
     private var scope: CoroutineScope? = null
+    private var appContext: Context? = null
     private var connectionJob: Job? = null
+    private var approvedProviderSessionId: String? = null
 
     fun configure(context: Context) {
         val app = context.applicationContext
         val auth = LinkoAuth(app)
+        appContext = app
         api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
@@ -53,9 +58,34 @@ object LinkoEngineBridge {
 
     fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
         val control = api ?: return onState("engine_not_initialized")
-        scope?.launch { runCatching { control.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
-            if (request == null) onState("no_pending_request") else runCatching { control.approveRequest(request.id) }.onSuccess { onState("approved") }.onFailure { onState(it.message ?: "approval_failed") }
-        }.onFailure { onState(it.message ?: "request_lookup_failed") } }
+        scope?.launch {
+            runCatching { control.getPendingProviderRequests().firstOrNull() }
+                .onSuccess { request ->
+                    if (request == null) {
+                        onState("no_pending_request")
+                    } else {
+                        runCatching { control.approveRequest(request.id) }
+                            .onSuccess {
+                                approvedProviderSessionId = request.id
+                                onState("approved")
+                            }
+                            .onFailure { onState(it.message ?: "approval_failed") }
+                    }
+                }
+                .onFailure { onState(it.message ?: "request_lookup_failed") }
+        }
+    }
+
+    fun startApprovedProviderSession(onState: (String) -> Unit = {}) {
+        val context = appContext ?: return onState("engine_not_initialized")
+        val sessionId = approvedProviderSessionId ?: return onState("no_approved_session")
+        context.startForegroundService(
+            Intent(context, LinkoProviderService::class.java)
+                .setAction(LinkoProviderService.ACTION_START_APPROVED)
+                .putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId)
+        )
+        approvedProviderSessionId = null
+        onState("starting")
     }
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
