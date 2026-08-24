@@ -12,6 +12,8 @@ import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoControlPlaneApi
+import com.linkshare.app.network.LinkoRealtimeEvent
+import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntimeConfig
 import com.linkshare.app.tunnel.ProviderSocketFactory
 import com.linkshare.app.tunnel.ProviderTunnelRunner
@@ -38,22 +40,30 @@ class LinkoProviderService : Service() {
         api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
         createChannel()
         startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is ready for connection requests"))
-        scope.launch { listen() }
+        scope.launch { listenToRealtime() }
+        scope.launch { heartbeat() }
     }
 
-    private suspend fun listen() {
+    private suspend fun listenToRealtime() {
+        LinkoRealtimeManager.events.collect { event ->
+            if (!isActive) return@collect
+            if (event is LinkoRealtimeEvent.FriendRequestReceived) {
+                runCatching { api.getPendingProviderRequests() }
+                    .getOrDefault(emptyList())
+                    .filter { it.id == event.requestId || seen.add(it.id) }
+                    .forEach { request -> postRequestNotification(request.id, request.receiverDeviceId) }
+            }
+        }
+    }
+
+    private suspend fun heartbeat() {
         while (scope.isActive) {
             try {
-                if (auth.hasRegisteredDevice()) {
-                    api.markPresence()
-                    api.getPendingProviderRequests().forEach { request ->
-                        if (seen.add(request.id)) postRequestNotification(request.id, request.receiverDeviceId)
-                    }
-                }
+                if (auth.hasRegisteredDevice()) api.markPresence()
             } catch (_: Exception) {
                 // Temporary control-plane failures do not stop Provider mode.
             }
-            delay(POLL_MS)
+            delay(15_000L)
         }
     }
 
@@ -100,7 +110,7 @@ class LinkoProviderService : Service() {
                     endpoint = InetSocketAddress(host, port),
                     sessionId = sessionId,
                     sessionKey = key,
-                    scope = scope
+                    scope = scope,
                 )
                 runners[sessionId] = runner
                 runner.start()
@@ -123,6 +133,7 @@ class LinkoProviderService : Service() {
     }
 
     private fun postRequestNotification(requestId: String, receiverDeviceId: String) {
+        if (!seen.add(requestId)) return
         val accept = PendingIntent.getService(this, requestId.hashCode(), actionIntent(ACTION_ACCEPT, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val decline = PendingIntent.getService(this, requestId.hashCode() + 1, actionIntent(ACTION_DECLINE, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val open = PendingIntent.getActivity(this, requestId.hashCode() + 2, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -184,7 +195,7 @@ class LinkoProviderService : Service() {
         const val EXTRA_REQUEST_ID = "request_id"
         private const val CHANNEL_ID = "linko_provider"
         private const val NOTIFICATION_ID = 7001
-        private const val POLL_MS = 3_000L
+        private const val HEARTBEAT_MS = 15_000L
         private const val TUNNEL_CONFIG_RETRIES = 5
         private const val TUNNEL_CONFIG_RETRY_MS = 1_000L
         private const val SESSION_KEY_SIZE = 32
