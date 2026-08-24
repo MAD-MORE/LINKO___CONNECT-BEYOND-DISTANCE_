@@ -9,7 +9,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,7 +48,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
                 composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
                 composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
-                composable(Screen.Friends.route) { FriendsScreen({ nav.navigate(Screen.FindFriends.route) }, { nav.navigate(Screen.FriendProfile.route) }) }
+                composable(Screen.Friends.route) { LiveFriendsScreen({ nav.navigate(Screen.FindFriends.route) }, { nav.navigate(Screen.FriendProfile.route) }) }
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
                 composable(Screen.FriendProfile.route) { FriendProfileScreen { nav.navigate(Screen.RequestSent.route) } }
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.popBackStack() } }
