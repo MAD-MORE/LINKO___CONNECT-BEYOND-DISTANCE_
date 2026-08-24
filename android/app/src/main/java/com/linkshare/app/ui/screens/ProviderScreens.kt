@@ -26,9 +26,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.LinkoControlPlaneApi
+import com.linkshare.app.network.LinkoRuntimeConfig
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
+import kotlinx.coroutines.delay
 
 private object ProviderReadyAlgorithm {
     fun linkoId(context: Context): String = LinkoAuth(context).currentLinkoId()?.takeIf { it.isNotBlank() } ?: "LINKO ID unavailable"
@@ -41,14 +44,23 @@ private object ProviderReadyAlgorithm {
 }
 
 @Composable
-fun ProviderReadyScreen() {
+fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val linkoId = remember { ProviderReadyAlgorithm.linkoId(context) }
+    val auth = remember { LinkoAuth(context) }
+    val api = remember { LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() }) }
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
+        while (true) {
+            runCatching { api.getPendingProviderRequests().firstOrNull() }.getOrNull()?.let {
+                onIncomingRequest()
+                return@LaunchedEffect
+            }
+            delay(3_000L)
+        }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
