@@ -26,16 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
-import com.linkshare.app.network.LinkoControlPlaneApi
-import com.linkshare.app.network.LinkoRuntimeConfig
+import com.linkshare.app.network.LinkoFriendsApi
+import com.linkshare.app.network.LinkoRealtimeEvent
+import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.*
 import com.linkshare.app.ui.theme.*
-import kotlinx.coroutines.delay
 
 private object ProviderReadyAlgorithm {
-    fun linkoId(context: Context): String = LinkoAuth(context).currentLinkoId()?.takeIf { it.isNotBlank() } ?: "LINKO ID unavailable"
-
     fun requestNotificationPermission(context: Context) {
         if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
@@ -46,20 +44,34 @@ private object ProviderReadyAlgorithm {
 @Composable
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
-    val linkoId = remember { ProviderReadyAlgorithm.linkoId(context) }
     val auth = remember { LinkoAuth(context) }
-    val api = remember { LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() }) }
+    val friendsApi = remember { LinkoFriendsApi { auth.currentAccessToken() } }
+    var linkoId by remember { mutableStateOf("LINKO ID unavailable") }
+    var providerState by remember { mutableStateOf("STARTING") }
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
-        while (true) {
-            runCatching { api.getPendingProviderRequests().firstOrNull() }.getOrNull()?.let {
-                onIncomingRequest()
-                return@LaunchedEffect
+        runCatching { friendsApi.ensureProfile("LINKO User") }
+            .onSuccess { profile -> linkoId = profile.optString("linko_id").takeIf { it.isNotBlank() } ?: linkoId }
+        LinkoRealtimeManager.events.collect { event ->
+            when (event) {
+                is LinkoRealtimeEvent.FriendRequestReceived -> onIncomingRequest()
+                is LinkoRealtimeEvent.SessionStateChanged -> {
+                    providerState = when (event.state) {
+                        "requested" -> "REQUESTED"
+                        "approved" -> "APPROVED"
+                        "signaling" -> "SIGNALING"
+                        "connected" -> "SHARING"
+                        "denied" -> "DECLINED"
+                        "revoked", "expired" -> "ENDED"
+                        else -> providerState
+                    }
+                }
+                is LinkoRealtimeEvent.TransportError -> if (providerState == "STARTING") providerState = "OFFLINE"
+                else -> Unit
             }
-            delay(3_000L)
         }
     }
 
@@ -69,7 +81,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         Text("Friends connect using your LINKO ID or username", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(26.dp))
-        Ring(Green, 190.dp, pulse = true, label = "PROVIDER")
+        Ring(if (providerState == "SHARING") Green else if (providerState == "OFFLINE") Red else Yellow, 190.dp, pulse = providerState == "READY" || providerState == "SHARING", label = "PROVIDER")
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(start = 12.dp)) {
             Column(Modifier.weight(1f)) {
@@ -88,7 +100,12 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         LinkoCard {
             InfoRow("ROLE", "PROVIDER", "This device shares its internet only after you approve a request", Green, true)
             Spacer(Modifier.height(12.dp))
-            InfoRow("STATUS", "READY", "Waiting for a connection request from a LINKO friend", Green)
+            InfoRow("STATUS", providerState, when (providerState) {
+                "SHARING" -> "A receiver is currently using your authorized connection"
+                "OFFLINE" -> "Realtime/control-plane connection is unavailable"
+                "REQUESTED" -> "A receiver request is being processed"
+                else -> "Waiting for a realtime connection request from a LINKO friend"
+            }, if (providerState == "OFFLINE") Red else Green)
             Spacer(Modifier.height(12.dp))
             Text("When a friend requests access, LINKO will show the request and let you ACCEPT or DECLINE it.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
