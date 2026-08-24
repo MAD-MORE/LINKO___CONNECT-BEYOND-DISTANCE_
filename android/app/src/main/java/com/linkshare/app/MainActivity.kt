@@ -14,8 +14,8 @@ import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoFriendsApi
 import com.linkshare.app.network.LinkoFriendsApiHolder
+import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
-import com.linkshare.app.tunnel.TunnelCoordinator
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
 
@@ -31,8 +31,25 @@ class MainActivity : ComponentActivity() {
         LinkoEngineBridge.configure(this)
         linkoRuntime = LinkoRuntime(this)
         linkoRuntime.start()
+        LinkoRealtimeManager.start(this)
         requestEnginePermissions()
         setContent { LinkoTheme { LinkoApp(linkoAuth, linkoRuntime) } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        LinkoRealtimeManager.setForeground(true)
+    }
+
+    override fun onPause() {
+        LinkoRealtimeManager.setForeground(false)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        LinkoRealtimeManager.stop()
+        linkoRuntime.stop()
+        super.onDestroy()
     }
 
     private fun requestEnginePermissions() {
