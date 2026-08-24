@@ -25,7 +25,7 @@ android {
     buildTypes {
         val configuredControlPlane = providers.gradleProperty("LINKO_CONTROL_PLANE_URL").orElse("").get()
         val configuredSupabaseUrl = providers.gradleProperty("LINKO_SUPABASE_URL").orElse("https://pbnvssbtshvesqwhckfa.supabase.co").get()
-        val configuredSupabaseKey = providers.gradleProperty("LINKO_SUPABASE_PUBLISHABLE_KEY").orElse("sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9").get()
+        val configuredSupabaseKey = providers.gradleProperty("LINKO_SUPABASE_PUBLISHABLE_KEY").orElse("sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9S7V").get()
         getByName("debug") {
             buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${configuredControlPlane.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
             buildConfigField("String", "LINKO_SUPABASE_URL", "\"${configuredSupabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
@@ -76,9 +76,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    implementation(platform("io.github.jan-tennert.supabase:bom:3.5.0"))
+    implementation(platform("io.github.jan-tennert.supabase:bom:3.7.0"))
     implementation("io.github.jan-tennert.supabase:realtime-kt")
-    implementation("io.ktor:ktor-client-android:3.0.3")
+    implementation("io.ktor:ktor-client-android:3.3.0")
 
     implementation("com.zaneschepke:hevtunnel:1.0.1")
 
