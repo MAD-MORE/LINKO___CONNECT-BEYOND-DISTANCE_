@@ -9,6 +9,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
@@ -16,6 +19,7 @@ import com.linkshare.app.network.LinkoFriendsApi
 import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
+import com.linkshare.app.ui.components.LinkoRealtimeOverlay
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
 
@@ -33,7 +37,14 @@ class MainActivity : ComponentActivity() {
         linkoRuntime.start()
         LinkoRealtimeManager.start(this)
         requestEnginePermissions()
-        setContent { LinkoTheme { LinkoApp(linkoAuth, linkoRuntime) } }
+        setContent {
+            LinkoTheme {
+                Box(Modifier.fillMaxSize()) {
+                    LinkoApp(linkoAuth, linkoRuntime)
+                    LinkoRealtimeOverlay()
+                }
+            }
+        }
     }
 
     override fun onResume() {
