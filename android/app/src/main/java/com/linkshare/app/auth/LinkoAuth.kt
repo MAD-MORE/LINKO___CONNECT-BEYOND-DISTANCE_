@@ -2,7 +2,6 @@ package com.linkshare.app.auth
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.linkshare.app.BuildConfig
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -20,7 +19,12 @@ class LinkoAuth(context: Context) {
 
     fun signIn(email: String, password: String): AuthResult {
         validate(email, password)
-        return request("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim().lowercase()).put("password", password), saveTokens = true)
+        val result = request("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim().lowercase()).put("password", password), saveTokens = true)
+        if (!result.success) return result
+        // A device may have previously belonged to another account. Never reuse that account's UI identity.
+        prefs.edit().remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
+        refreshAccountIdentity()
+        return AuthResult(true, "authenticated", false, result.userId, result.profileJson)
     }
 
     fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
@@ -36,7 +40,10 @@ class LinkoAuth(context: Context) {
     fun refreshAccountIdentity(): AuthResult {
         val token = currentAccessToken() ?: return AuthResult(false, "session_required", true)
         return request("/auth/v1/user", "GET", JSONObject(), token, false).also { result ->
-            if (result.success) result.profileJson?.optJSONObject("user_metadata")?.optString("display_name")?.takeIf { it.isNotBlank() }?.let { saveProfile(it, null) }
+            if (result.success) {
+                val name = result.profileJson?.optJSONObject("user_metadata")?.optString("display_name")?.trim().takeIf { !it.isNullOrBlank() }
+                if (name != null) saveProfile(name, null)
+            }
         }
     }
 
