@@ -6,7 +6,7 @@ export class ControlPlaneStore {
   private readonly sessions = new Map<string, Session>();
   registerDevice(input: Omit<Device, "id" | "lastSeenAt">): Device { const device: Device = { ...input, id: randomUUID(), lastSeenAt: Date.now() }; this.devices.set(device.id, device); return device; }
   getDevice(id: string): Device | undefined { return this.devices.get(id); }
-  getProviderDeviceForUser(userId: string): Device | undefined { return [...this.devices.values()].filter(device => device.userId === userId && device.roles.includes("provider") && !device.revokedAt).sort((a,b)=>b.lastSeenAt-a.lastSeenAt)[0]; }
+  async getProviderDeviceForUser(userId: string): Promise<Device | undefined> { return [...this.devices.values()].filter(device => device.userId === userId && device.roles.includes("provider") && !device.revokedAt).sort((a,b)=>b.lastSeenAt-a.lastSeenAt)[0]; }
   listPendingProviderSessions(providerDeviceId: string): Session[] { return [...this.sessions.values()].filter(s => s.providerDeviceId === providerDeviceId && s.state === "requested" && s.expiresAt > Date.now()); }
   touchDevice(id: string): Device { const device = this.devices.get(id); if (!device || device.revokedAt) throw new Error("device_not_available"); device.lastSeenAt = Date.now(); return device; }
   revokeDevice(id: string): void { const device = this.devices.get(id); if (!device) throw new Error("device_not_found"); device.revokedAt = Date.now(); for (const session of this.sessions.values()) if ((session.receiverDeviceId === id || session.providerDeviceId === id) && !["revoked","expired","denied"].includes(session.state)) { session.state = "revoked"; session.revokedAt = Date.now(); } }
