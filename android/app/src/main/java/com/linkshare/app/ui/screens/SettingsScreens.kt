@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -45,26 +44,16 @@ fun SettingsScreen(onProfile:()->Unit,onDevices:()->Unit,onFriends:()->Unit,onBl
 
 @Composable
 fun AccountProfileScreen(onDone:()->Unit){
-    val context=LocalContext.current
-    val auth=remember{LinkoAuth(context)}
-    val scope=rememberCoroutineScope()
-    var name by remember{mutableStateOf(auth.currentDisplayName().orEmpty())}
-    var linkoId by remember{mutableStateOf(auth.currentLinkoId().orEmpty())}
-    var email by remember{mutableStateOf("")}
-    var loading by remember{mutableStateOf(true)}
-    var saving by remember{mutableStateOf(false)}
-    var message by remember{mutableStateOf<String?>(null)}
-    LaunchedEffect(Unit){
-        runCatching{withContext(Dispatchers.IO){LinkoProfileApi(auth::currentAccessToken,auth::currentUserId).load()}}.onSuccess{p->name=p.displayName;linkoId=p.linkoId;auth.saveProfile(p.displayName,p.linkoId)}.onFailure{message="Could not load your account profile."}
-        loading=false
-    }
+    val context=LocalContext.current; val auth=remember{LinkoAuth(context)}; val scope=rememberCoroutineScope()
+    var name by remember{mutableStateOf(auth.currentDisplayName().orEmpty())}; var linkoId by remember{mutableStateOf(auth.currentLinkoId().orEmpty())}; var loading by remember{mutableStateOf(true)}; var saving by remember{mutableStateOf(false)}; var message by remember{mutableStateOf<String?>(null)}
+    LaunchedEffect(Unit){runCatching{withContext(Dispatchers.IO){LinkoProfileApi(auth::currentAccessToken,auth::currentUserId).load()}}.onSuccess{p->name=p.displayName;linkoId=p.linkoId;auth.saveProfile(p.displayName,p.linkoId)}.onFailure{message="Could not load your account profile."};loading=false}
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)){
         Text("Your Profile",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(4.dp));Text("This identity belongs to the signed-in account",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(20.dp))
         LinkoCard{Text("ACCOUNT IDENTITY",color=TextMuted,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(12.dp));InfoRow("DISPLAY NAME",if(name.isBlank())"Loading…" else name,"Used across LINKO",accent=Blue);Spacer(Modifier.height(10.dp));InfoRow("LINKO ID",if(linkoId.isBlank())"Loading…" else "@$linkoId","Use this ID when adding friends",accent=Green)}
         Spacer(Modifier.height(12.dp));LinkoCard{Text("EDIT DISPLAY NAME",color=TextMuted,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));LinkoInput("DISPLAY NAME",name,{name=it},"Your display name","2–40 characters")}
         Spacer(Modifier.height(10.dp));LinkoCard{Text("LINKO ID",color=TextMuted,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text(if(linkoId.isBlank())"Loading…" else "@$linkoId",color=Blue,fontSize=18.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(4.dp));Text("This ID is generated for your account and is not a device-local default.",color=TextSub,fontSize=10.sp,fontFamily=JetBrainsMono)}
         message?.let{Spacer(Modifier.height(10.dp));Text(it,color=if(it.contains("Could"))Red else Green,fontSize=11.sp,fontFamily=JetBrainsMono)}
-        Spacer(Modifier.weight(1f));PrimaryButton(if(saving)"SAVING…" else "SAVE PROFILE",{if(!saving){saving=true;message=null;scope.launch{runCatching{withContext(Dispatchers.IO){val p=LinkoProfileApi(auth::currentAccessToken,auth::currentUserId).updateDisplayName(name);auth.saveProfile(p.displayName,p.linkoId)}}.onSuccess{message="Profile updated on this account."}.onFailure{message="Could not update profile. Check your connection."};saving=false}}},enabled=!loading&&!saving);Spacer(Modifier.height(4.dp));GhostButton("Done",onDone);Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.weight(1f));PrimaryButton(if(saving)"SAVING…" else "SAVE PROFILE",{if(!saving&&!loading){saving=true;message=null;scope.launch{runCatching{withContext(Dispatchers.IO){val p=LinkoProfileApi(auth::currentAccessToken,auth::currentUserId).updateDisplayName(name);auth.saveProfile(p.displayName,p.linkoId)}}.onSuccess{message="Profile updated on this account."}.onFailure{message="Could not update profile. Check your connection."};saving=false}}});Spacer(Modifier.height(4.dp));GhostButton("Done",onDone);Spacer(Modifier.height(24.dp))
     }
 }
 
