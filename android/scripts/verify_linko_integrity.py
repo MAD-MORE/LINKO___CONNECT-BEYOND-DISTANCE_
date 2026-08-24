@@ -32,7 +32,7 @@ REQUIRED_FILES = [
     KOTLIN / "provider" / "LinkoProviderService.kt",
 ]
 FORBIDDEN_PRODUCTION_REFERENCES = ("MockLinkShareRepository", "mockFriends", "fakeFriends", "FakeLinkoFriendsApi")
-FRIEND_EDGE_BASE = "https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-friends"
+FRIEND_EDGE_PATH = "/functions/v1/linko-friends"
 FRIEND_PATHS = ("/profile", "/search?q=", "/requests", "/requests/respond", "/friends")
 
 
@@ -87,11 +87,12 @@ def main() -> int:
                 errors.append(f"forbidden mock reference '{token}' in {path.relative_to(REPO)}")
 
     friends_api = read(KOTLIN / "network" / "LinkoFriendsApi.kt")
-    # The endpoint host is configured through BuildConfig; do not hard-code the
-    # production Supabase project URL into Android source. Require the same
-    # configured host plus the deployed function path.
-    if "BuildConfig.LINKO_SUPABASE_URL" not in friends_api or "/functions/v1/linko-friends" not in friends_api:
-        errors.append("friend API is not wired to the configured Supabase Edge Function")
+    if "BuildConfig.LINKO_SUPABASE_URL" not in friends_api:
+        errors.append("friend API does not use the configured Supabase URL")
+    if FRIEND_EDGE_PATH not in friends_api:
+        errors.append("friend API is not wired to the configured Supabase Edge Function path")
+    if re.search(r"https://[A-Za-z0-9.-]+\.supabase\.co/functions/v1/linko-friends", friends_api):
+        errors.append("friend API hard-codes a Supabase project URL")
     for path in FRIEND_PATHS:
         if path not in friends_api:
             errors.append(f"friend workflow contract missing Android path: {path}")
