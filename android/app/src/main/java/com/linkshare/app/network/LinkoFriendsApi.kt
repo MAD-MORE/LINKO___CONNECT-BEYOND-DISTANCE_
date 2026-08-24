@@ -12,8 +12,11 @@ import java.net.URL
 class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
     private val baseUrl = "${BuildConfig.LINKO_SUPABASE_URL}/functions/v1/linko-friends"
 
-    suspend fun ensureProfile(displayName: String?): JSONObject = withContext(Dispatchers.IO) {
-        post("/profile", JSONObject().put("displayName", displayName ?: "LINKO User"))
+    suspend fun ensureProfile(displayName: String?, username: String? = null): JSONObject = withContext(Dispatchers.IO) {
+        post("/profile", JSONObject().apply {
+            put("displayName", displayName ?: "LINKO User")
+            username?.trim()?.takeIf { it.isNotBlank() }?.let { put("username", it) }
+        })
     }
 
     /** Loads the authoritative account profile. It is never hard-coded to a device or default user. */
@@ -73,10 +76,15 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
     }
 
     private fun parseFriend(item: JSONObject): FriendSearchResult = FriendSearchResult(
-        userId = item.optString("user_id"), linkoId = item.optString("linko_id"), displayName = item.optString("display_name"),
-        deviceId = item.optString("device_id").takeIf { it.isNotBlank() }, deviceName = item.optString("device_name").takeIf { it.isNotBlank() },
-        isSharing = item.optBoolean("is_sharing", false), relationshipStatus = item.optString("relationship_status", "none"),
+        userId = item.optString("user_id"),
+        linkoId = item.optString("linko_id"),
+        displayName = item.optString("display_name"),
+        deviceId = item.optString("device_id").takeIf { it.isNotBlank() },
+        deviceName = item.optString("device_name").takeIf { it.isNotBlank() },
+        isSharing = item.optBoolean("is_sharing", false),
+        relationshipStatus = item.optString("relationship_status", "none"),
         requestId = item.optString("request_id").takeIf { it.isNotBlank() && it != "null" },
+        username = item.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() },
     )
 
     private fun get(path: String): JSONObject = request("GET", path, null)
@@ -117,6 +125,13 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
 }
 
 data class FriendSearchResult(
-    val userId: String, val linkoId: String, val displayName: String, val deviceId: String?, val deviceName: String?,
-    val isSharing: Boolean, val relationshipStatus: String = "none", val requestId: String? = null,
+    val userId: String,
+    val linkoId: String,
+    val displayName: String,
+    val deviceId: String?,
+    val deviceName: String?,
+    val isSharing: Boolean,
+    val relationshipStatus: String = "none",
+    val requestId: String? = null,
+    val username: String? = null,
 )
