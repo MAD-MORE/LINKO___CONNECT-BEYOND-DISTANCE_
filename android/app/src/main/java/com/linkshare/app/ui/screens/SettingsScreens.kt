@@ -1,5 +1,6 @@
 package com.linkshare.app.ui.screens
 
+// Account-scoped Settings/Profile UI; identity is resolved from the authenticated account.
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
