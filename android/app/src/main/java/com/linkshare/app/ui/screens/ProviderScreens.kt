@@ -17,7 +17,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
-import com.linkshare.app.network.LinkoProfileApi
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
@@ -56,33 +54,15 @@ private object ProviderReadyAlgorithm {
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
-    val profileApi = remember {
-        LinkoProfileApi(
-            accessTokenProvider = { auth.currentAccessToken() },
-            userIdProvider = { auth.currentUserId() },
-            refreshProvider = { auth.refreshSession().success }
-        )
-    }
-
-    var username by remember { mutableStateOf("") }
-    var linkoId by remember { mutableStateOf("") }
-    var providerState by remember { mutableStateOf("LOADING") }
-    var profileLoading by remember { mutableStateOf(true) }
-    var profileError by remember { mutableStateOf(false) }
-    var retryProfile by remember { mutableStateOf(0) }
+    var username by remember { mutableStateOf(auth.currentUsername() ?: auth.currentDisplayName().orEmpty()) }
+    var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
+    var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
     var copied by remember { mutableStateOf(false) }
 
-    fun loadCachedIdentity() {
-        val cachedUsername = auth.currentUsername() ?: auth.currentDisplayName()
-        val cachedLinkoId = auth.currentLinkoId()
-        if (!cachedUsername.isNullOrBlank()) username = cachedUsername
-        if (!cachedLinkoId.isNullOrBlank()) linkoId = cachedLinkoId
-        if (linkoId.isNotBlank()) providerState = "READY"
-    }
-
-    // Read Settings/Auth immediately whenever this screen becomes active.
     LaunchedEffect(Unit) {
-        loadCachedIdentity()
+        username = auth.currentUsername() ?: auth.currentDisplayName().orEmpty()
+        linkoId = auth.currentLinkoId().orEmpty()
+        providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
 
@@ -104,28 +84,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 else -> Unit
             }
         }
-    }
-
-    // Refresh the canonical profile after cached identity has been displayed.
-    LaunchedEffect(Unit, retryProfile) {
-        profileError = false
-        if (linkoId.isBlank()) profileLoading = true
-
-        runCatching { profileApi.load() }
-            .onSuccess { profile ->
-                username = profile.username?.takeIf { it.isNotBlank() }
-                    ?: profile.displayName.takeIf { it.isNotBlank() }
-                    ?: username.ifBlank { "LINKO User" }
-                linkoId = profile.linkoId.trim()
-                auth.saveProfile(profile.displayName, linkoId, profile.username)
-                providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
-            }
-            .onFailure {
-                profileError = true
-                if (linkoId.isNotBlank()) providerState = "READY" else providerState = "OFFLINE"
-            }
-
-        profileLoading = false
     }
 
     LaunchedEffect(copied) {
@@ -151,11 +109,11 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (profileLoading && linkoId.isBlank()) {
+                    if (linkoId.isBlank()) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Green, strokeWidth = 2.dp)
                         Spacer(Modifier.width(9.dp))
                     }
-                    Text(if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…", color = if (profileError && linkoId.isBlank()) Red else Green, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…", color = if (linkoId.isBlank()) Red else Green, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 }
             }
             IconButton(enabled = linkoId.isNotBlank(), onClick = {
@@ -179,14 +137,10 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Text(when (providerState) { "READY" -> "Waiting for a friend to connect..."; "SHARING" -> "A friend is using your authorized connection."; "REQUESTED" -> "A friend is requesting access to your connection."; "APPROVED" -> "Connection approved. Preparing the tunnel..."; "SIGNALING" -> "Establishing a secure connection..."; "OFFLINE" -> "Your LINKO profile could not be loaded."; "ID_ERROR" -> "Your LINKO profile has no LINKO ID."; else -> "Preparing your LINKO provider..." }, color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+            Text(when (providerState) { "READY" -> "Waiting for a friend to connect..."; "SHARING" -> "A friend is using your authorized connection."; "REQUESTED" -> "A friend is requesting access to your connection."; "APPROVED" -> "Connection approved. Preparing the tunnel..."; "SIGNALING" -> "Establishing a secure connection..."; "OFFLINE" -> "The connection service is offline."; "ID_ERROR" -> "Your LINKO profile is not initialized."; else -> "Preparing your LINKO provider..." }, color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
             if (connectionBusy) {
                 Spacer(Modifier.height(12.dp))
                 Text(when (providerState) { "LOADING" -> "Preparing your sharing service…"; "REQUESTED" -> "Waiting for your approval…"; "APPROVED" -> "Preparing secure sharing…"; "SIGNALING" -> "Connecting the devices…"; else -> "Working…" }, color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-            }
-            if (profileError && linkoId.isBlank()) {
-                Spacer(Modifier.height(4.dp))
-                TextButton(onClick = { retryProfile++ }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) { Text("RETRY", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
             }
         }
         Spacer(Modifier.weight(1f))
