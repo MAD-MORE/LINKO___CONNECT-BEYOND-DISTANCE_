@@ -82,9 +82,9 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
-    var profileLoading by remember { mutableStateOf(linkoId.isBlank()) }
+    var profileLoading by remember { mutableStateOf(true) }
     var profileError by remember { mutableStateOf(false) }
-    var retryProfile by remember { mutableIntStateOf(0) }
+    var retryProfile by remember { mutableStateOf(0) }
     var copied by remember { mutableStateOf(false) }
 
     // Provider service + realtime lifecycle.
@@ -114,8 +114,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         }
     }
 
-    // Canonical identity loader. The rotating indicator stays visible only while
-    // the profile is actually being resolved; no permanent "Loading" state.
+    // Canonical identity loader. The rotating indicator is visible while the
+    // profile is being refreshed; it never creates a replacement LINKO ID.
     LaunchedEffect(retryProfile) {
         profileLoading = true
         profileError = false
@@ -188,7 +188,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("USERNAME", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Text(
-                    "@${username.removePrefix("@")}\u200b",
+                    "@${username.removePrefix("@")}",
                     color = Green,
                     fontSize = 18.sp,
                     fontFamily = JetBrainsMono,
@@ -198,7 +198,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (profileLoading && linkoId.isBlank()) {
+                    if (profileLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             color = Green,
