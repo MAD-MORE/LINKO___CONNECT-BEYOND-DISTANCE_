@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
-import com.linkshare.app.network.LinkoFriendsApi
+import com.linkshare.app.network.LinkoProfileApi
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
@@ -60,7 +60,13 @@ private object ProviderReadyAlgorithm {
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
-    val friendsApi = remember { LinkoFriendsApi { auth.currentAccessToken() } }
+    val profileApi = remember {
+        LinkoProfileApi(
+            accessTokenProvider = { auth.currentAccessToken() },
+            userIdProvider = { auth.currentUserId() },
+            refreshProvider = { auth.refreshSession().success }
+        )
+    }
 
     var username by remember { mutableStateOf("LINKO User") }
     var linkoId by remember { mutableStateOf("") }
@@ -71,25 +77,20 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
 
-        runCatching { friendsApi.ensureProfile("LINKO User") }
+        // Phase 1: the profile endpoint is the single source of truth for the
+        // account's public LINKO identity. We do not generate an ID here.
+        runCatching { profileApi.load() }
             .onSuccess { profile ->
-                username = profile.optString("username")
-                    .trim()
-                    .removePrefix("@")
-                    .takeIf { it.isNotBlank() }
-                    ?: profile.optString("display_name")
-                        .trim()
-                        .takeIf { it.isNotBlank() }
-                        ?: "LINKO User"
-
-                linkoId = profile.optString("linko_id")
-                    .trim()
-                    .takeIf { it.isNotBlank() }
-                    ?: ""
-
+                username = profile.username
+                    ?.takeIf { it.isNotBlank() }
+                    ?: profile.displayName.takeIf { it.isNotBlank() }
+                    ?: "LINKO User"
+                linkoId = profile.linkoId.trim()
                 providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
             }
             .onFailure {
+                // Never display a fake/new ID when the canonical profile cannot be loaded.
+                linkoId = ""
                 providerState = "OFFLINE"
             }
 
@@ -146,7 +147,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         )
         Spacer(Modifier.height(20.dp))
 
-        // The public identity is intentionally limited to username + LINKO ID.
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -168,17 +168,11 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Text(
-                    linkoId.ifBlank { "Creating LINKO ID…" },
+                    linkoId.ifBlank { "Loading LINKO ID…" },
                     color = Green,
                     fontSize = 19.sp,
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "Use this ID to connect with friends",
-                    color = TextMuted,
-                    fontSize = 9.sp,
-                    fontFamily = JetBrainsMono
                 )
             }
 
@@ -228,11 +222,11 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text(
                 when (providerState) {
-                    "READY" -> "Waiting for a request from a LINKO friend."
+                    "READY" -> "Waiting for a friend..."
                     "SHARING" -> "A friend is using your authorized connection."
                     "REQUESTED" -> "A friend request is waiting for your approval."
-                    "OFFLINE" -> "Realtime connection is unavailable."
-                    "ID_ERROR" -> "LINKO ID could not be registered."
+                    "OFFLINE" -> "Your LINKO profile could not be loaded."
+                    "ID_ERROR" -> "Your LINKO profile has no LINKO ID."
                     else -> "Preparing your device…"
                 },
                 color = TextSub,
