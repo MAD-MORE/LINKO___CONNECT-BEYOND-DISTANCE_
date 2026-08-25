@@ -7,12 +7,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -29,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -41,10 +34,10 @@ import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.LinkoCard
+import com.linkshare.app.ui.components.Ring
 import com.linkshare.app.ui.theme.Border
 import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.Red
-import com.linkshare.app.ui.theme.Surface
 import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
@@ -68,69 +61,6 @@ private object ProviderReadyAlgorithm {
 }
 
 @Composable
-private fun ShareConnectionSpiral(active: Boolean) {
-    val transition = rememberInfiniteTransition(label = "share_spiral")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "share_rotation"
-    )
-    val pulse by transition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "share_pulse"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 2.dp, bottom = 18.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(92.dp)
-                .rotate(rotation)
-                .border(2.dp, if (active) Green else Border, CircleShape)
-                .padding(9.dp)
-                .border(2.dp, if (active) Green else Border, CircleShape)
-        )
-        Box(
-            modifier = Modifier
-                .size(58.dp)
-                .rotate(-rotation * 1.35f)
-                .border(2.dp, if (active) Green else Border, CircleShape)
-                .padding(11.dp)
-                .border(2.dp, if (active) Green else Border, CircleShape)
-        )
-        Box(
-            modifier = Modifier
-                .size(34.dp)
-                .background(if (active) Green else Surface, CircleShape)
-                .then(if (active) Modifier else Modifier.border(1.dp, Border, CircleShape))
-                .padding(8.dp)
-                .background(Surface, CircleShape)
-        )
-        Text(
-            if (active) "LINK" else "OFF",
-            color = if (active) Green else TextMuted,
-            fontSize = 7.sp,
-            fontFamily = JetBrainsMono,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.rotate(-rotation * 0.5f)
-        )
-    }
-}
-
-@Composable
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
@@ -142,6 +72,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         )
     }
 
+    // Settings/auth is the immediate local source of identity. The screen must never
+    // replace a known identity with a loading placeholder while the server refreshes.
     var username by remember {
         mutableStateOf(
             auth.currentUsername()
@@ -151,7 +83,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
-    var profileLoading by remember { mutableStateOf(true) }
+    var profileLoading by remember { mutableStateOf(linkoId.isBlank()) }
     var profileError by remember { mutableStateOf(false) }
     var retryProfile by remember { mutableStateOf(0) }
     var copied by remember { mutableStateOf(false) }
@@ -183,20 +115,31 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     }
 
     LaunchedEffect(retryProfile) {
-        profileLoading = true
+        // If Settings already has the identity, keep it visible immediately and do
+        // the canonical server refresh silently in the background.
+        if (linkoId.isBlank()) profileLoading = true
         profileError = false
 
         runCatching { profileApi.load() }
             .onSuccess { profile ->
-                username = profile.username
+                val serverUsername = profile.username
                     ?.takeIf { it.isNotBlank() }
                     ?: profile.displayName.takeIf { it.isNotBlank() }
-                    ?: "LINKO User"
-                linkoId = profile.linkoId.trim()
-                providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
+                    ?: username
+                val serverLinkoId = profile.linkoId.trim()
+
+                username = serverUsername
+                if (serverLinkoId.isNotBlank()) {
+                    linkoId = serverLinkoId
+                    auth.saveProfile(profile.displayName, serverLinkoId, profile.username)
+                    providerState = "READY"
+                } else if (linkoId.isBlank()) {
+                    providerState = "ID_ERROR"
+                }
             }
             .onFailure {
                 profileError = true
+                // Cached Settings identity remains authoritative for immediate UI.
                 if (linkoId.isNotBlank()) {
                     providerState = "READY"
                 } else {
@@ -218,7 +161,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         providerState == "REQUESTED" ||
         providerState == "APPROVED" ||
         providerState == "SIGNALING"
-    val shareVisualActive = linkoId.isNotBlank() && providerState != "OFFLINE" && providerState != "ID_ERROR"
 
     Column(
         Modifier
@@ -244,18 +186,23 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             fontFamily = JetBrainsMono,
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(8.dp))
 
-        // Always-visible connection-sharing visual. It is not the identity loader;
-        // it communicates that this screen is the Provider/share-connection surface.
-        ShareConnectionSpiral(active = shareVisualActive)
+        // Reuse the exact Home connection ring/spiral component instead of creating
+        // a second visual language for Provider.
+        Ring(
+            color = Green,
+            size = 160.dp,
+            idle = true,
+            label = "SHARE"
+        )
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(Surface)
+                .background(com.linkshare.app.ui.theme.Surface)
                 .border(1.dp, Border, RoundedCornerShape(12.dp))
                 .padding(14.dp)
         ) {
@@ -271,9 +218,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 )
                 Spacer(Modifier.height(10.dp))
                 Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (profileLoading) {
+                    if (profileLoading && linkoId.isBlank()) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             color = Green,
@@ -296,7 +242,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             }
 
             IconButton(
-                enabled = linkoId.isNotBlank() && !profileLoading,
+                enabled = linkoId.isNotBlank(),
                 onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText("LINKO ID", linkoId))
@@ -306,7 +252,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Icon(
                     Icons.Filled.ContentCopy,
                     contentDescription = "Copy LINKO ID",
-                    tint = if (linkoId.isNotBlank() && !profileLoading) Green else TextMuted
+                    tint = if (linkoId.isNotBlank()) Green else TextMuted
                 )
             }
         }
