@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.linkshare.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.linkshare.app"
