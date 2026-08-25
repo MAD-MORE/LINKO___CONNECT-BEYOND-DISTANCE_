@@ -38,7 +38,6 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val onboarding = route in onboardingScreens
     val scope = rememberCoroutineScope()
     var deleting by remember { mutableStateOf(false) }
-
     val onDeleteAccount: () -> Unit = {
         if (!deleting) {
             deleting = true
@@ -49,7 +48,6 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
             }
         }
     }
-
     Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
         if (!onboarding && route != Screen.HomeEngine.route) AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
         Box(Modifier.weight(1f)) {
@@ -71,11 +69,11 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.popBackStack() } }
                 composable(Screen.IncomingRequest.route) { IncomingRequestScreen({ nav.navigate(Screen.Friends.route) }, { nav.popBackStack() }) }
                 composable(Screen.BlockedRemoved.route) { BlockedRemovedScreen { nav.popBackStack() } }
-                composable(Screen.RxSelectFriend.route) { RxSelectFriendScreen { nav.navigate(Screen.RxRequest.route) } }
+                composable(Screen.RxSelectFriend.route) { RxSelectFriendScreen { nav.navigate(Screen.RxConnecting.route) } }
                 composable(Screen.RxRequest.route) { RxRequestScreen { nav.popBackStack() } }
                 composable(Screen.RxWaiting.route) { RxWaitingScreen { nav.popBackStack() } }
                 composable(Screen.RxApproved.route) { RxApprovedScreen { nav.navigate(Screen.RxConnecting.route) } }
-                composable(Screen.RxConnecting.route) { ConnectionStatusScreen({ nav.navigate(Screen.Connected.route) }, { nav.navigate(Screen.ConnectionLost.route) }) }
+                composable(Screen.RxConnecting.route) { ConnectionStatusScreen({ nav.navigate(Screen.Connected.route) { popUpTo(Screen.RxSelectFriend.route) { inclusive = true } } }, { nav.navigate(Screen.ConnectionLost.route) }) }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } }, { nav.navigate(Screen.NetworkQuality.route) }) }
@@ -111,14 +109,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
         Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
     }
 }
-
-private val titles = mapOf(
-    "sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account"
-)
+private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
 private fun appBarTitle(route: String): String? = titles[route]
 private data class NavItem(val label: String, val tab: String, val route: String, val icon: String)
 private val bottomNavItems = listOf(NavItem("HOME", "HOME", Screen.HomeEngine.route, "⌂"), NavItem("FRIENDS", "FRIENDS", Screen.Friends.route, "◎"), NavItem("HISTORY", "HISTORY", Screen.SessionHistory.route, "◷"), NavItem("SETTINGS", "SETTINGS", Screen.Settings.route, "⚙"))
-
 @Composable private fun BottomNav(route: String, nav: NavController) {
     val active = activeNavTab(route)
     Row(Modifier.fillMaxWidth().background(Surface).border(1.dp, Border)) {
