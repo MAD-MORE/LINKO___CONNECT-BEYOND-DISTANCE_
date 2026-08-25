@@ -54,7 +54,6 @@ kotlin {
 
 configurations.all {
     resolutionStrategy {
-        force("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
         force("androidx.core:core:1.16.0")
         force("androidx.core:core-ktx:1.16.0")
     }
@@ -79,11 +78,11 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     implementation(platform("io.github.jan-tennert.supabase:bom:3.7.0"))
     implementation("io.github.jan-tennert.supabase:realtime-kt")
-    implementation("io.ktor:ktor-client-android:3.3.0")
+    implementation("io.ktor:ktor-client-android:3.5.1")
 
     implementation("com.zaneschepke:hevtunnel:1.0.1")
 
