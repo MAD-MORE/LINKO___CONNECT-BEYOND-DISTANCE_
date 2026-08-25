@@ -37,6 +37,33 @@ class LinkoAuth(context: Context) {
     fun currentUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
     fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
 
+    /** Refreshes an expired/expiring Supabase access token using the persisted refresh token. */
+    fun refreshSession(): AuthResult {
+        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
+            ?: return AuthResult(false, "session_refresh_unavailable", true)
+        val result = request(
+            "/auth/v1/token?grant_type=refresh_token",
+            "POST",
+            JSONObject().put("refresh_token", refreshToken),
+            saveTokens = true,
+        )
+        if (!result.success) {
+            if (result.message == "invalid_refresh_token" || result.message == "refresh_token_not_found") {
+                prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).apply()
+            }
+            return result
+        }
+        return result
+    }
+
+    /** Ensures there is a usable session before account-scoped API calls. */
+    fun ensureSession(): AuthResult {
+        if (!isSignedIn()) return AuthResult(false, "session_required", true)
+        val refresh = prefs.getString(KEY_REFRESH_TOKEN, null)
+        if (refresh.isNullOrBlank()) return AuthResult(true, "session_ready")
+        return refreshSession()
+    }
+
     fun refreshAccountIdentity(): AuthResult {
         val token = currentAccessToken() ?: return AuthResult(false, "session_required", true)
         return request("/auth/v1/user", "GET", JSONObject(), token, false).also { result ->
@@ -61,7 +88,7 @@ class LinkoAuth(context: Context) {
     private fun request(path: String, method: String, body: JSONObject, accessToken: String? = null, saveTokens: Boolean): AuthResult {
         return try {
             val connection = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply { requestMethod = method; connectTimeout = TIMEOUT_MS; readTimeout = TIMEOUT_MS; doOutput = method != "GET"; setRequestProperty("apikey", PUBLISHABLE_KEY); setRequestProperty("Accept", "application/json"); setRequestProperty("Content-Type", "application/json"); accessToken?.let { setRequestProperty("Authorization", "Bearer $it") } }
-            try { if (method != "GET") connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }; val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream; val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty(); if (status !in 200..299) return AuthResult(false, parseError(response, status)); val json = JSONObject(response.ifBlank { "{}" }); val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() } ?: json.optString("id").takeIf { it.isNotBlank() }; if (saveTokens) { val access = json.optString("access_token").takeIf { it.isNotBlank() }; val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }; if (access != null) { val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access); refresh?.let { edit.putString(KEY_REFRESH_TOKEN, it) }; userId?.let { edit.putString(KEY_USER_ID, it) }; edit.apply() } }; AuthResult(true, when { path.endsWith("/verify") -> "verified"; path.endsWith("/user") -> "account_loaded"; json.has("access_token") -> "authenticated"; else -> "account_created" }, false, userId, json) } finally { connection.disconnect() }
+            try { if (method != "GET") connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }; val status = connection.responseCode; val stream = if (status in 200..299) connection.inputStream else connection.errorStream; val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty(); if (status !in 200..299) return AuthResult(false, parseError(response, status)); val json = JSONObject(response.ifBlank { "{}" }); val userId = json.optJSONObject("user")?.optString("id")?.takeIf { it.isNotBlank() } ?: json.optString("id").takeIf { it.isNotBlank() }; if (saveTokens) { val access = json.optString("access_token").takeIf { it.isNotBlank() }; val refresh = json.optString("refresh_token").takeIf { it.isNotBlank() }; if (access != null) { val edit = prefs.edit().putString(KEY_ACCESS_TOKEN, access); refresh?.let { edit.putString(KEY_REFRESH_TOKEN, it) }; userId?.let { edit.putString(KEY_USER_ID, it) }; edit.apply() } }; AuthResult(true, when { path.endsWith("/verify") -> "verified"; path.endsWith("/user") -> "account_loaded"; path.contains("grant_type=refresh_token") -> "session_refreshed"; json.has("access_token") -> "authenticated"; else -> "account_created" }, false, userId, json) } finally { connection.disconnect() }
         } catch (e: Exception) { AuthResult(false, e.message?.takeIf { it.isNotBlank() } ?: "network_error") }
     }
     private fun parseError(body: String, status: Int): String { if (status == 429) return "too_many_requests"; return try { val obj = JSONObject(body.ifBlank { "{}" }); obj.optString("msg").ifBlank { obj.optString("message") }.ifBlank { obj.optString("error_description") }.ifBlank { obj.optString("error") }.ifBlank { "auth_http_$status" }.lowercase().replace(' ', '_') } catch (_: Exception) { "auth_http_$status" } }
