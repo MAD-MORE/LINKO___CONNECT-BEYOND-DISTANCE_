@@ -31,7 +31,7 @@ object LinkoEngineBridge {
         val app = context.applicationContext
         val auth = LinkoAuth(app)
         appContext = app
-        api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
+        api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentAccessToken() }, { auth.currentDeviceId() })
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel()
@@ -66,6 +66,8 @@ object LinkoEngineBridge {
         connectionJob = engineScope.launch {
             try {
                 publishAndNotify("authenticating", onState)
+                val auth = LinkoAuth.current()
+                auth?.ensureSession()
                 publishAndNotify("requesting", onState)
                 val session = control.requestAccess(providerDeviceId)
                 publishAndNotify("signaling", onState)
@@ -172,7 +174,7 @@ object LinkoEngineBridge {
             it.copy(
                 phase = normalized,
                 detail = message,
-                error = if (normalized == LinkoConnectionPhase.Failed) message else null
+                error = if (normalized == LinkoConnectionPhase.Failed) message else null,
             )
         }
     }
