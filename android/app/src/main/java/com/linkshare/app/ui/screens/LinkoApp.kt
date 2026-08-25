@@ -5,10 +5,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,5 +94,4 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
 private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
 private fun appBarTitle(route: String): String? = titles[route]
 private data class NavItem(val label: String, val tab: String, val route: String, val icon: String)
-private val items = listOf(NavItem("HOME", "HOME", Screen.HomeEngine.route, "⌂"), NavItem("FRIENDS", "FRIENDS", Screen.Friends.route, "◎"), NavItem("HISTORY", "HISTORY", Screen.SessionHistory.route, "◷"), NavItem("SETTINGS", "SETTINGS", Screen.Settings.route, "⚙"))
 @Composable private fun BottomNav(route: String, nav: NavController) { val active = activeNavTab(route); Row(Modifier.fillMaxWidth().background(Surface).border(1.dp, Border)) { items.forEach { item -> val selected = active == item.tab; Column(Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical=10.dp), horizontalAlignment=Alignment.CenterHorizontally) { Box(Modifier.size(40.dp,28.dp).clip(RoundedCornerShape(14.dp)).background(if(selected) Blue.copy(alpha=.12f) else Color.Transparent), contentAlignment=Alignment.Center) { Text(item.icon,color=if(selected)Blue else TextMuted,fontSize=18.sp) }; Spacer(Modifier.height(4.dp)); Text(item.label,color=if(selected)Blue else TextMuted,fontSize=9.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold) } } } }
