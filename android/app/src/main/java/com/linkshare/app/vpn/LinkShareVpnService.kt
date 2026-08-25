@@ -29,8 +29,6 @@ class LinkShareVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        // Defense in depth: the engine must never establish a tunnel before
-        // Android has granted the user's VPN consent.
         if (VpnService.prepare(this) != null) {
             stopSelf(startId)
             return START_NOT_STICKY
@@ -75,10 +73,12 @@ class LinkShareVpnService : VpnService() {
                 while (running.get()) {
                     val count = input.read(packet)
                     if (count <= 0) break
+                    // Preserve the complete IP datagram. The provider-side
+                    // userspace IP engine needs the original IP header as well
+                    // as the transport payload to route the packet correctly.
                     val raw = packet.copyOf(count)
-                    val parsed = router.parse(raw) ?: continue
-                    if (parsed.payload.size > MAX_TUN_PAYLOAD) continue
-                    transport?.send(parsed.payload)
+                    if (router.parse(raw) == null || raw.size > MAX_TUN_PAYLOAD) continue
+                    transport?.send(raw)
                 }
             }
         } catch (_: Exception) {
