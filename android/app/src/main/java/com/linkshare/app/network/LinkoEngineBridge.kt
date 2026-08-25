@@ -34,6 +34,8 @@ object LinkoEngineBridge {
         api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
+        connectionJob?.cancel()
+        connectionJob = null
         publish("idle")
     }
 
@@ -41,7 +43,8 @@ object LinkoEngineBridge {
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
         connectionJob?.cancel()
-        scope?.launch {
+        val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
+        connectionJob = engineScope.launch {
             runCatching {
                 publishAndNotify("connecting", onState)
                 publishAndNotify("resolving_provider", onState)
@@ -51,7 +54,7 @@ object LinkoEngineBridge {
                 publishAndNotify("provider_ready", onState)
                 connect(deviceId, onState)
             }.onFailure { publishAndNotify(it.message ?: "provider_resolution_failed", onState) }
-        } ?: publishAndNotify("engine_scope_unavailable", onState)
+        }
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
@@ -59,7 +62,8 @@ object LinkoEngineBridge {
         val tunnel = coordinator ?: return publishAndNotify("engine_not_initialized", onState)
         if (providerDeviceId.isBlank()) return publishAndNotify("provider_not_available", onState)
         connectionJob?.cancel()
-        connectionJob = scope?.launch {
+        val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
+        connectionJob = engineScope.launch {
             try {
                 publishAndNotify("authenticating", onState)
                 publishAndNotify("requesting", onState)
@@ -87,7 +91,7 @@ object LinkoEngineBridge {
             } catch (e: Exception) {
                 publishAndNotify(e.message ?: "connection_failed", onState)
             }
-        } ?: publishAndNotify("engine_scope_unavailable", onState)
+        }
     }
 
     fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
@@ -100,7 +104,7 @@ object LinkoEngineBridge {
                         .onFailure { onState(it.message ?: "approval_failed") }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
-        }
+        } ?: onState("engine_scope_unavailable")
     }
 
     fun startApprovedProviderSession(onState: (String) -> Unit = {}) {
@@ -113,12 +117,21 @@ object LinkoEngineBridge {
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
         val control = api ?: return onState("engine_not_initialized")
-        scope?.launch { runCatching { control.getPendingProviderRequests().firstOrNull() }.onSuccess { request -> if (request == null) onState("no_pending_request") else runCatching { control.denyRequest(request.id) }.onSuccess { onState("denied") }.onFailure { onState(it.message ?: "decline_failed") } }.onFailure { onState(it.message ?: "request_lookup_failed") } }
+        scope?.launch {
+            runCatching { control.getPendingProviderRequests().firstOrNull() }
+                .onSuccess { request ->
+                    if (request == null) onState("no_pending_request") else runCatching { control.denyRequest(request.id) }
+                        .onSuccess { onState("denied") }
+                        .onFailure { onState(it.message ?: "decline_failed") }
+                }
+                .onFailure { onState(it.message ?: "request_lookup_failed") }
+        } ?: onState("engine_scope_unavailable")
     }
 
     fun disconnect() {
         connectionJob?.cancel()
         coordinator?.stopVpnTunnel()
+        connectionJob = null
         publish("idle", "Disconnected · tunnel closed")
     }
 
@@ -132,8 +145,7 @@ object LinkoEngineBridge {
             "connecting" -> LinkoConnectionPhase.Connecting
             "authenticating" -> LinkoConnectionPhase.Authenticating
             "resolving_provider" -> LinkoConnectionPhase.Signaling
-            "provider_ready", "requesting" -> LinkoConnectionPhase.Signaling
-            "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
+            "provider_ready", "requesting", "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
             "establishing" -> LinkoConnectionPhase.Establishing
             "securing" -> LinkoConnectionPhase.Securing
             "routing" -> LinkoConnectionPhase.Routing
