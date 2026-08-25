@@ -7,9 +7,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -22,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -60,6 +68,69 @@ private object ProviderReadyAlgorithm {
 }
 
 @Composable
+private fun ShareConnectionSpiral(active: Boolean) {
+    val transition = rememberInfiniteTransition(label = "share_spiral")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "share_rotation"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "share_pulse"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, bottom = 18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(92.dp)
+                .rotate(rotation)
+                .border(2.dp, if (active) Green else Border, CircleShape)
+                .padding(9.dp)
+                .border(2.dp, if (active) Green else Border, CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(58.dp)
+                .rotate(-rotation * 1.35f)
+                .border(2.dp, if (active) Green else Border, CircleShape)
+                .padding(11.dp)
+                .border(2.dp, if (active) Green else Border, CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .background(if (active) Green else Surface, CircleShape)
+                .then(if (active) Modifier else Modifier.border(1.dp, Border, CircleShape))
+                .padding(8.dp)
+                .background(Surface, CircleShape)
+        )
+        Text(
+            if (active) "LINK" else "OFF",
+            color = if (active) Green else TextMuted,
+            fontSize = 7.sp,
+            fontFamily = JetBrainsMono,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.rotate(-rotation * 0.5f)
+        )
+    }
+}
+
+@Composable
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
@@ -71,8 +142,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         )
     }
 
-    // Start from the persisted canonical identity so reopening the screen never
-    // flashes a fake identity or unnecessarily hides an already-known LINKO ID.
     var username by remember {
         mutableStateOf(
             auth.currentUsername()
@@ -87,7 +156,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     var retryProfile by remember { mutableStateOf(0) }
     var copied by remember { mutableStateOf(false) }
 
-    // Provider service + realtime lifecycle.
     LaunchedEffect(Unit) {
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
@@ -114,8 +182,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         }
     }
 
-    // Canonical identity loader. The rotating indicator is visible while the
-    // profile is being refreshed; it never creates a replacement LINKO ID.
     LaunchedEffect(retryProfile) {
         profileLoading = true
         profileError = false
@@ -131,8 +197,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             }
             .onFailure {
                 profileError = true
-                // A previously persisted canonical ID remains valid for display.
-                // Do not manufacture a replacement ID when the network is unavailable.
                 if (linkoId.isNotBlank()) {
                     providerState = "READY"
                 } else {
@@ -154,6 +218,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         providerState == "REQUESTED" ||
         providerState == "APPROVED" ||
         providerState == "SIGNALING"
+    val shareVisualActive = linkoId.isNotBlank() && providerState != "OFFLINE" && providerState != "ID_ERROR"
 
     Column(
         Modifier
@@ -173,13 +238,17 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            "Share your LINKO ID or username with a friend",
+            "Share your connection with a friend",
             color = TextSub,
             fontSize = 13.sp,
             fontFamily = JetBrainsMono,
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(14.dp))
+
+        // Always-visible connection-sharing visual. It is not the identity loader;
+        // it communicates that this screen is the Provider/share-connection surface.
+        ShareConnectionSpiral(active = shareVisualActive)
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -193,7 +262,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("USERNAME", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Text(
-                    "@${username.removePrefix("@")}",
+                    "@${username.removePrefix("@")}"
+                    ,
                     color = Green,
                     fontSize = 18.sp,
                     fontFamily = JetBrainsMono,
@@ -269,10 +339,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                         if (connectionBusy) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                color = when (providerState) {
-                                    "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> Green
-                                    else -> TextSub
-                                },
+                                color = Green,
                                 strokeWidth = 2.dp
                             )
                             Spacer(Modifier.width(7.dp))
@@ -294,7 +361,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text(
                 when (providerState) {
-                    "READY" -> "Waiting for a friend..."
+                    "READY" -> "Waiting for a friend to connect..."
                     "SHARING" -> "A friend is using your authorized connection."
                     "REQUESTED" -> "A friend is requesting access to your connection."
                     "APPROVED" -> "Connection approved. Preparing the tunnel..."
