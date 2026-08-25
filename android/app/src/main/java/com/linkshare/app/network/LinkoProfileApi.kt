@@ -2,46 +2,48 @@ package com.linkshare.app.network
 
 import com.linkshare.app.BuildConfig
 import com.linkshare.app.auth.LinkoAuth
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
-/** Account-scoped profile API. Profile identity always comes from the authenticated Supabase user. */
+/** Account-scoped profile API backed by the deployed LINKO friends/profile function. */
 class LinkoProfileApi(
     private val accessTokenProvider: () -> String?,
     private val userIdProvider: () -> String?,
     private val refreshProvider: (suspend () -> Boolean)? = { LinkoAuth.current()?.refreshSession()?.success == true },
 ) {
     suspend fun load(): ProfileRecord {
-        val array = request("GET", "profiles?user_id=eq.${encode(userId())}&select=user_id,linko_id,username,display_name")
-        val row = array.optJSONObject(0) ?: throw LinkoNetworkException("profile_not_found")
-        return row.toProfile()
+        val result = request("GET", "/profile")
+        val profile = result.optJSONObject("profile") ?: result
+        return profile.toProfile().also { LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) }
     }
 
     suspend fun updateDisplayName(displayName: String): ProfileRecord {
         val clean = displayName.trim()
         require(clean.length in 2..40) { "Display name must be 2–40 characters." }
-        val array = request("PATCH", "profiles?user_id=eq.${encode(userId())}&select=user_id,linko_id,username,display_name", JSONObject().put("display_name", clean))
-        val row = array.optJSONObject(0) ?: throw LinkoNetworkException("profile_update_failed")
-        return row.toProfile()
+        val result = request("POST", "/profile", JSONObject().put("displayName", clean))
+        val profile = result.optJSONObject("profile") ?: result
+        return profile.toProfile().also { LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) }
     }
 
-    private fun userId(): String = userIdProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_user_required")
+    private fun userId(): String = userIdProvider()?.takeIf { it.isNotBlank() }
+        ?: throw LinkoNetworkException("auth_user_required")
 
-    private suspend fun request(method: String, path: String, body: JSONObject? = null): JSONArray {
-        val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
+    private suspend fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
+        val token = accessTokenProvider()?.takeIf { it.isNotBlank() }
+            ?: throw LinkoNetworkException("auth_required")
         val first = execute(method, path, body, token)
         if (first.status == 401 && refreshProvider?.invoke() == true) {
-            val newToken = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
+            val newToken = accessTokenProvider()?.takeIf { it.isNotBlank() }
+                ?: throw LinkoNetworkException("auth_required")
             return parseResponse(execute(method, path, body, newToken))
         }
         return parseResponse(first)
     }
 
     private fun execute(method: String, path: String, body: JSONObject?, token: String): HttpResult {
-        val connection = (URL("${BuildConfig.LINKO_SUPABASE_URL}/rest/v1/$path").openConnection() as HttpURLConnection).apply {
+        val url = "${BuildConfig.LINKO_SUPABASE_URL}/functions/v1/linko-friends$path"
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
             readTimeout = 15_000
@@ -50,10 +52,13 @@ class LinkoProfileApi(
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
-            if (method == "PATCH") setRequestProperty("Prefer", "return=representation")
         }
         return try {
-            body?.let { connection.outputStream.use { out -> out.write(it.toString().toByteArray(Charsets.UTF_8)) } }
+            body?.let { payload ->
+                connection.outputStream.use { out ->
+                    out.write(payload.toString().toByteArray(Charsets.UTF_8))
+                }
+            }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             HttpResult(status, stream?.bufferedReader()?.use { it.readText() }.orEmpty())
@@ -64,23 +69,26 @@ class LinkoProfileApi(
         }
     }
 
-    private fun parseResponse(result: HttpResult): JSONArray {
+    private fun parseResponse(result: HttpResult): JSONObject {
         if (result.status !in 200..299) {
             val obj = runCatching { JSONObject(result.body.ifBlank { "{}" }) }.getOrNull()
-            val message = obj?.optString("message").orEmpty().ifBlank { obj?.optString("msg").orEmpty() }.ifBlank { "http_${result.status}" }
+            val message = obj?.optString("message").orEmpty()
+                .ifBlank { obj?.optString("error").orEmpty() }
+                .ifBlank { "http_${result.status}" }
             throw LinkoNetworkException(message, result.status)
         }
-        return JSONArray(result.body.ifBlank { "[]" })
+        return JSONObject(result.body.ifBlank { "{}" })
     }
 
-    private fun JSONObject.toProfile(): ProfileRecord = ProfileRecord(
-        optString("user_id"),
-        optString("linko_id"),
-        optString("display_name"),
-        optString("username").removePrefix("@").takeIf { it.isNotBlank() },
-    )
+    private fun JSONObject.toProfile(): ProfileRecord {
+        val resolvedUserId = optString("user_id").ifBlank { userId() }
+        val linkoId = optString("linko_id")
+        val displayName = optString("display_name").ifBlank { "LINKO User" }
+        val username = optString("username").removePrefix("@").takeIf { it.isNotBlank() }
+        if (linkoId.isBlank()) throw LinkoNetworkException("profile_linko_id_missing")
+        return ProfileRecord(resolvedUserId, linkoId, displayName, username)
+    }
 
-    private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
     private data class HttpResult(val status: Int, val body: String)
 }
 
