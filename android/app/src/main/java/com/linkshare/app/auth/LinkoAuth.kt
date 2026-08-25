@@ -9,6 +9,8 @@ import java.net.URL
 class LinkoAuth(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("linko_auth", Context.MODE_PRIVATE)
 
+    init { latest = this }
+
     fun signUp(email: String, password: String, displayName: String): AuthResult {
         validate(email, password)
         val normalized = email.trim().lowercase(); val cleanName = displayName.trim()
@@ -37,31 +39,20 @@ class LinkoAuth(context: Context) {
     fun currentUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
     fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
 
-    /** Refreshes an expired/expiring Supabase access token using the persisted refresh token. */
     fun refreshSession(): AuthResult {
         val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
             ?: return AuthResult(false, "session_refresh_unavailable", true)
-        val result = request(
-            "/auth/v1/token?grant_type=refresh_token",
-            "POST",
-            JSONObject().put("refresh_token", refreshToken),
-            saveTokens = true,
-        )
-        if (!result.success) {
-            if (result.message == "invalid_refresh_token" || result.message == "refresh_token_not_found") {
-                prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).apply()
-            }
-            return result
+        val result = request("/auth/v1/token?grant_type=refresh_token", "POST", JSONObject().put("refresh_token", refreshToken), saveTokens = true)
+        if (!result.success && result.message in setOf("invalid_refresh_token", "refresh_token_not_found")) {
+            prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).apply()
         }
         return result
     }
 
-    /** Ensures there is a usable session before account-scoped API calls. */
     fun ensureSession(): AuthResult {
         if (!isSignedIn()) return AuthResult(false, "session_required", true)
         val refresh = prefs.getString(KEY_REFRESH_TOKEN, null)
-        if (refresh.isNullOrBlank()) return AuthResult(true, "session_ready")
-        return refreshSession()
+        return if (refresh.isNullOrBlank()) AuthResult(true, "session_ready") else refreshSession()
     }
 
     fun refreshAccountIdentity(): AuthResult {
@@ -94,6 +85,8 @@ class LinkoAuth(context: Context) {
     private fun parseError(body: String, status: Int): String { if (status == 429) return "too_many_requests"; return try { val obj = JSONObject(body.ifBlank { "{}" }); obj.optString("msg").ifBlank { obj.optString("message") }.ifBlank { obj.optString("error_description") }.ifBlank { obj.optString("error") }.ifBlank { "auth_http_$status" }.lowercase().replace(' ', '_') } catch (_: Exception) { "auth_http_$status" } }
 
     companion object {
+        @Volatile private var latest: LinkoAuth? = null
+        fun current(): LinkoAuth? = latest
         private const val BASE_URL = "https://pbnvssbtshvesqwhckfa.supabase.co"; private const val PUBLISHABLE_KEY = "sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9"; private const val TIMEOUT_MS = 15_000
         private const val KEY_ACCESS_TOKEN = "supabase_access_token"; private const val KEY_REFRESH_TOKEN = "supabase_refresh_token"; private const val KEY_USER_ID = "supabase_user_id"; private const val KEY_DEVICE_ID = "linko_device_id"; private const val KEY_LINKO_TOKEN = "linko_access_token"; private const val KEY_DISPLAY_NAME = "account_display_name"; private const val KEY_LINKO_ID = "account_linko_id"; private const val KEY_USERNAME = "account_username"
         private val emailRegex = Regex("^[A-Za-z0-9.!#${'$'}%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+${'$'}")
