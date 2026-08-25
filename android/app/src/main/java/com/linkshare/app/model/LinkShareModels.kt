@@ -4,15 +4,21 @@ enum class AppMode { Host, Client }
 
 enum class ConnectionPhase {
     Idle,
-    Connecting,
-    Authenticating,
-    Signaling,
-    Establishing,
-    Securing,
-    Routing,
-    Connected,
+    Requesting,
+    Handshaking,
     Retrying,
-    Failed
+    Connected,
+    Failed;
+
+    companion object {
+        /** Compatibility aliases for the richer engine state machine. */
+        val Connecting: ConnectionPhase = Requesting
+        val Authenticating: ConnectionPhase = Requesting
+        val Signaling: ConnectionPhase = Requesting
+        val Establishing: ConnectionPhase = Handshaking
+        val Securing: ConnectionPhase = Handshaking
+        val Routing: ConnectionPhase = Handshaking
+    }
 }
 
 data class Friend(val id: String, val name: String, val initials: String, val cityHint: String, val trustNote: String, val isSharing: Boolean, val accentHex: Long)
