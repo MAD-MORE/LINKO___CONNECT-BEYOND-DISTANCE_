@@ -19,7 +19,7 @@ class LinkoRuntime(
     private val api by lazy {
         LinkoControlPlaneApi(
             baseUrl = LinkoRuntimeConfig.controlPlaneUrl,
-            accessTokenProvider = { auth.currentLinkoToken() },
+            accessTokenProvider = { auth.currentAccessToken() },
             deviceIdProvider = { auth.currentDeviceId() },
         )
     }
@@ -38,7 +38,10 @@ class LinkoRuntime(
         }
         scope.launch {
             runCatching {
-                if (auth.isSignedIn() && !auth.hasRegisteredDevice()) deviceRegistrar.ensureRegistered()
+                if (auth.isSignedIn()) {
+                    auth.ensureSession()
+                    if (!auth.hasRegisteredDevice()) deviceRegistrar.ensureRegistered()
+                }
                 api.health()
             }.onSuccess { health ->
                 Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}")
