@@ -9,6 +9,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Single real engine boundary used by the production LINKO UI. */
@@ -20,6 +24,9 @@ object LinkoEngineBridge {
     private var connectionJob: Job? = null
     private var approvedProviderSessionId: String? = null
 
+    private val _connection = MutableStateFlow(LinkoEngineConnectionState())
+    val connection: StateFlow<LinkoEngineConnectionState> = _connection.asStateFlow()
+
     fun configure(context: Context) {
         val app = context.applicationContext
         val auth = LinkoAuth(app)
@@ -27,33 +34,39 @@ object LinkoEngineBridge {
         api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
+        publish("idle")
     }
 
     fun connectToFriend(friendUserId: String, onState: (String) -> Unit = {}) {
-        val control = api ?: return onState("engine_not_initialized")
-        if (friendUserId.isBlank()) return onState("friend_not_selected")
+        val control = api ?: return publishAndNotify("engine_not_initialized", onState)
+        if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
+        connectionJob?.cancel()
         scope?.launch {
             runCatching {
-                onState("resolving_provider")
+                publishAndNotify("connecting", onState)
+                publishAndNotify("resolving_provider", onState)
                 val response = control.providerDeviceForUser(friendUserId)
                 val deviceId = response.optJSONObject("device")?.optString("id")?.takeIf { it.isNotBlank() }
                     ?: throw LinkoNetworkException("provider_not_available")
-                onState("provider_ready")
+                publishAndNotify("provider_ready", onState)
                 connect(deviceId, onState)
-            }.onFailure { onState(it.message ?: "provider_resolution_failed") }
-        } ?: onState("engine_scope_unavailable")
+            }.onFailure { publishAndNotify(it.message ?: "provider_resolution_failed", onState) }
+        } ?: publishAndNotify("engine_scope_unavailable", onState)
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
-        val control = api ?: return onState("engine_not_initialized")
-        val tunnel = coordinator ?: return onState("engine_not_initialized")
-        if (providerDeviceId.isBlank()) return onState("provider_not_available")
+        val control = api ?: return publishAndNotify("engine_not_initialized", onState)
+        val tunnel = coordinator ?: return publishAndNotify("engine_not_initialized", onState)
+        if (providerDeviceId.isBlank()) return publishAndNotify("provider_not_available", onState)
         connectionJob?.cancel()
         connectionJob = scope?.launch {
             try {
-                onState("requesting")
+                publishAndNotify("authenticating", onState)
+                publishAndNotify("requesting", onState)
                 val session = control.requestAccess(providerDeviceId)
-                repeat(40) {
+                publishAndNotify("signaling", onState)
+                repeat(40) { attempt ->
+                    if (attempt > 0) publishAndNotify("signaling_retry", onState)
                     delay(1_500L)
                     val config = runCatching { control.tunnelConfig(session.sessionId) }.getOrNull() ?: return@repeat
                     val endpoint = config.optJSONObject("endpoint") ?: return@repeat
@@ -61,14 +74,20 @@ object LinkoEngineBridge {
                     val port = endpoint.optInt("port", -1)
                     val key = runCatching { java.util.Base64.getUrlDecoder().decode(config.optString("key")) }.getOrNull()
                     if (host.isBlank() || port !in 1..65535 || key?.size != 32) return@repeat
-                    onState("connecting")
+                    publishAndNotify("establishing", onState)
                     tunnel.startVpnTunnel(host, port, session.sessionId, key)
-                    onState("connected")
+                    publishAndNotify("securing", onState)
+                    delay(250L)
+                    publishAndNotify("routing", onState)
+                    delay(250L)
+                    publishAndNotify("connected", onState)
                     return@launch
                 }
-                onState("connection_timeout")
-            } catch (e: Exception) { onState(e.message ?: "connection_failed") }
-        }
+                publishAndNotify("signaling_timeout", onState)
+            } catch (e: Exception) {
+                publishAndNotify(e.message ?: "connection_failed", onState)
+            }
+        } ?: publishAndNotify("engine_scope_unavailable", onState)
     }
 
     fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
@@ -97,5 +116,60 @@ object LinkoEngineBridge {
         scope?.launch { runCatching { control.getPendingProviderRequests().firstOrNull() }.onSuccess { request -> if (request == null) onState("no_pending_request") else runCatching { control.denyRequest(request.id) }.onSuccess { onState("denied") }.onFailure { onState(it.message ?: "decline_failed") } }.onFailure { onState(it.message ?: "request_lookup_failed") } }
     }
 
-    fun disconnect() { connectionJob?.cancel(); coordinator?.stopVpnTunnel() }
+    fun disconnect() {
+        connectionJob?.cancel()
+        coordinator?.stopVpnTunnel()
+        publish("idle", "Disconnected · tunnel closed")
+    }
+
+    private fun publishAndNotify(state: String, onState: (String) -> Unit) {
+        publish(state)
+        onState(state)
+    }
+
+    private fun publish(state: String, detail: String? = null) {
+        val normalized = when (state) {
+            "connecting" -> LinkoConnectionPhase.Connecting
+            "authenticating" -> LinkoConnectionPhase.Authenticating
+            "resolving_provider" -> LinkoConnectionPhase.Signaling
+            "provider_ready", "requesting" -> LinkoConnectionPhase.Signaling
+            "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
+            "establishing" -> LinkoConnectionPhase.Establishing
+            "securing" -> LinkoConnectionPhase.Securing
+            "routing" -> LinkoConnectionPhase.Routing
+            "connected" -> LinkoConnectionPhase.Connected
+            "idle" -> LinkoConnectionPhase.Idle
+            else -> LinkoConnectionPhase.Failed
+        }
+        val message = detail ?: when (state) {
+            "connecting" -> "Connecting…"
+            "authenticating" -> "Authenticating your LINKO session…"
+            "resolving_provider" -> "Finding your friend's available device…"
+            "provider_ready" -> "Provider found. Preparing a secure request…"
+            "requesting" -> "Sending connection request…"
+            "signaling" -> "Signaling…"
+            "signaling_retry" -> "Signaling… retrying"
+            "establishing" -> "Establishing tunnel…"
+            "securing" -> "Securing encrypted transport…"
+            "routing" -> "Routing traffic…"
+            "connected" -> "Connected · secure tunnel is active"
+            "signaling_timeout" -> "Signaling timeout"
+            else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        }
+        _connection.update {
+            it.copy(
+                phase = normalized,
+                detail = message,
+                error = if (normalized == LinkoConnectionPhase.Failed) message else null
+            )
+        }
+    }
 }
+
+enum class LinkoConnectionPhase { Idle, Connecting, Authenticating, Signaling, Establishing, Securing, Routing, Connected, Failed }
+
+data class LinkoEngineConnectionState(
+    val phase: LinkoConnectionPhase = LinkoConnectionPhase.Idle,
+    val detail: String = "Ready",
+    val error: String? = null,
+)
