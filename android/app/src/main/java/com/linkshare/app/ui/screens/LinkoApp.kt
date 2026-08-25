@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,10 +35,13 @@ import kotlinx.coroutines.withContext
 fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
-    val route = entry?.destination?.route ?: if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route
+    val signedIn = auth.isSignedIn()
+    val route = entry?.destination?.route ?: if (signedIn) Screen.HomeEngine.route else Screen.Welcome.route
     val onboarding = route in onboardingScreens
     val scope = rememberCoroutineScope()
     var deleting by remember { mutableStateOf(false) }
+    var bootstrapping by remember(signedIn) { mutableStateOf(signedIn) }
+    var bootstrapFailed by remember(signedIn) { mutableStateOf(false) }
     val onDeleteAccount: () -> Unit = {
         if (!deleting) {
             deleting = true
@@ -48,13 +52,46 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
             }
         }
     }
+
+    LaunchedEffect(signedIn) {
+        if (!signedIn) {
+            bootstrapping = false
+            bootstrapFailed = false
+        } else {
+            bootstrapping = true
+            bootstrapFailed = !runtime.initialize()
+            bootstrapping = false
+        }
+    }
+
+    if (bootstrapping || (signedIn && bootstrapFailed && entry == null)) {
+        LinkoStartupScreen(failed = bootstrapFailed)
+        return
+    }
+
     Column(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
         if (!onboarding && route != Screen.HomeEngine.route) AppBar(appBarTitle(route) ?: "LINKO") { nav.popBackStack() }
         Box(Modifier.weight(1f)) {
-            NavHost(navController = nav, startDestination = if (auth.isSignedIn()) Screen.HomeEngine.route else Screen.Welcome.route) {
+            NavHost(navController = nav, startDestination = if (signedIn) Screen.HomeEngine.route else Screen.Welcome.route) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
-                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { runtime.start(); nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }) }
+                composable(Screen.SignIn.route) {
+                    SignInScreen(
+                        auth,
+                        onSignedIn = {
+                            bootstrapping = true
+                            bootstrapFailed = false
+                            scope.launch {
+                                val initialized = withContext(Dispatchers.IO) { runtime.initialize() }
+                                bootstrapFailed = !initialized
+                                bootstrapping = false
+                                if (initialized) nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                            }
+                        },
+                        onCreateAccount = { nav.navigate(Screen.SignUp.route) },
+                        onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }
+                    )
+                }
                 composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
                 composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) { popUpTo(Screen.RecoveryOtp.route) { inclusive = true } } }, onBack = { nav.popBackStack() }) }
                 composable(Screen.PasswordReset.route) { PasswordResetScreen(auth) { auth.signOut(); nav.navigate(Screen.SignIn.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
@@ -73,12 +110,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.RxRequest.route) { RxRequestScreen { nav.popBackStack() } }
                 composable(Screen.RxWaiting.route) { RxWaitingScreen { nav.popBackStack() } }
                 composable(Screen.RxApproved.route) { RxApprovedScreen { nav.navigate(Screen.RxConnecting.route) } }
-                composable(Screen.RxConnecting.route) {
-                    ConnectionStatusScreen(
-                        onConnected = { nav.navigate(Screen.Connected.route) },
-                        onFailed = { nav.navigate(Screen.ConnectionLost.route) }
-                    )
-                }
+                composable(Screen.RxConnecting.route) { ConnectionStatusScreen(onConnected = { nav.navigate(Screen.Connected.route) }, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } } }, { nav.navigate(Screen.NetworkQuality.route) }) }
@@ -105,6 +137,25 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
             }
         }
         if (!onboarding) BottomNav(route, nav)
+    }
+}
+
+@Composable
+private fun LinkoStartupScreen(failed: Boolean) {
+    Box(Modifier.fillMaxSize().background(BG).systemBarsPadding(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
+            if (!failed) {
+                CircularProgressIndicator(color = Blue, strokeWidth = 3.dp)
+                Spacer(Modifier.height(20.dp))
+                Text("INITIALIZING LINKO", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Loading your profile, device identity and connection services…", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+            } else {
+                Text("LINKO COULD NOT INITIALIZE", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("Your session or required LINKO data could not be loaded. Please sign in again.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+            }
+        }
     }
 }
 
