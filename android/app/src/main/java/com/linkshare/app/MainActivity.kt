@@ -34,7 +34,6 @@ class MainActivity : ComponentActivity() {
         LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
         LinkoEngineBridge.configure(this)
         linkoRuntime = LinkoRuntime(this)
-        linkoRuntime.start()
         LinkoRealtimeManager.start(this)
         requestEnginePermissions()
         setContent {
