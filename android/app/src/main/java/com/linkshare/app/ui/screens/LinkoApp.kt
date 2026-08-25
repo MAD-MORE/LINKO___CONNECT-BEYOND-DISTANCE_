@@ -73,10 +73,15 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.RxRequest.route) { RxRequestScreen { nav.popBackStack() } }
                 composable(Screen.RxWaiting.route) { RxWaitingScreen { nav.popBackStack() } }
                 composable(Screen.RxApproved.route) { RxApprovedScreen { nav.navigate(Screen.RxConnecting.route) } }
-                composable(Screen.RxConnecting.route) { ConnectionStatusScreen({ nav.navigate(Screen.Connected.route) { popUpTo(Screen.RxSelectFriend.route) { inclusive = true } } }, { nav.navigate(Screen.ConnectionLost.route) }) }
+                composable(Screen.RxConnecting.route) {
+                    ConnectionStatusScreen(
+                        onConnected = { nav.navigate(Screen.Connected.route) },
+                        onFailed = { nav.navigate(Screen.ConnectionLost.route) }
+                    )
+                }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
-                composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } }, { nav.navigate(Screen.NetworkQuality.route) }) }
+                composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } } }, { nav.navigate(Screen.NetworkQuality.route) }) }
                 composable(Screen.NetworkQuality.route) { NetworkQualityScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Usage.route) { UsageScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
@@ -95,8 +100,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.DeviceIdentity.route) { DeviceIdentityScreen { nav.popBackStack() } }
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
-                composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
-                composable(Screen.DeleteAccount.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
+                composable(Screen.DataRetention.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
             }
         }
         if (!onboarding) BottomNav(route, nav)
