@@ -29,26 +29,44 @@ class LinkoRuntime(
             accessTokenProvider = { auth.currentAccessToken() },
         )
     }
+    private val profileApi by lazy {
+        LinkoProfileApi(
+            accessTokenProvider = { auth.currentAccessToken() },
+            userIdProvider = { auth.currentUserId() },
+            refreshProvider = { auth.refreshSession().success },
+        )
+    }
     private val deviceRegistrar by lazy { LinkoDeviceRegistrar(LinkoRuntimeConfig.controlPlaneUrl, auth) }
 
-    fun start() {
+    /**
+     * Complete the authenticated bootstrap before the main LINKO experience is opened.
+     * Profile identity is loaded here so screens never have to guess which username/ID to show.
+     */
+    suspend fun initialize(): Boolean {
+        if (!auth.isSignedIn()) return true
         if (!LinkoRuntimeConfig.isConfigured()) {
             Log.w(TAG, "LINKO control plane is not configured; APK is offline-only")
-            return
+            return false
         }
-        scope.launch {
-            runCatching {
-                if (auth.isSignedIn()) {
-                    auth.ensureSession()
-                    if (!auth.hasRegisteredDevice()) deviceRegistrar.ensureRegistered()
-                }
-                api.health()
-            }.onSuccess { health ->
-                Log.i(TAG, "LINKO control plane reachable: ${health.optString("status")}; device=${auth.currentDeviceId() ?: "unregistered"}")
-            }.onFailure { error ->
-                Log.e(TAG, "LINKO runtime bootstrap failed", error)
+        return runCatching {
+            auth.ensureSession().also { result ->
+                if (!result.success) error(result.message)
             }
-        }
+            profileApi.load()
+            if (!auth.hasRegisteredDevice()) {
+                check(deviceRegistrar.ensureRegistered()) { "device_registration_failed" }
+            }
+            api.health()
+        }.onSuccess { health ->
+            Log.i(TAG, "LINKO bootstrap complete: ${health.optString("status")}; device=${auth.currentDeviceId()}")
+        }.onFailure { error ->
+            Log.e(TAG, "LINKO runtime bootstrap failed", error)
+        }.isSuccess
+    }
+
+    /** Backward-compatible fire-and-forget bootstrap entry point. */
+    fun start() {
+        scope.launch { initialize() }
     }
 
     suspend fun searchFriends(query: String): List<Friend> = friendApi.searchUsers(query)
