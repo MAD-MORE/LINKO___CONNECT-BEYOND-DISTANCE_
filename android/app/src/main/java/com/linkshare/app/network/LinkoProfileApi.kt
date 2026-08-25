@@ -81,12 +81,16 @@ class LinkoProfileApi(
     }
 
     private fun JSONObject.toProfile(): ProfileRecord {
-        val resolvedUserId = optString("user_id").ifBlank { userId() }
+        val expectedUserId = userId()
+        val responseUserId = optString("user_id").ifBlank { expectedUserId }
+        if (responseUserId != expectedUserId) {
+            throw LinkoNetworkException("profile_account_mismatch")
+        }
         val linkoId = optString("linko_id")
         val displayName = optString("display_name").ifBlank { "LINKO User" }
         val username = optString("username").removePrefix("@").takeIf { it.isNotBlank() }
         if (linkoId.isBlank()) throw LinkoNetworkException("profile_linko_id_missing")
-        return ProfileRecord(resolvedUserId, linkoId, displayName, username)
+        return ProfileRecord(responseUserId, linkoId, displayName, username)
     }
 
     private data class HttpResult(val status: Int, val body: String)
