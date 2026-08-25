@@ -50,6 +50,7 @@ android {
 
 configurations.all {
     resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:2.2.21")
         force("androidx.core:core:1.16.0")
         force("androidx.core:core-ktx:1.16.0")
     }
