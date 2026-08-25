@@ -150,6 +150,11 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         }
     }
 
+    val connectionBusy = providerState == "LOADING" ||
+        providerState == "REQUESTED" ||
+        providerState == "APPROVED" ||
+        providerState == "SIGNALING"
+
     Column(
         Modifier
             .fillMaxSize()
@@ -260,17 +265,30 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("STATUS", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                    Text(
-                        providerState,
-                        color = when (providerState) {
-                            "OFFLINE", "ID_ERROR", "DECLINED", "ENDED" -> Red
-                            "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> TextSub
-                            else -> Green
-                        },
-                        fontSize = 15.sp,
-                        fontFamily = JetBrainsMono,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (connectionBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = when (providerState) {
+                                    "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> Green
+                                    else -> TextSub
+                                },
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(7.dp))
+                        }
+                        Text(
+                            providerState,
+                            color = when (providerState) {
+                                "OFFLINE", "ID_ERROR", "DECLINED", "ENDED" -> Red
+                                "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> TextSub
+                                else -> Green
+                            },
+                            fontSize = 15.sp,
+                            fontFamily = JetBrainsMono,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -289,6 +307,22 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 fontSize = 10.sp,
                 fontFamily = JetBrainsMono
             )
+
+            if (connectionBusy) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    when (providerState) {
+                        "LOADING" -> "Preparing your sharing service…"
+                        "REQUESTED" -> "Waiting for your approval…"
+                        "APPROVED" -> "Preparing secure sharing…"
+                        "SIGNALING" -> "Connecting the devices…"
+                        else -> "Working…"
+                    },
+                    color = TextSub,
+                    fontSize = 9.sp,
+                    fontFamily = JetBrainsMono
+                )
+            }
 
             if (profileError && linkoId.isBlank()) {
                 Spacer(Modifier.height(4.dp))
