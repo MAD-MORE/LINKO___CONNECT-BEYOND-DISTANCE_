@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -46,7 +47,7 @@ class LinkoProviderService : Service() {
 
     private suspend fun listenToRealtime() {
         LinkoRealtimeManager.events.collect { event ->
-            if (!isActive) return@collect
+            if (!currentCoroutineContext().isActive) return@collect
             when (event) {
                 is LinkoRealtimeEvent.SessionStateChanged -> if (event.state == "requested") notifyPendingConnectionRequests()
                 else -> Unit
