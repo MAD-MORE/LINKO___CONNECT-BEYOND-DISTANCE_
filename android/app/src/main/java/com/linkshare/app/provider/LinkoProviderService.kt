@@ -38,7 +38,7 @@ class LinkoProviderService : Service() {
     override fun onCreate() {
         super.onCreate()
         auth = LinkoAuth(this)
-        api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentLinkoToken() }, { auth.currentDeviceId() })
+        api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentAccessToken() }, { auth.currentDeviceId() })
         createChannel()
         startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is ready for connection requests"))
         scope.launch { listenToRealtime() }
