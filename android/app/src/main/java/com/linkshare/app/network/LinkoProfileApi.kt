@@ -1,6 +1,7 @@
 package com.linkshare.app.network
 
 import com.linkshare.app.BuildConfig
+import com.linkshare.app.auth.LinkoAuth
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -11,7 +12,7 @@ import java.net.URLEncoder
 class LinkoProfileApi(
     private val accessTokenProvider: () -> String?,
     private val userIdProvider: () -> String?,
-    private val refreshProvider: (suspend () -> Boolean)? = null,
+    private val refreshProvider: (suspend () -> Boolean)? = { LinkoAuth.current()?.refreshSession()?.success == true },
 ) {
     suspend fun load(): ProfileRecord {
         val array = request("GET", "profiles?user_id=eq.${encode(userId())}&select=user_id,linko_id,username,display_name")
@@ -32,13 +33,9 @@ class LinkoProfileApi(
     private suspend fun request(method: String, path: String, body: JSONObject? = null): JSONArray {
         val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
         val first = execute(method, path, body, token)
-        if (first.status == 401) {
-            val refreshed = refreshProvider?.invoke() == true
-            if (refreshed) {
-                val newToken = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
-                val retry = execute(method, path, body, newToken)
-                return parseResponse(retry)
-            }
+        if (first.status == 401 && refreshProvider?.invoke() == true) {
+            val newToken = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
+            return parseResponse(execute(method, path, body, newToken))
         }
         return parseResponse(first)
     }
@@ -69,12 +66,8 @@ class LinkoProfileApi(
 
     private fun parseResponse(result: HttpResult): JSONArray {
         if (result.status !in 200..299) {
-            val body = result.body
-            val message = runCatching {
-                JSONObject(body.ifBlank { "{}" }).optString("message").ifBlank {
-                    JSONObject(body.ifBlank { "{}" }).optString("msg")
-                }
-            }.getOrNull().orEmpty().ifBlank { "http_${result.status}" }
+            val obj = runCatching { JSONObject(result.body.ifBlank { "{}" }) }.getOrNull()
+            val message = obj?.optString("message").orEmpty().ifBlank { obj?.optString("msg").orEmpty() }.ifBlank { "http_${result.status}" }
             throw LinkoNetworkException(message, result.status)
         }
         return JSONArray(result.body.ifBlank { "[]" })
