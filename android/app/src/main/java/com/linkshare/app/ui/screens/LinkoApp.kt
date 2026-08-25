@@ -64,7 +64,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
         }
     }
 
-    if (bootstrapping || (signedIn && bootstrapFailed && entry == null)) {
+    if (bootstrapping || bootstrapFailed) {
         LinkoStartupScreen(failed = bootstrapFailed)
         return
     }
