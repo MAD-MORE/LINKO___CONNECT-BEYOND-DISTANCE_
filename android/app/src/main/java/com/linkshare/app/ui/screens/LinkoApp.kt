@@ -100,7 +100,8 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.DeviceIdentity.route) { DeviceIdentityScreen { nav.popBackStack() } }
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
-                composable(Screen.DataRetention.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
+                composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
+                composable(Screen.DeleteAccount.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
             }
         }
         if (!onboarding) BottomNav(route, nav)
