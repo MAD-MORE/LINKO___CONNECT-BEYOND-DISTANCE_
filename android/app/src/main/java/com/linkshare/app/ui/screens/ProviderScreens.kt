@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +35,7 @@ import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.theme.Border
 import com.linkshare.app.ui.theme.Green
+import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.Surface
 import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
@@ -68,31 +71,26 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         )
     }
 
-    var username by remember { mutableStateOf("LINKO User") }
-    var linkoId by remember { mutableStateOf("") }
-    var providerState by remember { mutableStateOf("STARTING") }
+    // Start from the persisted canonical identity so reopening the screen never
+    // flashes a fake identity or unnecessarily hides an already-known LINKO ID.
+    var username by remember {
+        mutableStateOf(
+            auth.currentUsername()
+                ?: auth.currentDisplayName()
+                ?: "LINKO User"
+        )
+    }
+    var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
+    var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
+    var profileLoading by remember { mutableStateOf(linkoId.isBlank()) }
+    var profileError by remember { mutableStateOf(false) }
+    var retryProfile by remember { mutableIntStateOf(0) }
     var copied by remember { mutableStateOf(false) }
 
+    // Provider service + realtime lifecycle.
     LaunchedEffect(Unit) {
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
-
-        // Phase 1: the profile endpoint is the single source of truth for the
-        // account's public LINKO identity. We do not generate an ID here.
-        runCatching { profileApi.load() }
-            .onSuccess { profile ->
-                username = profile.username
-                    ?.takeIf { it.isNotBlank() }
-                    ?: profile.displayName.takeIf { it.isNotBlank() }
-                    ?: "LINKO User"
-                linkoId = profile.linkoId.trim()
-                providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
-            }
-            .onFailure {
-                // Never display a fake/new ID when the canonical profile cannot be loaded.
-                linkoId = ""
-                providerState = "OFFLINE"
-            }
 
         LinkoRealtimeManager.events.collect { event ->
             when (event) {
@@ -108,10 +106,41 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                         else -> providerState
                     }
                 }
-                is LinkoRealtimeEvent.TransportError -> providerState = "OFFLINE"
+                is LinkoRealtimeEvent.TransportError -> {
+                    if (linkoId.isNotBlank()) providerState = "OFFLINE"
+                }
                 else -> Unit
             }
         }
+    }
+
+    // Canonical identity loader. The rotating indicator stays visible only while
+    // the profile is actually being resolved; no permanent "Loading" state.
+    LaunchedEffect(retryProfile) {
+        profileLoading = true
+        profileError = false
+
+        runCatching { profileApi.load() }
+            .onSuccess { profile ->
+                username = profile.username
+                    ?.takeIf { it.isNotBlank() }
+                    ?: profile.displayName.takeIf { it.isNotBlank() }
+                    ?: "LINKO User"
+                linkoId = profile.linkoId.trim()
+                providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
+            }
+            .onFailure {
+                profileError = true
+                // A previously persisted canonical ID remains valid for display.
+                // Do not manufacture a replacement ID when the network is unavailable.
+                if (linkoId.isNotBlank()) {
+                    providerState = "READY"
+                } else {
+                    providerState = "OFFLINE"
+                }
+            }
+
+        profileLoading = false
     }
 
     LaunchedEffect(copied) {
@@ -159,7 +188,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("USERNAME", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Text(
-                    "@$username",
+                    "@${username.removePrefix("@")}\u200b",
                     color = Green,
                     fontSize = 18.sp,
                     fontFamily = JetBrainsMono,
@@ -167,17 +196,32 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 )
                 Spacer(Modifier.height(10.dp))
                 Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                Text(
-                    linkoId.ifBlank { "Loading LINKO ID…" },
-                    color = Green,
-                    fontSize = 19.sp,
-                    fontFamily = JetBrainsMono,
-                    fontWeight = FontWeight.Bold
-                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (profileLoading && linkoId.isBlank()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Green,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(9.dp))
+                    }
+                    Text(
+                        when {
+                            linkoId.isNotBlank() -> linkoId
+                            profileLoading -> "Loading LINKO ID…"
+                            else -> "LINKO ID unavailable"
+                        },
+                        color = if (profileError && linkoId.isBlank()) Red else Green,
+                        fontSize = 19.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             IconButton(
-                enabled = linkoId.isNotBlank(),
+                enabled = linkoId.isNotBlank() && !profileLoading,
                 onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText("LINKO ID", linkoId))
@@ -187,7 +231,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Icon(
                     Icons.Filled.ContentCopy,
                     contentDescription = "Copy LINKO ID",
-                    tint = if (linkoId.isNotBlank()) Green else TextMuted
+                    tint = if (linkoId.isNotBlank() && !profileLoading) Green else TextMuted
                 )
             }
         }
@@ -216,7 +260,17 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("STATUS", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                    Text(providerState, color = Green, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(
+                        providerState,
+                        color = when (providerState) {
+                            "OFFLINE", "ID_ERROR", "DECLINED", "ENDED" -> Red
+                            "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> TextSub
+                            else -> Green
+                        },
+                        fontSize = 15.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -224,15 +278,33 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 when (providerState) {
                     "READY" -> "Waiting for a friend..."
                     "SHARING" -> "A friend is using your authorized connection."
-                    "REQUESTED" -> "A friend request is waiting for your approval."
+                    "REQUESTED" -> "A friend is requesting access to your connection."
+                    "APPROVED" -> "Connection approved. Preparing the tunnel..."
+                    "SIGNALING" -> "Establishing a secure connection..."
                     "OFFLINE" -> "Your LINKO profile could not be loaded."
                     "ID_ERROR" -> "Your LINKO profile has no LINKO ID."
-                    else -> "Preparing your device…"
+                    else -> "Preparing your LINKO provider..."
                 },
                 color = TextSub,
                 fontSize = 10.sp,
                 fontFamily = JetBrainsMono
             )
+
+            if (profileError && linkoId.isBlank()) {
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = { retryProfile++ },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        "RETRY",
+                        color = Green,
+                        fontSize = 10.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.weight(1f))
