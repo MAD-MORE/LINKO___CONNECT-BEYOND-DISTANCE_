@@ -64,12 +64,12 @@ object LinkoRealtimeManager {
         ) {
             install(Realtime)
         }
-        supabase.realtime.setAuth(auth?.currentAccessToken())
         client = supabase
         scope.launch {
             while (started.get() && auth?.currentAccessToken().isNullOrBlank()) delay(1_000L)
             if (!started.get()) return@launch
             runCatching {
+                supabase.realtime.setAuth(auth?.currentAccessToken())
                 supabase.realtime.connect()
                 subscribeFriendEvents(supabase)
                 subscribeSessionEvents(supabase)
