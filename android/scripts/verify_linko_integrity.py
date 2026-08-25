@@ -9,27 +9,16 @@ REPO = ROOT.parent
 ANDROID_SRC = ROOT / "app" / "src" / "main"
 KOTLIN = ANDROID_SRC / "java" / "com" / "linkshare" / "app"
 REQUIRED_FILES = [
-    ROOT / "settings.gradle.kts",
-    ROOT / "build.gradle.kts",
-    ROOT / "app" / "build.gradle.kts",
+    ROOT / "settings.gradle.kts", ROOT / "build.gradle.kts", ROOT / "app" / "build.gradle.kts",
     ROOT / "app" / "src" / "main" / "AndroidManifest.xml",
-    KOTLIN / "MainActivity.kt",
-    KOTLIN / "Navigation.kt",
-    KOTLIN / "ui" / "LinkShareApp.kt",
-    KOTLIN / "ui" / "screens" / "LinkoApp.kt",
-    KOTLIN / "ui" / "screens" / "SignUpScreen.kt",
-    KOTLIN / "ui" / "screens" / "AuthScreens.kt",
-    KOTLIN / "ui" / "screens" / "FriendsScreens.kt",
-    KOTLIN / "viewmodel" / "LinkShareViewModel.kt",
-    KOTLIN / "network" / "LinkoRuntime.kt",
-    KOTLIN / "network" / "LinkoRuntimeConfig.kt",
-    KOTLIN / "network" / "LinkoEngineBridge.kt",
-    KOTLIN / "network" / "LinkoControlPlaneApi.kt",
-    KOTLIN / "network" / "LinkoFriendsApi.kt",
-    KOTLIN / "network" / "LinkoDeviceRegistrar.kt",
-    KOTLIN / "network" / "LinkoSignalingClient.kt",
-    KOTLIN / "vpn" / "LinkShareVpnService.kt",
-    KOTLIN / "provider" / "LinkoProviderService.kt",
+    KOTLIN / "MainActivity.kt", KOTLIN / "Navigation.kt", KOTLIN / "ui" / "LinkShareApp.kt",
+    KOTLIN / "ui" / "screens" / "LinkoApp.kt", KOTLIN / "ui" / "screens" / "SignUpScreen.kt",
+    KOTLIN / "ui" / "screens" / "AuthScreens.kt", KOTLIN / "ui" / "screens" / "FriendsScreens.kt",
+    KOTLIN / "viewmodel" / "LinkShareViewModel.kt", KOTLIN / "network" / "LinkoRuntime.kt",
+    KOTLIN / "network" / "LinkoRuntimeConfig.kt", KOTLIN / "network" / "LinkoEngineBridge.kt",
+    KOTLIN / "network" / "LinkoControlPlaneApi.kt", KOTLIN / "network" / "LinkoFriendsApi.kt",
+    KOTLIN / "network" / "LinkoDeviceRegistrar.kt", KOTLIN / "network" / "LinkoSignalingClient.kt",
+    KOTLIN / "vpn" / "LinkShareVpnService.kt", KOTLIN / "provider" / "LinkoProviderService.kt",
 ]
 FORBIDDEN_PRODUCTION_REFERENCES = ("MockLinkShareRepository", "mockFriends", "fakeFriends", "FakeLinkoFriendsApi")
 FRIEND_EDGE_PATH = "/functions/v1/linko-friends"
@@ -62,16 +51,15 @@ def contains_session_contract(source: str, semantic_path: str) -> bool:
 
 
 def backend_has_dynamic_route(source: str, variable_name: str, path_suffix: str) -> bool:
-    pattern = (
-        rf"{re.escape(variable_name)}\s*=\s*url\.pathname\.match\("
-        rf"/\^/v1/sessions/\(\[\^/\]\+\)/{re.escape(path_suffix)}\$/"
-    )
-    return re.search(pattern, normalize_backend_source(source)) is not None
+    """Match the route independent of whether the TS regex escapes '/' or '$'."""
+    variable = re.escape(variable_name)
+    suffix = re.escape(path_suffix)
+    route_pattern = rf'{variable}\s*=\s*url\.pathname\.match\(.*?/v1/sessions/.*?/{suffix}.*?\)'
+    return re.search(route_pattern, source, flags=re.DOTALL) is not None
 
 
 def main() -> int:
     errors: list[str] = []
-
     for path in REQUIRED_FILES:
         if not path.is_file():
             errors.append(f"missing required file: {path.relative_to(REPO)}")
