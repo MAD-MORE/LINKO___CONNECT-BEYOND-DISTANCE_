@@ -2,8 +2,8 @@ package com.linkshare.app.network
 
 import android.content.Context
 import android.util.Log
-import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.model.Friend
+import com.linkshare.app.auth.LinkoAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Owns the deterministic LINKO startup pipeline and real device presence. */
+/** Owns deterministic LINKO startup. Authentication/local identity is required; network readiness is retryable. */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -41,39 +41,52 @@ class LinkoRuntime(
 
     val presence = presenceManager.state
 
+    /**
+     * Initialization has one strict prerequisite: a valid authenticated account identity.
+     * Everything requiring the network is retryable and must never turn a successful sign-in
+     * into the fatal "LINKO COULD NOT INITIALIZE" screen.
+     */
     suspend fun initialize(): Boolean = initializeMutex.withLock {
-        if (!auth.isSignedIn()) return@withLock true
+        if (!auth.isSignedIn()) return@withLock false
 
-        val currentUserId = auth.currentUserId()
-        if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
+        val session = runCatching { auth.ensureSession() }.getOrElse {
+            Log.e(TAG, "Unable to validate auth session", it)
+            return@withLock false
+        }
+        if (!session.success) {
+            Log.e(TAG, "Auth session invalid: ${session.message}")
+            return@withLock false
+        }
 
-        runCatching {
-            // 1. Authentication/session
-            val session = auth.ensureSession()
-            if (!session.success) error(session.message)
-            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-                ?: session.userId?.takeIf { it.isNotBlank() }
-                ?: error("auth_user_missing")
+        val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+            ?: session.userId?.takeIf { it.isNotBlank() }
+            ?: run {
+                Log.e(TAG, "Authenticated session has no user id")
+                return@withLock false
+            }
 
-            // 2. Canonical account identity
-            profileApi.load()
+        // This is the actual startup barrier. LINKO can now open even if the control plane is offline.
+        initializedUserId = userId
+        launchNetworkSynchronization(userId)
+        Log.i(TAG, "LINKO initialization complete: user=$userId")
+        true
+    }
 
-            // 3. Warm the real authenticated friends path
-            friendApi.getFriends()
+    /** Network work is independent, retryable, and never controls the startup screen. */
+    private fun launchNetworkSynchronization(userId: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { profileApi.load() }
+                .onFailure { Log.w(TAG, "Profile sync deferred", it) }
 
-            // 4. Register this installation with the real LINKO control plane.
-            deviceApi.ensureRegistered()
+            runCatching { deviceApi.ensureRegistered() }
+                .onFailure { Log.w(TAG, "Device registration deferred", it) }
 
-            // 5. Presence is separate from initialization: only successful heartbeat registration makes ONLINE.
-            initializedUserId = userId
-            presenceManager.start()
-        }.onSuccess {
-            Log.i(TAG, "LINKO bootstrap complete: user=${auth.currentUserId()} linkoId=${auth.currentLinkoId()}")
-        }.onFailure { error ->
-            initializedUserId = null
-            presenceManager.stop()
-            Log.e(TAG, "LINKO required bootstrap failed", error)
-        }.isSuccess
+            runCatching { friendApi.getFriends() }
+                .onFailure { Log.w(TAG, "Friends sync deferred", it) }
+
+            // Presence decides ONLINE/OFFLINE independently of initialization.
+            if (initializedUserId == userId) presenceManager.start()
+        }
     }
 
     fun start() { scope.launch { initialize() } }
