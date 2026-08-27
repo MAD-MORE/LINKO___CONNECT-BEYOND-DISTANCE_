@@ -95,14 +95,14 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
                 composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) { popUpTo(Screen.RecoveryOtp.route) { inclusive = true } } }, onBack = { nav.popBackStack() }) }
                 composable(Screen.PasswordReset.route) { PasswordResetScreen(auth) { auth.signOut(); nav.navigate(Screen.SignIn.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
-                composable(Screen.Profile.route) { AccountProfileScreen { nav.popBackStack() } }
+                composable(Screen.Profile.route) { RealAccountProfileScreen { nav.popBackStack() } }
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
                 composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
                 composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
                 composable(Screen.Friends.route) { LiveFriendsScreen({ nav.navigate(Screen.FindFriends.route) }, { nav.navigate(Screen.FriendProfile.route) }) }
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
-                composable(Screen.FriendProfile.route) { FriendProfileScreen { nav.navigate(Screen.RequestSent.route) } }
+                composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.Connected.route) }) }
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.popBackStack() } }
                 composable(Screen.IncomingRequest.route) { IncomingRequestScreen({ nav.navigate(Screen.Friends.route) }, { nav.popBackStack() }) }
                 composable(Screen.BlockedRemoved.route) { BlockedRemovedScreen { nav.popBackStack() } }
@@ -117,14 +117,13 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.NetworkQuality.route) { NetworkQualityScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Usage.route) { UsageScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
-                composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { state -> if (state == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
                 composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { state -> if (state == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
                 composable(Screen.ProviderSharingActive.route) { ProviderSharingActiveScreen({ nav.navigate(Screen.ProviderLiveUsage.route) }, { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.ProviderLiveUsage.route) { ProviderLiveUsageScreen { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.ConnectionLost.route) { ConnectionLostScreen({ nav.navigate(Screen.Reconnecting.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
-                composable(Screen.Reconnecting.route) { ReconnectingScreen { nav.navigate(Screen.Connected.route) } }
+                composable(Screen.Reconnecting.route) { RealReconnectingScreen(onConnected = { nav.navigate(Screen.Connected.route) }, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
                 composable(Screen.NetworkSwitching.route) { NetworkSwitchingScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.SessionExpired.route) { SessionExpiredScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.KeyRevoked.route) { KeyRevokedScreen { nav.navigate(Screen.HomeEngine.route) } }
