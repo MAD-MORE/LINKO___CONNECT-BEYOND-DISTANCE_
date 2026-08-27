@@ -97,7 +97,7 @@ object LinkoEngineBridge {
         publishAndNotify("signaling", onState)
 
         var started = false
-        repeat(40) { attempt ->
+        for (attempt in 0 until 40) {
             val current = control.session(sessionId)
             if (current.state == "denied" || current.state == "expired" || current.state == "revoked") {
                 throw LinkoNetworkException("session_${current.state}")
