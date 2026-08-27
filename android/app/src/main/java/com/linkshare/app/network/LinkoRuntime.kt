@@ -3,6 +3,7 @@ package com.linkshare.app.network
 import android.content.Context
 import android.util.Log
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.data.LinkoAppCache
 import com.linkshare.app.model.Friend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +12,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** Owns deterministic LINKO startup. Authentication presence is the startup barrier; network readiness is retryable. */
 class LinkoRuntime(
@@ -19,6 +22,7 @@ class LinkoRuntime(
 ) {
     private val appContext = context.applicationContext
     private val auth = LinkoAuth(appContext)
+    private val cache = LinkoAppCache(appContext)
     private val initializeMutex = Mutex()
     private var initializedUserId: String? = null
     private val deviceApi by lazy { LinkoDeviceControlApi(appContext, auth) }
@@ -43,25 +47,26 @@ class LinkoRuntime(
 
     /**
      * Startup barrier = authenticated local session only.
-     * Network operations must never make a successful sign-in look like initialization failure.
+     * Cached account data can be used immediately; network operations refresh it independently.
      */
     suspend fun initialize(): Boolean = initializeMutex.withLock {
         if (!auth.isSignedIn()) return@withLock false
 
-        // The access token is already persisted by sign-in. Do not perform a network call here.
-        // A fresh install can therefore enter the app even when the control plane is unavailable.
         val userId = auth.currentUserId()
         initializedUserId = userId
+        // A valid user-scoped cache is local startup data, never a presence signal.
+        if (userId != null) {
+            cache.profileFor(userId)
+            cache.friendsFor(userId)
+        }
         launchNetworkSynchronization(userId)
-        Log.i(TAG, "LINKO local initialization complete: user=${userId ?: "pending"}")
+        Log.i(TAG, "LINKO local initialization complete: user=${userId ?: "pending"}, cached=${userId != null}")
         true
     }
 
     /** Network work is independent, retryable, and never controls the startup screen. */
     private fun launchNetworkSynchronization(initialUserId: String?) {
         scope.launch(Dispatchers.IO) {
-            // First validate/refresh the session in the background. Invalid credentials are an auth
-            // concern; temporary network errors simply leave the device OFFLINE and are retried later.
             val session = runCatching { auth.ensureSession() }.getOrNull()
             if (session?.success == false && session.requiresVerification) {
                 Log.w(TAG, "Session could not be refreshed yet: ${session.message}")
@@ -70,16 +75,19 @@ class LinkoRuntime(
             val userId = auth.currentUserId() ?: initialUserId
             if (userId == null) {
                 Log.w(TAG, "User identity is not available yet; network synchronization deferred")
+                return@launch
             }
 
             runCatching { profileApi.load() }
-                .onFailure { Log.w(TAG, "Profile sync deferred", it) }
+                .onFailure { Log.w(TAG, "Profile sync deferred; cached profile remains available", it) }
+
+            runCatching {
+                val friends = friendApi.getFriends()
+                cache.saveFriends(userId, friendsToJson(friends))
+            }.onFailure { Log.w(TAG, "Friends sync deferred; cached friends remain available", it) }
 
             runCatching { deviceApi.ensureRegistered() }
                 .onFailure { Log.w(TAG, "Device registration deferred", it) }
-
-            runCatching { friendApi.getFriends() }
-                .onFailure { Log.w(TAG, "Friends sync deferred", it) }
 
             // Presence decides ONLINE/OFFLINE independently of initialization.
             if (initializedUserId == auth.currentUserId() || initializedUserId == null) {
@@ -89,11 +97,53 @@ class LinkoRuntime(
     }
 
     fun start() { scope.launch { initialize() } }
+
     suspend fun searchFriends(query: String): List<Friend> = friendApi.searchUsers(query)
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
-    suspend fun getFriends(): List<Friend> = friendApi.getFriends()
+
+    /** Network-first, cache-fallback. Cache is never treated as evidence that a friend is online. */
+    suspend fun getFriends(): List<Friend> {
+        val userId = auth.currentUserId()
+        return runCatching {
+            friendApi.getFriends().also { if (userId != null) cache.saveFriends(userId, friendsToJson(it)) }
+        }.getOrElse {
+            if (userId == null) emptyList() else friendsFromJson(cache.friendsFor(userId))
+        }
+    }
+
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) { LinkoEngineBridge.connect(providerDeviceId, onState) }
     fun disconnect() { LinkoEngineBridge.disconnect() }
+
+    private fun friendsToJson(friends: List<Friend>): JSONArray = JSONArray().apply {
+        friends.forEach { friend ->
+            put(JSONObject()
+                .put("user_id", friend.id)
+                .put("display_name", friend.name)
+                .put("initials", friend.initials)
+                .put("linko_id", friend.cityHint)
+                .put("trust_note", friend.trustNote)
+                .put("is_sharing", friend.isSharing)
+                .put("accent_hex", friend.accentHex))
+        }
+    }
+
+    private fun friendsFromJson(array: JSONArray?): List<Friend> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                add(Friend(
+                    id = item.optString("user_id"),
+                    name = item.optString("display_name", "LINKO User"),
+                    initials = item.optString("initials", "L"),
+                    cityHint = item.optString("linko_id"),
+                    trustNote = item.optString("trust_note", "CACHED LINKO USER"),
+                    isSharing = item.optBoolean("is_sharing", false),
+                    accentHex = item.optLong("accent_hex", 0xFF4C8DFF),
+                ))
+            }
+        }
+    }
 
     fun stop() {
         presenceManager.stop()
