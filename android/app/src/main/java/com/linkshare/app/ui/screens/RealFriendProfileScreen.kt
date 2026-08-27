@@ -31,7 +31,6 @@ import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.TextPrimary
-import com.linkshare.app.ui.theme.TextSub
 import kotlinx.coroutines.launch
 
 @Composable
@@ -97,7 +96,7 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
             )
             Spacer(Modifier.height(12.dp))
             if (busy) {
-                InfoRow("CONNECTION", engineState.detail, "Real engine state", accent = Blue, active = true)
+                InfoRow("CONNECTION", engineState.detail, "Real engine state", accent = Blue)
             } else {
                 InfoRow(
                     "DEVICE",
