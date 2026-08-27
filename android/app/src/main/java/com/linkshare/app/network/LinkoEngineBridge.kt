@@ -15,9 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Single real engine boundary used by the production LINKO UI. */
+/** Single connection boundary. UI state is derived only from real control-plane/session results. */
 object LinkoEngineBridge {
-    private var api: LinkoControlPlaneApi? = null
+    private var api: LinkoDeviceControlApi? = null
     private var coordinator: TunnelCoordinator? = null
     private var scope: CoroutineScope? = null
     private var appContext: Context? = null
@@ -30,18 +30,18 @@ object LinkoEngineBridge {
 
     fun configure(context: Context) {
         val app = context.applicationContext
-        val auth = LinkoAuth(app)
         appContext = app
-        api = LinkoControlPlaneApi(LinkoRuntimeConfig.controlPlaneUrl, { auth.currentAccessToken() }, { auth.currentDeviceId() })
+        LinkoAuth(app)
+        api = LinkoDeviceControlApi(app)
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel()
         connectionJob = null
         lastFriendUserId = null
-        publish("idle")
+        publish("idle", "Ready")
     }
 
-    /** Linear path: friend -> provider -> session -> tunnel -> connected. */
+    /** Real linear path: register device -> verify provider -> create session -> wait for approval -> tunnel. */
     fun connectToFriend(friendUserId: String, onState: (String) -> Unit = {}) {
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
@@ -51,67 +51,86 @@ object LinkoEngineBridge {
         connectionJob = engineScope.launch {
             try {
                 publishAndNotify("connecting", onState)
+                control.ensureRegistered()
                 publishAndNotify("resolving_provider", onState)
-                val response = control.providerDeviceForUser(friendUserId)
-                val deviceId = response.optJSONObject("device")?.optString("id")?.takeIf { it.isNotBlank() }
-                    ?: throw LinkoNetworkException("provider_not_available")
+                val provider = control.providerDeviceForUser(friendUserId)
+                if (!provider.online) throw LinkoNetworkException("provider_offline")
                 publishAndNotify("provider_ready", onState)
-                establish(deviceId, onState)
+                val session = control.requestSession(provider.deviceId)
+                publishAndNotify("requesting", onState)
+                awaitApprovedSession(control, session.id, onState)
+                establish(session.id, onState)
             } catch (e: Exception) {
                 publishAndNotify(e.message ?: "connection_failed", onState)
             }
         }
     }
 
-    /** Reconnect uses the same real connection algorithm; it never navigates directly to Connected. */
     fun reconnect(onState: (String) -> Unit = {}) {
         val friendUserId = lastFriendUserId
-        if (friendUserId.isNullOrBlank()) {
-            return publishAndNotify("friend_not_available_for_reconnect", onState)
-        }
+        if (friendUserId.isNullOrBlank()) return publishAndNotify("friend_not_available_for_reconnect", onState)
+        publishAndNotify("reconnecting", onState)
         connectToFriend(friendUserId, onState)
     }
 
-    private suspend fun establish(providerDeviceId: String, onState: (String) -> Unit) {
+    private suspend fun awaitApprovedSession(control: LinkoDeviceControlApi, sessionId: String, onState: (String) -> Unit) {
+        repeat(60) { attempt ->
+            val current = control.session(sessionId)
+            when (current.state) {
+                "approved", "signaling", "connected" -> return
+                "denied" -> throw LinkoNetworkException("connection_request_denied")
+                "expired" -> throw LinkoNetworkException("connection_request_expired")
+                "revoked" -> throw LinkoNetworkException("connection_request_revoked")
+                else -> {
+                    if (attempt > 0 && attempt % 5 == 0) publishAndNotify("waiting_for_provider", onState)
+                    delay(1_000L)
+                }
+            }
+        }
+        throw LinkoNetworkException("provider_approval_timeout")
+    }
+
+    private suspend fun establish(sessionId: String, onState: (String) -> Unit) {
         val control = api ?: throw LinkoNetworkException("engine_not_initialized")
         val tunnel = coordinator ?: throw LinkoNetworkException("engine_not_initialized")
-        if (providerDeviceId.isBlank()) throw LinkoNetworkException("provider_not_available")
-
         publishAndNotify("authenticating", onState)
-        val sessionResult = LinkoAuth.current()?.ensureSession()
-        if (sessionResult != null && !sessionResult.success) {
-            throw LinkoNetworkException(sessionResult.message)
-        }
-        publishAndNotify("requesting", onState)
-        val session = control.requestAccess(providerDeviceId)
+        val sessionAuth = LinkoAuth.current()?.ensureSession()
+        if (sessionAuth != null && !sessionAuth.success) throw LinkoNetworkException(sessionAuth.message)
+        control.transition(sessionId, "signaling")
         publishAndNotify("signaling", onState)
 
-        var tunnelStarted = false
+        var started = false
         repeat(40) { attempt ->
-            if (attempt > 0) publishAndNotify("signaling_retry", onState)
-            delay(1_500L)
-            val config = runCatching { control.tunnelConfig(session.sessionId) }.getOrNull() ?: return@repeat
-            val endpoint = config.optJSONObject("endpoint") ?: return@repeat
-            val host = endpoint.optString("host")
-            val port = endpoint.optInt("port", -1)
-            val key = runCatching { java.util.Base64.getUrlDecoder().decode(config.optString("key")) }.getOrNull()
-            if (host.isBlank() || port !in 1..65535 || key?.size != 32) return@repeat
-
-            publishAndNotify("establishing", onState)
-            tunnel.startVpnTunnel(host, port, session.sessionId, key)
-            tunnelStarted = true
-            publishAndNotify("securing", onState)
-            delay(250L)
-            publishAndNotify("routing", onState)
-            delay(250L)
-            if (tunnelStarted) {
-                publishAndNotify("connected", onState)
+            val current = control.session(sessionId)
+            if (current.state == "denied" || current.state == "expired" || current.state == "revoked") {
+                throw LinkoNetworkException("session_${current.state}")
             }
-            return
+            val config = runCatching { control.tunnelConfig(sessionId) }.getOrNull()
+            if (config != null) {
+                publishAndNotify("establishing", onState)
+                tunnel.startVpnTunnel(config.host, config.port, config.sessionId, config.key)
+                started = true
+                publishAndNotify("securing", onState)
+                publishAndNotify("routing", onState)
+                break
+            }
+            if (attempt > 0) publishAndNotify("signaling_retry", onState)
+            delay(1_000L)
         }
-        if (!tunnelStarted) {
-            publishAndNotify("signaling_timeout", onState)
+        if (!started) throw LinkoNetworkException("tunnel_setup_timeout")
+
+        // The receiver becomes CONNECTED only after the provider has reported the session active.
+        repeat(20) {
+            when (val state = control.session(sessionId).state) {
+                "connected" -> {
+                    publishAndNotify("connected", onState)
+                    return
+                }
+                "denied", "expired", "revoked" -> throw LinkoNetworkException("session_$state")
+            }
+            delay(500L)
         }
+        throw LinkoNetworkException("connection_confirmation_timeout")
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
@@ -119,7 +138,11 @@ object LinkoEngineBridge {
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
         connectionJob = engineScope.launch {
             try {
-                establish(providerDeviceId, onState)
+                val control = api ?: throw LinkoNetworkException("engine_not_initialized")
+                control.ensureRegistered()
+                val session = control.requestSession(providerDeviceId)
+                awaitApprovedSession(control, session.id, onState)
+                establish(session.id, onState)
             } catch (e: Exception) {
                 publishAndNotify(e.message ?: "connection_failed", onState)
             }
@@ -127,13 +150,16 @@ object LinkoEngineBridge {
     }
 
     fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
-        val control = api ?: return onState("engine_not_initialized")
+        val context = appContext ?: return onState("engine_not_initialized")
+        context.startForegroundService(Intent(context, LinkoProviderService::class.java))
         scope?.launch {
-            runCatching { control.getPendingProviderRequests().firstOrNull() }
+            runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
-                    if (request == null) onState("no_pending_request") else runCatching { control.approveRequest(request.id) }
-                        .onSuccess { approvedProviderSessionId = request.id; onState("approved") }
-                        .onFailure { onState(it.message ?: "approval_failed") }
+                    if (request == null) onState("no_pending_request")
+                    else {
+                        approvedProviderSessionId = request.id
+                        onState("request_available")
+                    }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
         } ?: onState("engine_scope_unavailable")
@@ -148,11 +174,13 @@ object LinkoEngineBridge {
     }
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
-        val control = api ?: return onState("engine_not_initialized")
+        val context = appContext ?: return onState("engine_not_initialized")
+        context.startForegroundService(Intent(context, LinkoProviderService::class.java))
         scope?.launch {
-            runCatching { control.getPendingProviderRequests().firstOrNull() }
+            runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
-                    if (request == null) onState("no_pending_request") else runCatching { control.denyRequest(request.id) }
+                    if (request == null) onState("no_pending_request")
+                    else runCatching { api?.transition(request.id, "denied") }
                         .onSuccess { onState("denied") }
                         .onFailure { onState(it.message ?: "decline_failed") }
                 }
@@ -175,10 +203,9 @@ object LinkoEngineBridge {
 
     private fun publish(state: String, detail: String? = null) {
         val normalized = when (state) {
-            "connecting" -> LinkoConnectionPhase.Connecting
+            "connecting", "reconnecting", "waiting_for_provider" -> LinkoConnectionPhase.Connecting
             "authenticating" -> LinkoConnectionPhase.Authenticating
-            "resolving_provider" -> LinkoConnectionPhase.Signaling
-            "provider_ready", "requesting", "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
+            "resolving_provider", "provider_ready", "requesting", "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
             "establishing" -> LinkoConnectionPhase.Establishing
             "securing" -> LinkoConnectionPhase.Securing
             "routing" -> LinkoConnectionPhase.Routing
@@ -188,27 +215,21 @@ object LinkoEngineBridge {
         }
         val message = detail ?: when (state) {
             "connecting" -> "Connecting…"
+            "reconnecting" -> "Recovering the connection…"
+            "waiting_for_provider" -> "Waiting for provider approval…"
             "authenticating" -> "Authenticating your LINKO session…"
             "resolving_provider" -> "Finding your friend's available device…"
             "provider_ready" -> "Provider found. Preparing a secure request…"
-            "requesting" -> "Sending connection request…"
-            "signaling" -> "Signaling…"
-            "signaling_retry" -> "Signaling… retrying"
+            "requesting" -> "Waiting for provider approval…"
+            "signaling" -> "Negotiating the secure session…"
+            "signaling_retry" -> "Negotiating… retrying"
             "establishing" -> "Establishing tunnel…"
             "securing" -> "Securing encrypted transport…"
             "routing" -> "Routing traffic…"
-            "connected" -> "Connected · secure tunnel is active"
-            "signaling_timeout" -> "Connection failed · signaling timed out"
-            "friend_not_available_for_reconnect" -> "Reconnect failed · no friend session is available"
+            "connected" -> "Connected · provider confirmed the active session"
             else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
-        _connection.update {
-            it.copy(
-                phase = normalized,
-                detail = message,
-                error = if (normalized == LinkoConnectionPhase.Failed) message else null,
-            )
-        }
+        _connection.update { it.copy(phase = normalized, detail = message, error = if (normalized == LinkoConnectionPhase.Failed) message else null) }
     }
 }
 
