@@ -89,7 +89,7 @@ class LinkoControlPlaneApi(
     }
 
     suspend fun health(): JSONObject = withContext(Dispatchers.IO) {
-        rpc("linko_control_health", authenticated = false)
+        rpc("linko_control_health")
     }
 
     suspend fun transition(sessionId: String, state: String): JSONObject = withContext(Dispatchers.IO) {
