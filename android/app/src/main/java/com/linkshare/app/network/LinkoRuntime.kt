@@ -12,6 +12,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Cache-first startup state machine. Local state makes the UI resilient; server state remains canonical. */
 class LinkoRuntime(
@@ -41,45 +42,55 @@ class LinkoRuntime(
         )
     }
 
-    val presence = presenceManager.state
+    /** Presence state is lazy so UI composition cannot force network initialization. */
+    val presence by lazy { presenceManager.state }
 
-    suspend fun initialize(): Boolean = initializeMutex.withLock {
-        if (!auth.isSignedIn()) return@withLock true
+    /**
+     * Total startup operation: UI readiness is determined by authentication/identity;
+     * synchronization and presence are independent, recoverable services.
+     */
+    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
+        initializeMutex.withLock {
+            if (!auth.isSignedIn()) return@withLock true
 
-        val currentUserId = auth.currentUserId()
-        if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
+            val currentUserId = auth.currentUserId()
+            if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
 
-        // Cache hit: make the application ready immediately and synchronize in the background.
-        if (cache.hasUsableIdentity() && cache.userId() == currentUserId) {
-            initializedUserId = currentUserId
-            presenceManager.start()
-            scope.launch(Dispatchers.IO) { synchronize(currentUserId!!) }
-            return@withLock true
+            if (cache.hasUsableIdentity() && cache.userId() == currentUserId) {
+                initializedUserId = currentUserId
+                safeStartPresence()
+                scope.launch(Dispatchers.IO) { synchronize(currentUserId!!) }
+                return@withLock true
+            }
+
+            val session = runCatching { auth.ensureSession() }.getOrNull()
+            if (session?.success == false && !auth.isSignedIn()) {
+                Log.e(TAG, "LINKO authentication is no longer valid: ${session.message}")
+                return@withLock false
+            }
+
+            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+                ?: session?.userId?.takeIf { it.isNotBlank() }
+                ?: return@withLock false
+
+            initializedUserId = userId
+            safeStartPresence()
+            scope.launch(Dispatchers.IO) { synchronize(userId) }
+            true
         }
+    }
 
-        // Session refresh is best-effort. A temporary network failure must not block the UI
-        // while a still-valid access token exists.
-        val session = runCatching { auth.ensureSession() }.getOrNull()
-        if (session?.success == false && !auth.isSignedIn()) {
-            Log.e(TAG, "LINKO authentication is no longer valid: ${session.message}")
-            return@withLock false
-        }
-
-        val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-            ?: session?.userId?.takeIf { it.isNotBlank() }
-            ?: return@withLock false
-
-        // First run is also non-blocking: create/use the cache as soon as canonical data arrives.
-        initializedUserId = userId
-        presenceManager.start()
-        scope.launch(Dispatchers.IO) { synchronize(userId) }
-        true
+    private fun safeStartPresence() {
+        runCatching { presenceManager.start() }
+            .onFailure { error -> Log.w(TAG, "Presence startup deferred: ${error.message}", error) }
     }
 
     private suspend fun synchronize(userId: String) {
         runCatching {
             val profile = profileApi.load()
-            cache.saveIdentity(profile.userId, profile.linkoId, profile.username, profile.displayName)
+            if (profile.userId == userId) {
+                cache.saveIdentity(profile.userId, profile.linkoId, profile.username, profile.displayName)
+            }
         }.onFailure { Log.w(TAG, "Profile sync deferred: ${it.message}") }
 
         runCatching { friendApi.getFriends() }
@@ -101,8 +112,8 @@ class LinkoRuntime(
     fun disconnect() { LinkoEngineBridge.disconnect() }
 
     fun stop() {
-        presenceManager.stop()
-        disconnect()
+        runCatching { presenceManager.stop() }
+        runCatching { disconnect() }
         scope.cancel()
     }
 
