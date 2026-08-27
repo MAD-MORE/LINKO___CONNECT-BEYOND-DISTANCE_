@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 object LinkoRealtimeManager {
@@ -43,7 +44,7 @@ object LinkoRealtimeManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
-    private val presenceSnapshot = java.util.concurrent.ConcurrentHashMap<String, LinkoPresence>()
+    private val presenceSnapshot = ConcurrentHashMap<String, LinkoPresence>()
     @Volatile private var foreground = false
     private var client: SupabaseClient? = null
     private var friendChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
@@ -170,6 +171,8 @@ object LinkoRealtimeManager {
     }
 
     fun latestPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
+
+    fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
 
     private fun handleFriendChange(action: PostgresAction) {
         val record = recordToJson(action) ?: return
