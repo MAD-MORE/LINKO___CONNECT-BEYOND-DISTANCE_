@@ -16,6 +16,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/**
+ * Single owner of LINKO startup/runtime lifecycle.
+ *
+ * Startup is deliberately linear and cache-first:
+ * authenticate -> restore local state -> start local runtime -> READY -> synchronize server state.
+ * A network outage must not destroy a valid local session or prevent a previously initialized
+ * account from reopening the app.
+ */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -53,15 +61,64 @@ class LinkoRuntime(
             return@withLock false
         }
 
-        var currentUserId = auth.currentUserId()
-        if (localCache.restoreProfile(auth, currentUserId)) {
-            Log.i(TAG, "Restored cached LINKO profile")
+        var currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+        val cachedStateAvailable = localCache.hasUsableCache(currentUserId)
+
+        // Validate/refresh the session, but never turn a temporary network failure into logout.
+        _startupState.value = LinkoStartupState.RESTORING_SESSION
+        val session = auth.ensureSession()
+        if (!session.success) {
+            val terminalAuthFailure = session.message in setOf(
+                "session_required",
+                "invalid_refresh_token",
+                "refresh_token_not_found",
+            )
+            if (terminalAuthFailure) {
+                auth.signOut()
+                initializedUserId = null
+                LinkoRealtimeManager.stop()
+                _startupState.value = LinkoStartupState.NOT_STARTED
+                return@withLock false
+            }
+
+            // If the network is unavailable but we have a previously authenticated account,
+            // continue with the persisted identity/cache. Do not strand the user at startup.
+            if (!cachedStateAvailable) {
+                _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
+                Log.w(TAG, "Session refresh unavailable and no local cache: ${session.message}")
+                return@withLock false
+            }
         }
 
-        if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId && _startupState.value == LinkoStartupState.READY) {
+        currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+            ?: session.userId?.takeIf { it.isNotBlank() }
+            ?: currentUserId
+
+        if (currentUserId.isNullOrBlank()) {
+            _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
+            Log.e(TAG, "Authenticated session has no user id")
+            return@withLock false
+        }
+
+        val cacheReady = localCache.hasUsableCache(currentUserId)
+        if (cacheReady) {
+            // Cache is the durable restart boundary. Restore it before touching remote APIs.
+            _startupState.value = LinkoStartupState.LOADING_PROFILE
+            val profileRestored = localCache.restoreProfile(auth, currentUserId)
+            val cachedFriends = localCache.readFriends(currentUserId)
+            Log.i(TAG, "Restored local LINKO cache: profile=$profileRestored friends=${cachedFriends.size}")
+
+            _startupState.value = LinkoStartupState.RESTORING_CONNECTION
+            startLocalRuntime()
+            initializedUserId = currentUserId
+            _startupState.value = LinkoStartupState.READY
+
+            // Stale-while-revalidate: READY does not depend on a live server response.
+            scope.launch { synchronizeServerState(currentUserId) }
             return@withLock true
         }
 
+        // First sign-in/device with no cache: build the durable cache from canonical server data.
         var lastError: Throwable? = null
         var attempt = 0
         var initialized = false
@@ -73,23 +130,7 @@ class LinkoRuntime(
             }
 
             try {
-                _startupState.value = LinkoStartupState.RESTORING_SESSION
-                val session = auth.ensureSession()
-                if (!session.success) {
-                    val terminalAuthFailure = session.message in setOf(
-                        "session_required",
-                        "session_refresh_unavailable",
-                        "invalid_refresh_token",
-                        "refresh_token_not_found",
-                    )
-                    if (terminalAuthFailure) auth.signOut()
-                    error(session.message)
-                }
-
-                currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-                    ?: session.userId?.takeIf { it.isNotBlank() }
-                    ?: currentUserId?.takeIf { it.isNotBlank() }
-                    ?: error("auth_user_missing")
+                if (!auth.isSignedIn()) error("session_required")
 
                 _startupState.value = LinkoStartupState.LOADING_PROFILE
                 val profile = profileApi.load()
@@ -97,36 +138,30 @@ class LinkoRuntime(
 
                 _startupState.value = LinkoStartupState.LOADING_FRIENDS
                 val friends = friendApi.getFriends()
-                localCache.saveFriends(currentUserId!!, friends)
+                localCache.saveFriends(currentUserId, friends)
 
                 _startupState.value = LinkoStartupState.RESTORING_CONNECTION
-                LinkoEngineBridge.configure(appContext)
-                LinkoRealtimeManager.stop()
-                LinkoRealtimeManager.start(appContext)
+                startLocalRuntime()
 
                 initializedUserId = currentUserId
                 _startupState.value = LinkoStartupState.READY
                 initialized = true
-                Log.i(TAG, "LINKO bootstrap complete: user=$currentUserId")
+                Log.i(TAG, "LINKO first bootstrap complete: user=$currentUserId")
             } catch (error: Throwable) {
                 lastError = error
                 initializedUserId = null
                 Log.w(TAG, "LINKO bootstrap attempt ${attempt + 1} failed", error)
 
-                val fallbackUserId = currentUserId?.takeIf { it.isNotBlank() }
-                if (auth.isSignedIn() && fallbackUserId != null && localCache.hasUsableCache(fallbackUserId)) {
-                    localCache.restoreProfile(auth, fallbackUserId)
-                    val cachedFriends = localCache.readFriends(fallbackUserId)
-                    initializedUserId = fallbackUserId
+                // A partial bootstrap may have created a usable cache. If so, immediately
+                // switch to the same cache-first recovery path used after process death.
+                if (auth.isSignedIn() && localCache.hasUsableCache(currentUserId)) {
+                    localCache.restoreProfile(auth, currentUserId)
                     _startupState.value = LinkoStartupState.RESTORING_CONNECTION
-                    runCatching { LinkoEngineBridge.configure(appContext) }
-                    runCatching {
-                        LinkoRealtimeManager.stop()
-                        LinkoRealtimeManager.start(appContext)
-                    }.onFailure { realtimeError -> Log.w(TAG, "Realtime unavailable from cache", realtimeError) }
+                    startLocalRuntime()
+                    initializedUserId = currentUserId
                     _startupState.value = LinkoStartupState.READY
                     initialized = true
-                    Log.i(TAG, "LINKO started from local cache: user=$fallbackUserId friends=${cachedFriends.size}")
+                    scope.launch { synchronizeServerState(currentUserId) }
                 }
             }
 
@@ -134,11 +169,38 @@ class LinkoRuntime(
             if (!auth.isSignedIn()) attempt = MAX_BOOTSTRAP_ATTEMPTS
         }
 
-        if (initialized) true else {
-            _startupState.value = if (auth.isSignedIn()) LinkoStartupState.INITIALIZATION_FAILED else LinkoStartupState.NOT_STARTED
+        if (initialized) {
+            true
+        } else {
+            _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
             Log.e(TAG, "LINKO bootstrap failed", lastError)
             false
         }
+    }
+
+    /** Synchronize canonical server state after cached startup without blocking READY. */
+    private suspend fun synchronizeServerState(userId: String) {
+        try {
+            if (!auth.isSignedIn() || auth.currentUserId() != userId) return
+
+            val profile = profileApi.load()
+            localCache.saveProfile(profile)
+
+            val friends = friendApi.getFriends()
+            localCache.saveFriends(userId, friends)
+
+            Log.i(TAG, "LINKO local cache synchronized: user=$userId friends=${friends.size}")
+        } catch (error: Throwable) {
+            // Keep the last known good local state. The next foreground/reconnect cycle can retry.
+            Log.w(TAG, "LINKO cache synchronization deferred", error)
+        }
+    }
+
+    private fun startLocalRuntime() {
+        LinkoEngineBridge.configure(appContext)
+        LinkoRealtimeManager.stop()
+        runCatching { LinkoRealtimeManager.start(appContext) }
+            .onFailure { Log.w(TAG, "Realtime unavailable during local startup", it) }
     }
 
     fun reset() {
@@ -150,7 +212,8 @@ class LinkoRuntime(
     fun start() { scope.launch { initialize() } }
     suspend fun searchFriends(query: String): List<Friend> = friendApi.searchUsers(query)
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
-    suspend fun getFriends(): List<Friend> = runCatching { friendApi.getFriends() }.getOrElse { localCache.readFriends(auth.currentUserId()) }
+    suspend fun getFriends(): List<Friend> = runCatching { friendApi.getFriends() }
+        .getOrElse { localCache.readFriends(auth.currentUserId()) }
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) = LinkoEngineBridge.connect(providerDeviceId, onState)
     fun disconnect() = LinkoEngineBridge.disconnect()
     fun stop() {
