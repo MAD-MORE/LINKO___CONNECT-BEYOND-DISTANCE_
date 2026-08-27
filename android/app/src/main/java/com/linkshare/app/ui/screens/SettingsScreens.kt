@@ -132,6 +132,7 @@ fun AccountProfileScreen(onDone: () -> Unit) {
     val auth = remember { LinkoAuth(context) }
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf(auth.currentDisplayName().orEmpty()) }
+    var username by remember { mutableStateOf(auth.currentUsername() ?: auth.currentDisplayName().orEmpty()) }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var loading by remember { mutableStateOf(true) }
     var saving by remember { mutableStateOf(false) }
@@ -142,8 +143,9 @@ fun AccountProfileScreen(onDone: () -> Unit) {
             withContext(Dispatchers.IO) { LinkoProfileApi(auth::currentAccessToken, auth::currentUserId).load() }
         }.onSuccess { profile ->
             name = profile.displayName
+            username = profile.username ?: profile.displayName
             linkoId = profile.linkoId
-            auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
+            auth.saveProfile(profile.displayName, profile.linkoId, username)
         }.onFailure {
             message = "Could not load your account profile."
         }
@@ -160,6 +162,8 @@ fun AccountProfileScreen(onDone: () -> Unit) {
             Text("ACCOUNT IDENTITY", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
             InfoRow("DISPLAY NAME", if (name.isBlank()) "Loading…" else name, "Used across LINKO", accent = Blue)
+            Spacer(Modifier.height(10.dp))
+            InfoRow("USERNAME", if (username.isBlank()) "Loading…" else "@${username.removePrefix("@")}", "The same username shown when sharing your connection", accent = Green)
             Spacer(Modifier.height(10.dp))
             InfoRow("LINKO ID", if (linkoId.isBlank()) "Loading…" else "@$linkoId", "Use this ID when adding friends", accent = Green)
         }
