@@ -3,6 +3,7 @@ package com.linkshare.app.network
 import android.content.Context
 import android.util.Log
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.auth.LinkoStartupCache
 import com.linkshare.app.model.Friend
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,13 +13,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Owns the deterministic LINKO startup pipeline and real device presence. */
+/** Cache-first startup state machine. Local state makes the UI resilient; server state remains canonical. */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val appContext = context.applicationContext
     private val auth = LinkoAuth(appContext)
+    private val cache = LinkoStartupCache(appContext)
     private val initializeMutex = Mutex()
     private var initializedUserId: String? = null
     private val deviceApi by lazy { LinkoDeviceControlApi(appContext, auth) }
@@ -47,33 +49,50 @@ class LinkoRuntime(
         val currentUserId = auth.currentUserId()
         if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
 
-        runCatching {
-            // 1. Authentication/session
-            val session = auth.ensureSession()
-            if (!session.success) error(session.message)
-            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-                ?: session.userId?.takeIf { it.isNotBlank() }
-                ?: error("auth_user_missing")
-
-            // 2. Canonical account identity
-            profileApi.load()
-
-            // 3. Warm the real authenticated friends path
-            friendApi.getFriends()
-
-            // 4. Register this installation with the real LINKO control plane.
-            deviceApi.ensureRegistered()
-
-            // 5. Presence is separate from initialization: only successful heartbeat registration makes ONLINE.
-            initializedUserId = userId
+        // A previously synchronized identity is sufficient for application readiness.
+        // Network synchronization is deliberately best-effort after the UI can start.
+        val cachedReady = cache.hasUsableIdentity() && cache.userId() == currentUserId
+        if (cachedReady) {
+            initializedUserId = currentUserId
             presenceManager.start()
-        }.onSuccess {
-            Log.i(TAG, "LINKO bootstrap complete: user=${auth.currentUserId()} linkoId=${auth.currentLinkoId()}")
-        }.onFailure { error ->
-            initializedUserId = null
-            presenceManager.stop()
-            Log.e(TAG, "LINKO required bootstrap failed", error)
-        }.isSuccess
+            scope.launch(Dispatchers.IO) { synchronize(currentUserId!!) }
+            return@withLock true
+        }
+
+        // First run: establish canonical identity. If the session refresh is temporarily
+        // unavailable but the access token is still present, continue and let API calls retry.
+        val session = runCatching { auth.ensureSession() }.getOrNull()
+        if (session?.success == false && !auth.isSignedIn()) {
+            Log.e(TAG, "LINKO authentication is no longer valid: ${session.message}")
+            return@withLock false
+        }
+
+        val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+            ?: session?.userId?.takeIf { it.isNotBlank() }
+            ?: return@withLock false
+
+        // First synchronization is attempted, but individual services cannot crash startup.
+        synchronize(userId)
+        initializedUserId = userId
+        presenceManager.start()
+        true
+    }
+
+    private suspend fun synchronize(userId: String) {
+        runCatching {
+            val profile = profileApi.load()
+            cache.saveIdentity(profile.userId, profile.linkoId, profile.username, profile.displayName)
+        }.onFailure { Log.w(TAG, "Profile sync deferred: ${it.message}") }
+
+        runCatching { friendApi.getFriends() }
+            .onFailure { Log.w(TAG, "Friends sync deferred: ${it.message}") }
+
+        runCatching {
+            val registration = deviceApi.ensureRegistered()
+            cache.saveDeviceId(registration.deviceId)
+        }.onFailure { Log.w(TAG, "Device registration deferred: ${it.message}") }
+
+        Log.i(TAG, "LINKO background synchronization complete for user=$userId")
     }
 
     fun start() { scope.launch { initialize() } }
