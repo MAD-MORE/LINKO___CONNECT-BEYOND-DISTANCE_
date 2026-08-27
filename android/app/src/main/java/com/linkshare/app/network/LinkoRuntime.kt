@@ -61,10 +61,12 @@ class LinkoRuntime(
             return@withLock false
         }
 
+        // The access token remains the authentication authority. The cached user id is only
+        // restored as local account context so cached profile/friends can survive process death.
         var currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-        val cachedStateAvailable = localCache.hasUsableCache(currentUserId)
+            ?: localCache.restoreIdentity(auth)?.takeIf { it.isNotBlank() }
+        var cachedStateAvailable = localCache.hasUsableCache(currentUserId)
 
-        // Validate/refresh the session, but never turn a temporary network failure into logout.
         _startupState.value = LinkoStartupState.RESTORING_SESSION
         val session = auth.ensureSession()
         if (!session.success) {
@@ -81,8 +83,8 @@ class LinkoRuntime(
                 return@withLock false
             }
 
-            // If the network is unavailable but we have a previously authenticated account,
-            // continue with the persisted identity/cache. Do not strand the user at startup.
+            // Temporary network/session-refresh failure is recoverable when a durable cache
+            // exists. Do not log the user out or block reopening in this case.
             if (!cachedStateAvailable) {
                 _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
                 Log.w(TAG, "Session refresh unavailable and no local cache: ${session.message}")
@@ -93,6 +95,7 @@ class LinkoRuntime(
         currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
             ?: session.userId?.takeIf { it.isNotBlank() }
             ?: currentUserId
+            ?: localCache.restoreIdentity(auth)?.takeIf { it.isNotBlank() }
 
         if (currentUserId.isNullOrBlank()) {
             _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
@@ -100,9 +103,9 @@ class LinkoRuntime(
             return@withLock false
         }
 
-        val cacheReady = localCache.hasUsableCache(currentUserId)
-        if (cacheReady) {
-            // Cache is the durable restart boundary. Restore it before touching remote APIs.
+        cachedStateAvailable = localCache.hasUsableCache(currentUserId)
+        if (cachedStateAvailable) {
+            // Durable restart boundary: restore local account context first and become READY.
             _startupState.value = LinkoStartupState.LOADING_PROFILE
             val profileRestored = localCache.restoreProfile(auth, currentUserId)
             val cachedFriends = localCache.readFriends(currentUserId)
@@ -113,12 +116,13 @@ class LinkoRuntime(
             initializedUserId = currentUserId
             _startupState.value = LinkoStartupState.READY
 
-            // Stale-while-revalidate: READY does not depend on a live server response.
+            // Stale-while-revalidate: server synchronization updates the cache in the background
+            // and never takes READY away because the network is temporarily unavailable.
             scope.launch { synchronizeServerState(currentUserId) }
             return@withLock true
         }
 
-        // First sign-in/device with no cache: build the durable cache from canonical server data.
+        // First sign-in/device with no complete cache: build the durable cache from canonical data.
         var lastError: Throwable? = null
         var attempt = 0
         var initialized = false
@@ -152,8 +156,8 @@ class LinkoRuntime(
                 initializedUserId = null
                 Log.w(TAG, "LINKO bootstrap attempt ${attempt + 1} failed", error)
 
-                // A partial bootstrap may have created a usable cache. If so, immediately
-                // switch to the same cache-first recovery path used after process death.
+                // A partial bootstrap may have created a usable cache. Switch immediately to
+                // the same cache-first recovery path used after process death.
                 if (auth.isSignedIn() && localCache.hasUsableCache(currentUserId)) {
                     localCache.restoreProfile(auth, currentUserId)
                     _startupState.value = LinkoStartupState.RESTORING_CONNECTION
