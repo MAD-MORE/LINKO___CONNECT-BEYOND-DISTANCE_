@@ -10,22 +10,22 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+/**
+ * Owns the deterministic LINKO startup pipeline.
+ *
+ * Startup only blocks on data required to render the authenticated app:
+ * session -> profile -> friends. Connection-control registration is deliberately
+ * deferred until a connection is requested because it is not required to open Home.
+ */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val appContext = context.applicationContext
     private val auth = LinkoAuth(appContext)
-    private val api by lazy {
-        LinkoControlPlaneApi(
-            baseUrl = LinkoRuntimeConfig.controlPlaneUrl,
-            accessTokenProvider = { auth.currentAccessToken() },
-            deviceIdProvider = { auth.currentDeviceId() },
-        )
-    }
     private val friendApi by lazy {
         LinkoControlPlaneApi(
-            baseUrl = "https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-friends",
+            baseUrl = "${com.linkshare.app.BuildConfig.LINKO_SUPABASE_URL}/functions/v1/linko-friends",
             accessTokenProvider = { auth.currentAccessToken() },
         )
     }
@@ -36,31 +36,35 @@ class LinkoRuntime(
             refreshProvider = { auth.refreshSession().success },
         )
     }
-    private val deviceRegistrar by lazy { LinkoDeviceRegistrar(LinkoRuntimeConfig.controlPlaneUrl, auth) }
 
     /**
-     * Complete the authenticated bootstrap before the main LINKO experience is opened.
-     * Profile identity is loaded here so screens never have to guess which username/ID to show.
+     * Linear bootstrap:
+     * 1) restore/refresh the Supabase session
+     * 2) load and validate the canonical account profile
+     * 3) preload the friends snapshot used immediately by the app
+     *
+     * No connection RPC, device registration, or control-plane health probe is used here.
+     * Those are connection capabilities and must not prevent an authenticated user from
+     * entering the app when the control-plane service is unavailable.
      */
     suspend fun initialize(): Boolean {
         if (!auth.isSignedIn()) return true
-        if (!LinkoRuntimeConfig.isConfigured()) {
-            Log.w(TAG, "LINKO control plane is not configured; APK is offline-only")
-            return false
-        }
+
         return runCatching {
-            auth.ensureSession().also { result ->
-                if (!result.success) error(result.message)
-            }
+            val session = auth.ensureSession()
+            if (!session.success) error(session.message)
+
             profileApi.load()
-            if (!auth.hasRegisteredDevice()) {
-                check(deviceRegistrar.ensureRegistered()) { "device_registration_failed" }
-            }
-            api.health()
-        }.onSuccess { health ->
-            Log.i(TAG, "LINKO bootstrap complete: ${health.optString("status")}; device=${auth.currentDeviceId()}")
+
+            // Warm the authenticated friend/request path before Home is shown.
+            friendApi.getFriends()
+        }.onSuccess {
+            Log.i(
+                TAG,
+                "LINKO bootstrap complete: user=${auth.currentUserId()} linkoId=${auth.currentLinkoId()}",
+            )
         }.onFailure { error ->
-            Log.e(TAG, "LINKO runtime bootstrap failed", error)
+            Log.e(TAG, "LINKO required bootstrap failed", error)
         }.isSuccess
     }
 
@@ -86,5 +90,7 @@ class LinkoRuntime(
         scope.cancel()
     }
 
-    companion object { private const val TAG = "LINKO_RUNTIME" }
+    companion object {
+        private const val TAG = "LINKO_RUNTIME"
+    }
 }
