@@ -2,12 +2,14 @@ package com.linkshare.app.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.linkshare.app.data.LinkoAppCache
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 class LinkoAuth(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("linko_auth", Context.MODE_PRIVATE)
+    private val appCache = LinkoAppCache(context)
 
     init { latest = this }
 
@@ -20,9 +22,19 @@ class LinkoAuth(context: Context) {
 
     fun signIn(email: String, password: String): AuthResult {
         validate(email, password)
+        val previousUserId = currentUserId()
         val result = request("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim().lowercase()).put("password", password), saveTokens = true)
         if (!result.success) return result
-        prefs.edit().remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_USERNAME).remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
+
+        val newUserId = result.userId ?: currentUserId()
+        if (!previousUserId.isNullOrBlank() && !newUserId.isNullOrBlank() && previousUserId != newUserId) {
+            appCache.clearForUser(previousUserId)
+            prefs.edit().remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_USERNAME).apply()
+        }
+
+        // Device sessions are installation-scoped credentials. Re-register after authentication.
+        // User profile cache is intentionally preserved for the same account until fresh data arrives.
+        prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply()
         refreshAccountIdentity()
         return AuthResult(true, "authenticated", false, result.userId, result.profileJson)
     }
@@ -37,7 +49,17 @@ class LinkoAuth(context: Context) {
     fun currentDisplayName(): String? = prefs.getString(KEY_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
     fun currentLinkoId(): String? = prefs.getString(KEY_LINKO_ID, null)?.takeIf { it.isNotBlank() }
     fun currentUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
-    fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
+    fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) {
+        prefs.edit().apply {
+            displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }
+            linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }
+            username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }
+            apply()
+        }
+        currentUserId()?.takeIf { it.isNotBlank() }?.let { userId ->
+            appCache.saveProfile(userId, currentDisplayName(), currentLinkoId(), currentUsername())
+        }
+    }
 
     fun refreshSession(): AuthResult {
         val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
@@ -58,13 +80,20 @@ class LinkoAuth(context: Context) {
     fun refreshAccountIdentity(): AuthResult {
         val token = currentAccessToken() ?: return AuthResult(false, "session_required", true)
         return request("/auth/v1/user", "GET", JSONObject(), token, false).also { result ->
-            if (result.success) { result.userId?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }; val name = result.profileJson?.optJSONObject("user_metadata")?.optString("display_name")?.trim().takeIf { !it.isNullOrBlank() }; if (name != null) saveProfile(name, null, null) }
+            if (result.success) {
+                result.userId?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
+                val name = result.profileJson?.optJSONObject("user_metadata")?.optString("display_name")?.trim().takeIf { !it.isNullOrBlank() }
+                if (name != null) saveProfile(name, null, null)
+            }
         }
     }
 
     fun saveLinkoSession(deviceId: String, linkoToken: String, userId: String?) { prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply(); userId?.takeIf { it.isNotBlank() }?.let { prefs.edit().putString(KEY_USER_ID, it).apply() } }
     fun clearLinkoSession() { prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply() }
-    fun signOut() { prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_USER_ID).remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_USERNAME).apply() }
+    fun signOut() {
+        appCache.clearForUser(currentUserId())
+        prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_USER_ID).remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_USERNAME).apply()
+    }
 
     suspend fun verifySignupOtp(email: String, code: String): AuthResult = AuthResult(false, "verification_disabled")
     suspend fun sendSignupOtp(email: String): AuthResult = AuthResult(false, "verification_disabled")
