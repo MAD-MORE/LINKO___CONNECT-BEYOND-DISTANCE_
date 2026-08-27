@@ -59,7 +59,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
             bootstrapFailed = false
         } else {
             bootstrapping = true
-            bootstrapFailed = !runtime.initialize()
+            val initialized = withContext(Dispatchers.IO) {
+                runCatching { runtime.initialize() }.getOrDefault(false)
+            }
+            bootstrapFailed = !initialized
             bootstrapping = false
         }
     }
@@ -82,7 +85,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                             bootstrapping = true
                             bootstrapFailed = false
                             scope.launch {
-                                val initialized = withContext(Dispatchers.IO) { runtime.initialize() }
+                                val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(false) }
                                 bootstrapFailed = !initialized
                                 bootstrapping = false
                                 if (initialized) nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
