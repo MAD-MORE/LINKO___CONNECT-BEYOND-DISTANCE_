@@ -26,12 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 object LinkoRealtimeManager {
@@ -45,6 +43,7 @@ object LinkoRealtimeManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
+    private val presenceSnapshot = ConcurrentHashMap<String, LinkoPresence>()
     @Volatile private var foreground = false
     private var client: SupabaseClient? = null
     private var friendChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
@@ -52,6 +51,10 @@ object LinkoRealtimeManager {
     private var presenceChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
     private var auth: LinkoAuth? = null
     private var appContext: Context? = null
+
+    fun currentPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
+
+    fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
 
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
@@ -99,6 +102,7 @@ object LinkoRealtimeManager {
             friendChannel = null
             sessionChannel = null
             client = null
+            presenceSnapshot.clear()
         }
     }
 
@@ -140,6 +144,7 @@ object LinkoRealtimeManager {
         channel.presenceDataFlow<LinkoPresence>()
             .onEach { states ->
                 states.forEach { presence ->
+                    presenceSnapshot[presence.userId] = presence
                     _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(presence))
                 }
             }
@@ -149,7 +154,10 @@ object LinkoRealtimeManager {
         val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
         val deviceId = auth?.currentDeviceId().orEmpty()
         if (!currentUserId.isNullOrBlank()) {
-            channel.track(LinkoPresence(currentUserId, deviceId, "online", true))
+            val ownPresence = LinkoPresence(currentUserId, deviceId, "online", true)
+            presenceSnapshot[currentUserId] = ownPresence
+            channel.track(ownPresence)
+            _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(ownPresence))
         }
     }
 
