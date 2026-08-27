@@ -22,6 +22,7 @@ class LinkoRuntime(
 ) {
     private val appContext = context.applicationContext
     private val auth = LinkoAuth(appContext)
+    private val localCache = LinkoLocalCache(appContext)
     private val initializeMutex = Mutex()
     private var initializedUserId: String? = null
 
@@ -52,7 +53,11 @@ class LinkoRuntime(
             return@withLock false
         }
 
-        val currentUserId = auth.currentUserId()
+        var currentUserId = auth.currentUserId()
+        if (localCache.restoreProfile(auth, currentUserId)) {
+            Log.i(TAG, "Restored cached LINKO profile")
+        }
+
         if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId && _startupState.value == LinkoStartupState.READY) {
             return@withLock true
         }
@@ -81,46 +86,58 @@ class LinkoRuntime(
                     error(session.message)
                 }
 
-                val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+                currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
                     ?: session.userId?.takeIf { it.isNotBlank() }
+                    ?: currentUserId?.takeIf { it.isNotBlank() }
                     ?: error("auth_user_missing")
 
                 _startupState.value = LinkoStartupState.LOADING_PROFILE
-                profileApi.load()
+                val profile = profileApi.load()
+                localCache.saveProfile(profile)
 
                 _startupState.value = LinkoStartupState.LOADING_FRIENDS
-                friendApi.getFriends()
+                val friends = friendApi.getFriends()
+                localCache.saveFriends(currentUserId!!, friends)
 
                 _startupState.value = LinkoStartupState.RESTORING_CONNECTION
                 LinkoEngineBridge.configure(appContext)
                 LinkoRealtimeManager.stop()
                 LinkoRealtimeManager.start(appContext)
 
-                initializedUserId = userId
+                initializedUserId = currentUserId
                 _startupState.value = LinkoStartupState.READY
                 initialized = true
-                Log.i(TAG, "LINKO bootstrap complete: user=$userId linkoId=${auth.currentLinkoId()}")
+                Log.i(TAG, "LINKO bootstrap complete: user=$currentUserId")
             } catch (error: Throwable) {
                 lastError = error
                 initializedUserId = null
                 Log.w(TAG, "LINKO bootstrap attempt ${attempt + 1} failed", error)
+
+                val fallbackUserId = currentUserId?.takeIf { it.isNotBlank() }
+                if (fallbackUserId != null && localCache.hasUsableCache(fallbackUserId)) {
+                    localCache.restoreProfile(auth, fallbackUserId)
+                    val cachedFriends = localCache.readFriends(fallbackUserId)
+                    if (cachedFriends.isNotEmpty()) {
+                        initializedUserId = fallbackUserId
+                        _startupState.value = LinkoStartupState.RESTORING_CONNECTION
+                        runCatching { LinkoEngineBridge.configure(appContext) }
+                        runCatching {
+                            LinkoRealtimeManager.stop()
+                            LinkoRealtimeManager.start(appContext)
+                        }.onFailure { realtimeError -> Log.w(TAG, "Realtime unavailable from cache", realtimeError) }
+                        _startupState.value = LinkoStartupState.READY
+                        initialized = true
+                    }
+                }
             }
 
             attempt += 1
-            if (!auth.isSignedIn()) {
-                attempt = MAX_BOOTSTRAP_ATTEMPTS
-            }
+            if (!auth.isSignedIn()) attempt = MAX_BOOTSTRAP_ATTEMPTS
         }
 
-        if (initialized) {
-            true
-        } else {
-            _startupState.value = if (auth.isSignedIn()) {
-                LinkoStartupState.INITIALIZATION_FAILED
-            } else {
-                LinkoStartupState.NOT_STARTED
-            }
-            Log.e(TAG, "LINKO required bootstrap failed", lastError)
+        if (initialized) true else {
+            _startupState.value = if (auth.isSignedIn()) LinkoStartupState.INITIALIZATION_FAILED else LinkoStartupState.NOT_STARTED
+            Log.e(TAG, "LINKO bootstrap failed", lastError)
             false
         }
     }
@@ -134,7 +151,7 @@ class LinkoRuntime(
     fun start() { scope.launch { initialize() } }
     suspend fun searchFriends(query: String): List<Friend> = friendApi.searchUsers(query)
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
-    suspend fun getFriends(): List<Friend> = friendApi.getFriends()
+    suspend fun getFriends(): List<Friend> = runCatching { friendApi.getFriends() }.getOrElse { localCache.readFriends(auth.currentUserId()) }
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) = LinkoEngineBridge.connect(providerDeviceId, onState)
     fun disconnect() = LinkoEngineBridge.disconnect()
     fun stop() {
