@@ -20,9 +20,8 @@ import kotlinx.coroutines.sync.withLock
  * Single owner of LINKO startup/runtime lifecycle.
  *
  * Startup is deliberately linear and cache-first:
- * authenticate -> restore local state -> start local runtime -> READY -> synchronize server state.
- * A network outage must not destroy a valid local session or prevent a previously initialized
- * account from reopening the app.
+ * restore authenticated identity -> validate session -> restore local state -> READY
+ * -> synchronize canonical server state in the background.
  */
 class LinkoRuntime(
     context: Context,
@@ -48,7 +47,7 @@ class LinkoRuntime(
     private val profileApi by lazy {
         LinkoProfileApi(
             accessTokenProvider = { auth.currentAccessToken() },
-            userIdProvider = { auth.currentUserId() },
+            userIdProvider = { auth.currentUserId() ?: localCache.cachedUserId() },
             refreshProvider = { auth.refreshSession().success },
         )
     }
@@ -61,11 +60,15 @@ class LinkoRuntime(
             return@withLock false
         }
 
-        // The access token remains the authentication authority. The cached user id is only
-        // restored as local account context so cached profile/friends can survive process death.
+        // Android may recreate the process while app-private preferences survive.
+        // Restore only the non-secret identity context; the access token remains the authority.
         var currentUserId = auth.currentUserId()?.takeIf { it.isNotBlank() }
             ?: localCache.restoreIdentity(auth)?.takeIf { it.isNotBlank() }
         var cachedStateAvailable = localCache.hasUsableCache(currentUserId)
+
+        if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId && _startupState.value == LinkoStartupState.READY) {
+            return@withLock true
+        }
 
         _startupState.value = LinkoStartupState.RESTORING_SESSION
         val session = auth.ensureSession()
@@ -83,8 +86,7 @@ class LinkoRuntime(
                 return@withLock false
             }
 
-            // Temporary network/session-refresh failure is recoverable when a durable cache
-            // exists. Do not log the user out or block reopening in this case.
+            // Network/temporary refresh failures are recoverable from durable local state.
             if (!cachedStateAvailable) {
                 _startupState.value = LinkoStartupState.INITIALIZATION_FAILED
                 Log.w(TAG, "Session refresh unavailable and no local cache: ${session.message}")
@@ -105,7 +107,6 @@ class LinkoRuntime(
 
         cachedStateAvailable = localCache.hasUsableCache(currentUserId)
         if (cachedStateAvailable) {
-            // Durable restart boundary: restore local account context first and become READY.
             _startupState.value = LinkoStartupState.LOADING_PROFILE
             val profileRestored = localCache.restoreProfile(auth, currentUserId)
             val cachedFriends = localCache.readFriends(currentUserId)
@@ -116,13 +117,12 @@ class LinkoRuntime(
             initializedUserId = currentUserId
             _startupState.value = LinkoStartupState.READY
 
-            // Stale-while-revalidate: server synchronization updates the cache in the background
-            // and never takes READY away because the network is temporarily unavailable.
+            // Stale-while-revalidate: cached state makes startup independent of network timing.
             scope.launch { synchronizeServerState(currentUserId) }
             return@withLock true
         }
 
-        // First sign-in/device with no complete cache: build the durable cache from canonical data.
+        // First sign-in/device with no cache: build the durable cache from canonical server data.
         var lastError: Throwable? = null
         var attempt = 0
         var initialized = false
@@ -156,8 +156,7 @@ class LinkoRuntime(
                 initializedUserId = null
                 Log.w(TAG, "LINKO bootstrap attempt ${attempt + 1} failed", error)
 
-                // A partial bootstrap may have created a usable cache. Switch immediately to
-                // the same cache-first recovery path used after process death.
+                // A profile-only partial cache is sufficient to reopen LINKO; friends synchronize later.
                 if (auth.isSignedIn() && localCache.hasUsableCache(currentUserId)) {
                     localCache.restoreProfile(auth, currentUserId)
                     _startupState.value = LinkoStartupState.RESTORING_CONNECTION
@@ -185,14 +184,15 @@ class LinkoRuntime(
     /** Synchronize canonical server state after cached startup without blocking READY. */
     private suspend fun synchronizeServerState(userId: String) {
         try {
-            if (!auth.isSignedIn() || auth.currentUserId() != userId) return
+            if (!auth.isSignedIn()) return
+            val activeUserId = auth.currentUserId()?.takeIf { it.isNotBlank() } ?: localCache.cachedUserId()
+            if (activeUserId != userId) return
 
             val profile = profileApi.load()
             localCache.saveProfile(profile)
 
             val friends = friendApi.getFriends()
             localCache.saveFriends(userId, friends)
-
             Log.i(TAG, "LINKO local cache synchronized: user=$userId friends=${friends.size}")
         } catch (error: Throwable) {
             // Keep the last known good local state. The next foreground/reconnect cycle can retry.
@@ -217,7 +217,7 @@ class LinkoRuntime(
     suspend fun searchFriends(query: String): List<Friend> = friendApi.searchUsers(query)
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
     suspend fun getFriends(): List<Friend> = runCatching { friendApi.getFriends() }
-        .getOrElse { localCache.readFriends(auth.currentUserId()) }
+        .getOrElse { localCache.readFriends(auth.currentUserId() ?: localCache.cachedUserId()) }
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) = LinkoEngineBridge.connect(providerDeviceId, onState)
     fun disconnect() = LinkoEngineBridge.disconnect()
     fun stop() {
