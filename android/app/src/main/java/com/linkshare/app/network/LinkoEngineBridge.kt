@@ -23,6 +23,7 @@ object LinkoEngineBridge {
     private var appContext: Context? = null
     private var connectionJob: Job? = null
     private var approvedProviderSessionId: String? = null
+    private var lastFriendUserId: String? = null
 
     private val _connection = MutableStateFlow(LinkoEngineConnectionState())
     val connection: StateFlow<LinkoEngineConnectionState> = _connection.asStateFlow()
@@ -36,60 +37,89 @@ object LinkoEngineBridge {
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel()
         connectionJob = null
+        lastFriendUserId = null
         publish("idle")
     }
 
+    /** Linear path: friend -> provider -> session -> tunnel -> connected. */
     fun connectToFriend(friendUserId: String, onState: (String) -> Unit = {}) {
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
+        lastFriendUserId = friendUserId
         connectionJob?.cancel()
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
         connectionJob = engineScope.launch {
-            runCatching {
+            try {
                 publishAndNotify("connecting", onState)
                 publishAndNotify("resolving_provider", onState)
                 val response = control.providerDeviceForUser(friendUserId)
                 val deviceId = response.optJSONObject("device")?.optString("id")?.takeIf { it.isNotBlank() }
                     ?: throw LinkoNetworkException("provider_not_available")
                 publishAndNotify("provider_ready", onState)
-                connect(deviceId, onState)
-            }.onFailure { publishAndNotify(it.message ?: "provider_resolution_failed", onState) }
+                establish(deviceId, onState)
+            } catch (e: Exception) {
+                publishAndNotify(e.message ?: "connection_failed", onState)
+            }
+        }
+    }
+
+    /** Reconnect uses the same real connection algorithm; it never navigates directly to Connected. */
+    fun reconnect(onState: (String) -> Unit = {}) {
+        val friendUserId = lastFriendUserId
+        if (friendUserId.isNullOrBlank()) {
+            return publishAndNotify("friend_not_available_for_reconnect", onState)
+        }
+        connectToFriend(friendUserId, onState)
+    }
+
+    private suspend fun establish(providerDeviceId: String, onState: (String) -> Unit) {
+        val control = api ?: throw LinkoNetworkException("engine_not_initialized")
+        val tunnel = coordinator ?: throw LinkoNetworkException("engine_not_initialized")
+        if (providerDeviceId.isBlank()) throw LinkoNetworkException("provider_not_available")
+
+        publishAndNotify("authenticating", onState)
+        val sessionResult = LinkoAuth.current()?.ensureSession()
+        if (sessionResult != null && !sessionResult.success) {
+            throw LinkoNetworkException(sessionResult.message)
+        }
+        publishAndNotify("requesting", onState)
+        val session = control.requestAccess(providerDeviceId)
+        publishAndNotify("signaling", onState)
+
+        var tunnelStarted = false
+        repeat(40) { attempt ->
+            if (attempt > 0) publishAndNotify("signaling_retry", onState)
+            delay(1_500L)
+            val config = runCatching { control.tunnelConfig(session.sessionId) }.getOrNull() ?: return@repeat
+            val endpoint = config.optJSONObject("endpoint") ?: return@repeat
+            val host = endpoint.optString("host")
+            val port = endpoint.optInt("port", -1)
+            val key = runCatching { java.util.Base64.getUrlDecoder().decode(config.optString("key")) }.getOrNull()
+            if (host.isBlank() || port !in 1..65535 || key?.size != 32) return@repeat
+
+            publishAndNotify("establishing", onState)
+            tunnel.startVpnTunnel(host, port, session.sessionId, key)
+            tunnelStarted = true
+            publishAndNotify("securing", onState)
+            delay(250L)
+            publishAndNotify("routing", onState)
+            delay(250L)
+            if (tunnelStarted) {
+                publishAndNotify("connected", onState)
+            }
+            return
+        }
+        if (!tunnelStarted) {
+            publishAndNotify("signaling_timeout", onState)
         }
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
-        val control = api ?: return publishAndNotify("engine_not_initialized", onState)
-        val tunnel = coordinator ?: return publishAndNotify("engine_not_initialized", onState)
-        if (providerDeviceId.isBlank()) return publishAndNotify("provider_not_available", onState)
         connectionJob?.cancel()
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
         connectionJob = engineScope.launch {
             try {
-                publishAndNotify("authenticating", onState)
-                val auth = LinkoAuth.current()
-                auth?.ensureSession()
-                publishAndNotify("requesting", onState)
-                val session = control.requestAccess(providerDeviceId)
-                publishAndNotify("signaling", onState)
-                repeat(40) { attempt ->
-                    if (attempt > 0) publishAndNotify("signaling_retry", onState)
-                    delay(1_500L)
-                    val config = runCatching { control.tunnelConfig(session.sessionId) }.getOrNull() ?: return@repeat
-                    val endpoint = config.optJSONObject("endpoint") ?: return@repeat
-                    val host = endpoint.optString("host")
-                    val port = endpoint.optInt("port", -1)
-                    val key = runCatching { java.util.Base64.getUrlDecoder().decode(config.optString("key")) }.getOrNull()
-                    if (host.isBlank() || port !in 1..65535 || key?.size != 32) return@repeat
-                    publishAndNotify("establishing", onState)
-                    tunnel.startVpnTunnel(host, port, session.sessionId, key)
-                    publishAndNotify("securing", onState)
-                    delay(250L)
-                    publishAndNotify("routing", onState)
-                    delay(250L)
-                    publishAndNotify("connected", onState)
-                    return@launch
-                }
-                publishAndNotify("signaling_timeout", onState)
+                establish(providerDeviceId, onState)
             } catch (e: Exception) {
                 publishAndNotify(e.message ?: "connection_failed", onState)
             }
@@ -134,6 +164,7 @@ object LinkoEngineBridge {
         connectionJob?.cancel()
         coordinator?.stopVpnTunnel()
         connectionJob = null
+        lastFriendUserId = null
         publish("idle", "Disconnected · tunnel closed")
     }
 
@@ -167,7 +198,8 @@ object LinkoEngineBridge {
             "securing" -> "Securing encrypted transport…"
             "routing" -> "Routing traffic…"
             "connected" -> "Connected · secure tunnel is active"
-            "signaling_timeout" -> "Signaling timeout"
+            "signaling_timeout" -> "Connection failed · signaling timed out"
+            "friend_not_available_for_reconnect" -> "Reconnect failed · no friend session is available"
             else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
         _connection.update {
