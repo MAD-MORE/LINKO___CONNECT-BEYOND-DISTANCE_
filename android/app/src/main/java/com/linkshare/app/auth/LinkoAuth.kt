@@ -27,7 +27,9 @@ class LinkoAuth(context: Context) {
         return AuthResult(true, "authenticated", false, result.userId, result.profileJson)
     }
 
-    fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
+    /** A persisted refresh token is sufficient to begin startup after Android recreates the process. */
+    fun hasPersistedSession(): Boolean = !currentAccessToken().isNullOrBlank() || !prefs.getString(KEY_REFRESH_TOKEN, null).isNullOrBlank()
+    fun isSignedIn(): Boolean = hasPersistedSession()
     fun currentAccessToken(): String? = prefs.getString(KEY_ACCESS_TOKEN, null)
     fun currentUserId(): String? = prefs.getString(KEY_USER_ID, null)
     fun pendingVerificationEmail(): String? = null
@@ -37,9 +39,9 @@ class LinkoAuth(context: Context) {
     fun currentDisplayName(): String? = prefs.getString(KEY_DISPLAY_NAME, null)?.takeIf { it.isNotBlank() }
     fun currentLinkoId(): String? = prefs.getString(KEY_LINKO_ID, null)?.takeIf { it.isNotBlank() }
     fun currentUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
-    fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
+    fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@").takeIf { !it.isNullOrBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
 
-    /** Restore only the cached account identity; the access token remains the authentication authority. */
+    /** Restore only the cached account identity; credentials remain the authentication authority. */
     fun restoreCachedUserId(userId: String?) {
         userId?.trim()?.takeIf { it.isNotBlank() }?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
     }
@@ -55,14 +57,21 @@ class LinkoAuth(context: Context) {
     }
 
     /**
-     * A persisted access token is enough to bootstrap the process when no refresh token was stored.
-     * We do not force a sign-out merely because refresh-token rotation is unavailable; the API calls
-     * remain authoritative and will refresh on a real 401 when a refresh token exists.
+     * Restore from persisted credentials. A transient refresh failure does not invalidate a
+     * still-present access token; explicit invalid-refresh responses remain terminal.
      */
     fun ensureSession(): AuthResult {
-        if (!isSignedIn()) return AuthResult(false, "session_required", true)
-        val refresh = prefs.getString(KEY_REFRESH_TOKEN, null)
-        return if (refresh.isNullOrBlank()) AuthResult(true, "session_ready") else refreshSession()
+        val accessToken = currentAccessToken()?.takeIf { it.isNotBlank() }
+        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
+        if (accessToken == null && refreshToken == null) return AuthResult(false, "session_required", true)
+        if (refreshToken == null) return AuthResult(true, "session_ready")
+
+        val refresh = refreshSession()
+        if (refresh.success) return refresh
+
+        val terminal = refresh.message in setOf("invalid_refresh_token", "refresh_token_not_found")
+        if (!terminal && currentAccessToken()?.isNullOrBlank() == false) return AuthResult(true, "session_ready_offline")
+        return refresh
     }
 
     fun refreshAccountIdentity(): AuthResult {
