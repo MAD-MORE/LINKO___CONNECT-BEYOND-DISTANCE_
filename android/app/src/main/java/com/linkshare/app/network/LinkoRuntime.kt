@@ -49,18 +49,16 @@ class LinkoRuntime(
         val currentUserId = auth.currentUserId()
         if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
 
-        // A previously synchronized identity is sufficient for application readiness.
-        // Network synchronization is deliberately best-effort after the UI can start.
-        val cachedReady = cache.hasUsableIdentity() && cache.userId() == currentUserId
-        if (cachedReady) {
+        // Cache hit: make the application ready immediately and synchronize in the background.
+        if (cache.hasUsableIdentity() && cache.userId() == currentUserId) {
             initializedUserId = currentUserId
             presenceManager.start()
             scope.launch(Dispatchers.IO) { synchronize(currentUserId!!) }
             return@withLock true
         }
 
-        // First run: establish canonical identity. If the session refresh is temporarily
-        // unavailable but the access token is still present, continue and let API calls retry.
+        // Session refresh is best-effort. A temporary network failure must not block the UI
+        // while a still-valid access token exists.
         val session = runCatching { auth.ensureSession() }.getOrNull()
         if (session?.success == false && !auth.isSignedIn()) {
             Log.e(TAG, "LINKO authentication is no longer valid: ${session.message}")
@@ -71,10 +69,10 @@ class LinkoRuntime(
             ?: session?.userId?.takeIf { it.isNotBlank() }
             ?: return@withLock false
 
-        // First synchronization is attempted, but individual services cannot crash startup.
-        synchronize(userId)
+        // First run is also non-blocking: create/use the cache as soon as canonical data arrives.
         initializedUserId = userId
         presenceManager.start()
+        scope.launch(Dispatchers.IO) { synchronize(userId) }
         true
     }
 
