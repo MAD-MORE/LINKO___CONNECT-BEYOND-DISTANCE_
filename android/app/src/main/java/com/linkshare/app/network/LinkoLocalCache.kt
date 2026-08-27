@@ -15,10 +15,20 @@ class LinkoLocalCache(context: Context) {
 
     fun cachedUserId(): String? = prefs.getString(KEY_USER_ID, null)?.takeIf { it.isNotBlank() }
 
-    fun hasUsableCache(userId: String?): Boolean {
+    fun hasProfileCache(userId: String?): Boolean {
+        val cachedUser = cachedUserId()
+        if (cachedUser.isNullOrBlank() || cachedUser != userId) return false
+        return !prefs.getString(KEY_DISPLAY_NAME, null).isNullOrBlank() ||
+            !prefs.getString(KEY_LINKO_ID, null).isNullOrBlank() ||
+            !prefs.getString(KEY_USERNAME, null).isNullOrBlank()
+    }
+
+    fun hasFriendsCache(userId: String?): Boolean {
         val cachedUser = cachedUserId()
         return !cachedUser.isNullOrBlank() && cachedUser == userId && prefs.contains(KEY_FRIENDS)
     }
+
+    fun hasUsableCache(userId: String?): Boolean = hasProfileCache(userId) || hasFriendsCache(userId)
 
     /** Restore the cached account identity before any network call after process death. */
     fun restoreIdentity(auth: LinkoAuth): String? {
