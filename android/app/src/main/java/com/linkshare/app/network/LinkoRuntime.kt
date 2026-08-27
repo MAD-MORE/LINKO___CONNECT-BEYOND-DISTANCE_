@@ -9,13 +9,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Owns the deterministic LINKO startup pipeline.
  *
- * Startup only blocks on data required to render the authenticated app:
- * session -> profile -> friends. Connection-control registration is deliberately
- * deferred until a connection is requested because it is not required to open Home.
+ * Startup blocks only on data required to render the authenticated app:
+ * session -> canonical profile -> friends snapshot.
+ * Connection-control registration is deliberately deferred until a connection is requested.
  */
 class LinkoRuntime(
     context: Context,
@@ -23,12 +25,16 @@ class LinkoRuntime(
 ) {
     private val appContext = context.applicationContext
     private val auth = LinkoAuth(appContext)
+    private val initializeMutex = Mutex()
+    private var initializedUserId: String? = null
+
     private val friendApi by lazy {
         LinkoControlPlaneApi(
             baseUrl = "${com.linkshare.app.BuildConfig.LINKO_SUPABASE_URL}/functions/v1/linko-friends",
             accessTokenProvider = { auth.currentAccessToken() },
         )
     }
+
     private val profileApi by lazy {
         LinkoProfileApi(
             accessTokenProvider = { auth.currentAccessToken() },
@@ -38,32 +44,44 @@ class LinkoRuntime(
     }
 
     /**
-     * Linear bootstrap:
-     * 1) restore/refresh the Supabase session
-     * 2) load and validate the canonical account profile
-     * 3) preload the friends snapshot used immediately by the app
+     * Linear, single-flight bootstrap.
      *
-     * No connection RPC, device registration, or control-plane health probe is used here.
-     * Those are connection capabilities and must not prevent an authenticated user from
-     * entering the app when the control-plane service is unavailable.
+     * Multiple callers are allowed, but only one initialization pipeline runs for an
+     * account at a time. A second caller waits for the first and reuses its completed state.
      */
-    suspend fun initialize(): Boolean {
-        if (!auth.isSignedIn()) return true
+    suspend fun initialize(): Boolean = initializeMutex.withLock {
+        if (!auth.isSignedIn()) return@withLock true
 
-        return runCatching {
+        val currentUserId = auth.currentUserId()
+        if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) {
+            return@withLock true
+        }
+
+        runCatching {
+            // 1. Session
             val session = auth.ensureSession()
             if (!session.success) error(session.message)
 
+            // The refresh response can establish the definitive account ID.
+            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+                ?: session.userId?.takeIf { it.isNotBlank() }
+                ?: error("auth_user_missing")
+
+            // 2. Canonical profile / LINKO ID / username.
             profileApi.load()
 
-            // Warm the authenticated friend/request path before Home is shown.
+            // 3. Warm the real authenticated friends + request path before Home appears.
             friendApi.getFriends()
+
+            initializedUserId = userId
         }.onSuccess {
             Log.i(
                 TAG,
                 "LINKO bootstrap complete: user=${auth.currentUserId()} linkoId=${auth.currentLinkoId()}",
             )
         }.onFailure { error ->
+            // Never mark a failed pipeline as initialized.
+            initializedUserId = null
             Log.e(TAG, "LINKO required bootstrap failed", error)
         }.isSuccess
     }
