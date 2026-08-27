@@ -32,6 +32,14 @@ object LinkoStateMachine {
         DISCONNECTED,
     }
 
+    fun friendshipFromBackend(state: String?): Friendship = when (state?.trim()?.lowercase()) {
+        "friend", "accepted" -> Friendship.FRIEND
+        "outgoing_pending", "pending_outgoing" -> Friendship.OUTGOING_PENDING
+        "incoming_pending", "pending_incoming" -> Friendship.INCOMING_PENDING
+        "declined" -> Friendship.DECLINED
+        else -> Friendship.NONE
+    }
+
     fun availabilityFromPresence(state: String?, online: Boolean): Availability = when {
         !online || state.equals("offline", ignoreCase = true) -> Availability.OFFLINE
         state.equals("ready", ignoreCase = true) -> Availability.READY
@@ -41,14 +49,21 @@ object LinkoStateMachine {
         else -> Availability.ONLINE
     }
 
-    fun connectionFromBackend(state: String?): Connection = when (state?.lowercase()) {
+    fun connectionFromBackend(state: String?): Connection = when (state?.trim()?.lowercase()) {
         "requested" -> Connection.REQUESTED
         "approved" -> Connection.APPROVED
         "signaling" -> Connection.SIGNALING
+        "connecting" -> Connection.CONNECTING
         "connected" -> Connection.CONNECTED
         "denied" -> Connection.DENIED
         "revoked" -> Connection.REVOKED
         "expired" -> Connection.EXPIRED
-        else -> Connection.DISCONNECTED
+        "disconnected", "failed" -> Connection.DISCONNECTED
+        else -> Connection.IDLE
     }
+
+    fun canRequestConnection(friendship: Friendship, availability: Availability): Boolean =
+        friendship == Friendship.FRIEND && availability != Availability.OFFLINE
+
+    fun isFriend(friendship: Friendship): Boolean = friendship == Friendship.FRIEND
 }
