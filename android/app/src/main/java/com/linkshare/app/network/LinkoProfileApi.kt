@@ -18,12 +18,23 @@ class LinkoProfileApi(
         return profile.toProfile().also { LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) }
     }
 
+    /**
+     * Linear write contract: validate -> update -> require returned canonical value -> persist locally.
+     * The caller performs an additional fresh GET to verify persistence before showing success.
+     */
     suspend fun updateDisplayName(displayName: String): ProfileRecord {
         val clean = displayName.trim()
         require(clean.length in 2..40) { "Display name must be 2–40 characters." }
-        val result = request("POST", "/profile", JSONObject().put("displayName", clean))
-        val profile = result.optJSONObject("profile") ?: result
-        return profile.toProfile().also { LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) }
+        val body = JSONObject()
+            .put("displayName", clean)
+            .put("display_name", clean)
+        val result = request("POST", "/profile", body)
+        val profile = (result.optJSONObject("profile") ?: result).toProfile()
+        if (profile.displayName != clean) {
+            throw LinkoNetworkException("profile_save_not_verified")
+        }
+        LinkoAuth.current()?.saveProfile(profile.displayName, profile.linkoId, profile.username)
+        return profile
     }
 
     private fun userId(): String = userIdProvider()?.takeIf { it.isNotBlank() }
