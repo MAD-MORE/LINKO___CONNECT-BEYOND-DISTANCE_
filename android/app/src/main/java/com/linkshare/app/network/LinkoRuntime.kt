@@ -114,20 +114,19 @@ class LinkoRuntime(
                 Log.w(TAG, "LINKO bootstrap attempt ${attempt + 1} failed", error)
 
                 val fallbackUserId = currentUserId?.takeIf { it.isNotBlank() }
-                if (fallbackUserId != null && localCache.hasUsableCache(fallbackUserId)) {
+                if (auth.isSignedIn() && fallbackUserId != null && localCache.hasUsableCache(fallbackUserId)) {
                     localCache.restoreProfile(auth, fallbackUserId)
                     val cachedFriends = localCache.readFriends(fallbackUserId)
-                    if (cachedFriends.isNotEmpty()) {
-                        initializedUserId = fallbackUserId
-                        _startupState.value = LinkoStartupState.RESTORING_CONNECTION
-                        runCatching { LinkoEngineBridge.configure(appContext) }
-                        runCatching {
-                            LinkoRealtimeManager.stop()
-                            LinkoRealtimeManager.start(appContext)
-                        }.onFailure { realtimeError -> Log.w(TAG, "Realtime unavailable from cache", realtimeError) }
-                        _startupState.value = LinkoStartupState.READY
-                        initialized = true
-                    }
+                    initializedUserId = fallbackUserId
+                    _startupState.value = LinkoStartupState.RESTORING_CONNECTION
+                    runCatching { LinkoEngineBridge.configure(appContext) }
+                    runCatching {
+                        LinkoRealtimeManager.stop()
+                        LinkoRealtimeManager.start(appContext)
+                    }.onFailure { realtimeError -> Log.w(TAG, "Realtime unavailable from cache", realtimeError) }
+                    _startupState.value = LinkoStartupState.READY
+                    initialized = true
+                    Log.i(TAG, "LINKO started from local cache: user=$fallbackUserId friends=${cachedFriends.size}")
                 }
             }
 
