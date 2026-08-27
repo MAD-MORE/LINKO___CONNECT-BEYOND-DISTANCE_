@@ -40,8 +40,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val onboarding = route in onboardingScreens
     val scope = rememberCoroutineScope()
     var deleting by remember { mutableStateOf(false) }
-    var bootstrapping by remember(signedIn) { mutableStateOf(signedIn) }
-    var bootstrapFailed by remember(signedIn) { mutableStateOf(false) }
+    var bootstrapping by remember(signedIn) { mutableStateOf(false) }
     val onDeleteAccount: () -> Unit = {
         if (!deleting) {
             deleting = true
@@ -54,18 +53,17 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     }
 
     LaunchedEffect(signedIn) {
-        if (!signedIn) {
-            bootstrapping = false
-            bootstrapFailed = false
-        } else {
+        if (signedIn) {
             bootstrapping = true
-            bootstrapFailed = !runtime.initialize()
+            runtime.initialize()
+            bootstrapping = false
+        } else {
             bootstrapping = false
         }
     }
 
-    if (bootstrapping || bootstrapFailed) {
-        LinkoStartupScreen(failed = bootstrapFailed)
+    if (bootstrapping) {
+        LinkoStartupScreen()
         return
     }
 
@@ -80,12 +78,12 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                         auth,
                         onSignedIn = {
                             bootstrapping = true
-                            bootstrapFailed = false
                             scope.launch {
-                                val initialized = withContext(Dispatchers.IO) { runtime.initialize() }
-                                bootstrapFailed = !initialized
+                                // Sign-in already established the local authenticated identity.
+                                // Startup must not wait for network-backed LINKO services.
+                                withContext(Dispatchers.IO) { runtime.initialize() }
                                 bootstrapping = false
-                                if (initialized) nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                                nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
                             }
                         },
                         onCreateAccount = { nav.navigate(Screen.SignUp.route) },
@@ -140,20 +138,14 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
 }
 
 @Composable
-private fun LinkoStartupScreen(failed: Boolean) {
+private fun LinkoStartupScreen() {
     Box(Modifier.fillMaxSize().background(BG).systemBarsPadding(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
-            if (!failed) {
-                CircularProgressIndicator(color = Blue, strokeWidth = 3.dp)
-                Spacer(Modifier.height(20.dp))
-                Text("INITIALIZING LINKO", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Loading your profile, device identity and connection services…", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
-            } else {
-                Text("LINKO COULD NOT INITIALIZE", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Your session or required LINKO data could not be loaded. Please sign in again.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
-            }
+            CircularProgressIndicator(color = Blue, strokeWidth = 3.dp)
+            Spacer(Modifier.height(20.dp))
+            Text("INITIALIZING LINKO", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("Preparing your secure device identity…", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
     }
 }
