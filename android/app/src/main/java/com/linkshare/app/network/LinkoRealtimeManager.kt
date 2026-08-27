@@ -26,10 +26,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 object LinkoRealtimeManager {
@@ -43,7 +43,7 @@ object LinkoRealtimeManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
-    private val presenceSnapshot = ConcurrentHashMap<String, LinkoPresence>()
+    private val presenceSnapshot = java.util.concurrent.ConcurrentHashMap<String, LinkoPresence>()
     @Volatile private var foreground = false
     private var client: SupabaseClient? = null
     private var friendChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
@@ -52,15 +52,11 @@ object LinkoRealtimeManager {
     private var auth: LinkoAuth? = null
     private var appContext: Context? = null
 
-    fun currentPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
-
-    fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
-
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
         appContext = context.applicationContext
         auth = LinkoAuth(appContext!!)
-        ensureNotificationChannel()
+        runCatching { ensureNotificationChannel() }
         val supabase = createSupabaseClient(
             supabaseUrl = com.linkshare.app.BuildConfig.LINKO_SUPABASE_URL,
             supabaseKey = com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY
@@ -109,47 +105,59 @@ object LinkoRealtimeManager {
     private suspend fun subscribeFriendEvents(supabase: SupabaseClient) {
         val channel = supabase.channel(FRIEND_CHANNEL)
         friendChannel = channel
-        channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+        val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
             table = "friend_requests"
         }
-            .onEach(::handleFriendChange)
-            .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error")) }
-            .launchIn(scope)
+        scope.launch {
+            runCatching {
+                flow.collect { action -> handleFriendChange(action) }
+            }.onFailure {
+                _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error"))
+            }
+        }
         channel.subscribe(blockUntilSubscribed = true)
     }
 
     private suspend fun subscribeSessionEvents(supabase: SupabaseClient) {
         val channel = supabase.channel(SESSION_CHANNEL)
         sessionChannel = channel
-        channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+        val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
             table = "sessions"
         }
-            .onEach { action ->
-                val record = recordToJson(action)
-                _events.tryEmit(
-                    LinkoRealtimeEvent.SessionStateChanged(
-                        record?.optString("id")?.takeIf { it.isNotBlank() },
-                        record?.optString("state")?.takeIf { it.isNotBlank() },
+        scope.launch {
+            runCatching {
+                flow.collect { action ->
+                    val record = recordToJson(action)
+                    _events.tryEmit(
+                        LinkoRealtimeEvent.SessionStateChanged(
+                            record?.optString("id")?.takeIf { it.isNotBlank() },
+                            record?.optString("state")?.takeIf { it.isNotBlank() },
+                        )
                     )
-                )
+                }
+            }.onFailure {
+                _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error"))
             }
-            .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
-            .launchIn(scope)
+        }
         channel.subscribe(blockUntilSubscribed = true)
     }
 
     private suspend fun subscribePresence(supabase: SupabaseClient) {
         val channel = supabase.channel(PRESENCE_CHANNEL)
         presenceChannel = channel
-        channel.presenceDataFlow<LinkoPresence>()
-            .onEach { states ->
-                states.forEach { presence ->
-                    presenceSnapshot[presence.userId] = presence
-                    _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(presence))
+        val flow = channel.presenceDataFlow<LinkoPresence>()
+        scope.launch {
+            runCatching {
+                flow.collect { states ->
+                    states.forEach { presence ->
+                        presenceSnapshot[presence.userId] = presence
+                        _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(presence))
+                    }
                 }
+            }.onFailure {
+                _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error"))
             }
-            .catch { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
-            .launchIn(scope)
+        }
         channel.subscribe(blockUntilSubscribed = true)
         val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
         val deviceId = auth?.currentDeviceId().orEmpty()
@@ -160,6 +168,8 @@ object LinkoRealtimeManager {
             _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(ownPresence))
         }
     }
+
+    fun latestPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
 
     private fun handleFriendChange(action: PostgresAction) {
         val record = recordToJson(action) ?: return
