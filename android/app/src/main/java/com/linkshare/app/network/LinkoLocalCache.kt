@@ -13,13 +13,22 @@ import org.json.JSONObject
 class LinkoLocalCache(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    fun cachedUserId(): String? = prefs.getString(KEY_USER_ID, null)?.takeIf { it.isNotBlank() }
+
     fun hasUsableCache(userId: String?): Boolean {
-        val cachedUser = prefs.getString(KEY_USER_ID, null)
+        val cachedUser = cachedUserId()
         return !cachedUser.isNullOrBlank() && cachedUser == userId && prefs.contains(KEY_FRIENDS)
     }
 
+    /** Restore the cached account identity before any network call after process death. */
+    fun restoreIdentity(auth: LinkoAuth): String? {
+        val userId = cachedUserId() ?: return null
+        auth.restoreCachedUserId(userId)
+        return userId
+    }
+
     fun restoreProfile(auth: LinkoAuth, userId: String?): Boolean {
-        val cachedUser = prefs.getString(KEY_USER_ID, null)
+        val cachedUser = cachedUserId()
         if (cachedUser.isNullOrBlank() || cachedUser != userId) return false
         val displayName = prefs.getString(KEY_DISPLAY_NAME, null)
         val linkoId = prefs.getString(KEY_LINKO_ID, null)
@@ -62,7 +71,7 @@ class LinkoLocalCache(context: Context) {
     }
 
     fun readFriends(userId: String?): List<Friend> {
-        val cachedUser = prefs.getString(KEY_USER_ID, null)
+        val cachedUser = cachedUserId()
         if (cachedUser.isNullOrBlank() || cachedUser != userId) return emptyList()
         val array = runCatching { JSONArray(prefs.getString(KEY_FRIENDS, "[]") ?: "[]") }.getOrNull() ?: return emptyList()
         return buildList {
