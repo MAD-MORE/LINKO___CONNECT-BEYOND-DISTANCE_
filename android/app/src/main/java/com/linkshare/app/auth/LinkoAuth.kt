@@ -39,6 +39,11 @@ class LinkoAuth(context: Context) {
     fun currentUsername(): String? = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() }
     fun saveProfile(displayName: String?, linkoId: String?, username: String? = null) { prefs.edit().apply { displayName?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_DISPLAY_NAME, it) }; linkoId?.trim()?.takeIf { it.isNotBlank() }?.let { putString(KEY_LINKO_ID, it) }; username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }?.let { putString(KEY_USERNAME, it) }; apply() } }
 
+    /** Restore only the cached account identity; the access token remains the authentication authority. */
+    fun restoreCachedUserId(userId: String?) {
+        userId?.trim()?.takeIf { it.isNotBlank() }?.let { prefs.edit().putString(KEY_USER_ID, it).apply() }
+    }
+
     fun refreshSession(): AuthResult {
         val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)?.takeIf { it.isNotBlank() }
             ?: return AuthResult(false, "session_refresh_unavailable", true)
@@ -49,6 +54,11 @@ class LinkoAuth(context: Context) {
         return result
     }
 
+    /**
+     * A persisted access token is enough to bootstrap the process when no refresh token was stored.
+     * We do not force a sign-out merely because refresh-token rotation is unavailable; the API calls
+     * remain authoritative and will refresh on a real 401 when a refresh token exists.
+     */
     fun ensureSession(): AuthResult {
         if (!isSignedIn()) return AuthResult(false, "session_required", true)
         val refresh = prefs.getString(KEY_REFRESH_TOKEN, null)
