@@ -31,6 +31,12 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
 
+    fun applyPresenceSnapshot() {
+        presence = LinkoRealtimeManager.currentPresenceSnapshot().mapValues { (_, value) ->
+            LinkoStateMachine.availabilityFromPresence(value.state, value.online)
+        }
+    }
+
     fun reload() {
         scope.launch {
             loading = true
@@ -52,6 +58,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
                         )
                     }
                 }
+                applyPresenceSnapshot()
                 val r = api.requests().optJSONArray("requests") ?: JSONArray()
                 incoming = buildList { for (i in 0 until r.length()) r.optJSONObject(i)?.let { if (it.optBoolean("incoming") && it.optString("status") == "pending") add(it) } }
                 outgoing = buildList { for (i in 0 until r.length()) r.optJSONObject(i)?.let { if (!it.optBoolean("incoming") && it.optString("status") == "pending") add(it) } }
@@ -63,6 +70,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
+        applyPresenceSnapshot()
         reload()
         LinkoRealtimeManager.events.collect { event ->
             when (event) {
