@@ -56,7 +56,7 @@ fun SettingsScreen(
         runCatching {
             withContext(Dispatchers.IO) { LinkoProfileApi(auth::currentAccessToken, auth::currentUserId).load() }
         }.onSuccess { profile ->
-            auth.saveProfile(profile.displayName, profile.linkoId)
+            auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
             displayName = profile.displayName
             linkoId = profile.linkoId
         }.onFailure {
@@ -143,7 +143,7 @@ fun AccountProfileScreen(onDone: () -> Unit) {
         }.onSuccess { profile ->
             name = profile.displayName
             linkoId = profile.linkoId
-            auth.saveProfile(profile.displayName, profile.linkoId)
+            auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
         }.onFailure {
             message = "Could not load your account profile."
         }
@@ -196,7 +196,7 @@ fun AccountProfileScreen(onDone: () -> Unit) {
                         runCatching {
                             withContext(Dispatchers.IO) {
                                 val profile = LinkoProfileApi(auth::currentAccessToken, auth::currentUserId).updateDisplayName(name)
-                                auth.saveProfile(profile.displayName, profile.linkoId)
+                                auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
                             }
                         }.onSuccess {
                             message = "Profile updated on this account."
