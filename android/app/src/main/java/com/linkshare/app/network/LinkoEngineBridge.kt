@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Single connection boundary. UI state is derived only from real control-plane/session results. */
 object LinkoEngineBridge {
     private var api: LinkoDeviceControlApi? = null
     private var coordinator: TunnelCoordinator? = null
@@ -41,7 +40,6 @@ object LinkoEngineBridge {
         publish("idle", "Ready")
     }
 
-    /** Real linear path: register device -> verify provider -> create session -> wait for approval -> tunnel. */
     fun connectToFriend(friendUserId: String, onState: (String) -> Unit = {}) {
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
@@ -75,8 +73,7 @@ object LinkoEngineBridge {
 
     private suspend fun awaitApprovedSession(control: LinkoDeviceControlApi, sessionId: String, onState: (String) -> Unit) {
         repeat(60) { attempt ->
-            val current = control.session(sessionId)
-            when (current.state) {
+            when (val current = control.session(sessionId).state) {
                 "approved", "signaling", "connected" -> return
                 "denied" -> throw LinkoNetworkException("connection_request_denied")
                 "expired" -> throw LinkoNetworkException("connection_request_expired")
@@ -119,7 +116,6 @@ object LinkoEngineBridge {
         }
         if (!started) throw LinkoNetworkException("tunnel_setup_timeout")
 
-        // The receiver becomes CONNECTED only after the provider has reported the session active.
         repeat(20) {
             when (val state = control.session(sessionId).state) {
                 "connected" -> {
@@ -156,10 +152,12 @@ object LinkoEngineBridge {
             runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
                     if (request == null) onState("no_pending_request")
-                    else {
-                        approvedProviderSessionId = request.id
-                        onState("request_available")
-                    }
+                    else runCatching { api?.transition(request.id, "approved") }
+                        .onSuccess {
+                            approvedProviderSessionId = request.id
+                            onState("approved")
+                        }
+                        .onFailure { onState(it.message ?: "approval_failed") }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
         } ?: onState("engine_scope_unavailable")
@@ -196,10 +194,7 @@ object LinkoEngineBridge {
         publish("idle", "Disconnected · tunnel closed")
     }
 
-    private fun publishAndNotify(state: String, onState: (String) -> Unit) {
-        publish(state)
-        onState(state)
-    }
+    private fun publishAndNotify(state: String, onState: (String) -> Unit) { publish(state); onState(state) }
 
     private fun publish(state: String, detail: String? = null) {
         val normalized = when (state) {
