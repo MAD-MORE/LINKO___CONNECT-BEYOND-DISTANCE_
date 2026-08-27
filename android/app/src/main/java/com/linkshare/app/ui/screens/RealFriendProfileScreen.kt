@@ -22,6 +22,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoFriendsApiHolder
+import com.linkshare.app.network.LinkoRealtimeEvent
+import com.linkshare.app.network.LinkoRealtimeManager
+import com.linkshare.app.network.LinkoStateMachine
 import com.linkshare.app.ui.components.InfoRow
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.PrimaryButton
@@ -30,6 +33,7 @@ import com.linkshare.app.ui.theme.Blue
 import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.Red
+import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import kotlinx.coroutines.launch
@@ -41,8 +45,18 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
     val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var relationship by remember(friend?.userId) { mutableStateOf(friend?.relationshipStatus ?: "none") }
+    var availability by remember(friend?.userId) { mutableStateOf<LinkoStateMachine.Availability?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(friend?.userId) {
+        availability = null
+        LinkoRealtimeManager.events.collect { event ->
+            if (event is LinkoRealtimeEvent.PresenceChanged && event.presence.userId == friend?.userId) {
+                availability = LinkoStateMachine.availabilityFromPresence(event.presence.state, event.presence.online)
+            }
+        }
+    }
 
     LaunchedEffect(engineState.phase) {
         if (!busy) return@LaunchedEffect
@@ -59,8 +73,31 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
         }
     }
 
+    val presenceLabel = when (availability) {
+        LinkoStateMachine.Availability.ONLINE,
+        LinkoStateMachine.Availability.READY,
+        LinkoStateMachine.Availability.CONNECTING,
+        LinkoStateMachine.Availability.SHARING,
+        LinkoStateMachine.Availability.CONNECTED -> "ONLINE"
+        LinkoStateMachine.Availability.OFFLINE -> "OFFLINE"
+        null -> "CHECKING STATUS"
+    }
+    val presenceColor = when (availability) {
+        LinkoStateMachine.Availability.OFFLINE -> Red
+        null -> TextMuted
+        else -> Green
+    }
+
+    val canConnect = relationship == "friend" && availability?.let {
+        LinkoStateMachine.canRequestConnection(
+            LinkoStateMachine.friendshipFromBackend(relationship),
+            it,
+        )
+    } == true
+
     val actionLabel = when {
         busy -> "CONNECTING…"
+        relationship == "friend" && availability == LinkoStateMachine.Availability.OFFLINE -> "FRIEND OFFLINE"
         relationship == "friend" -> "CONNECT TO FRIEND"
         relationship == "outgoing_pending" -> "REQUEST SENT"
         relationship == "incoming_pending" -> "REQUEST RECEIVED"
@@ -96,6 +133,13 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                 },
             )
             Spacer(Modifier.height(12.dp))
+            InfoRow(
+                "PRESENCE",
+                presenceLabel,
+                "Real device heartbeat state",
+                accent = presenceColor,
+            )
+            Spacer(Modifier.height(12.dp))
             if (busy) {
                 InfoRow("CONNECTION", engineState.detail, "Real engine state", accent = Blue)
             } else {
@@ -121,6 +165,10 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                 if (busy || selected == null) return@PrimaryButton
                 when (relationship) {
                     "friend" -> {
+                        if (!canConnect) {
+                            message = "Friend is offline or not ready for a connection"
+                            return@PrimaryButton
+                        }
                         busy = true
                         message = null
                         LinkoEngineBridge.connectToFriend(selected.userId)
