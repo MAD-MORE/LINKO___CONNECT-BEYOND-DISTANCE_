@@ -1,33 +1,52 @@
-# Linko Relay Node
+# LINKO Data-Plane Relay Node (`linko-relay`)
 
-UDP relay server that forwards encrypted tunnel traffic between Linko Provider and Receiver devices.
+Lightweight, high-performance UDP packet forwarder on Fly.io that relays encrypted tunnel traffic between LINKO Provider and Client devices.
 
-## What it does
+---
 
-- Listens on UDP port 7000 for relay packets
-- Verifies session ownership using SHA-256 key hashes (relay is blind to plaintext — it never decrypts traffic)
-- Forwards encrypted payloads between the two session parties
-- Enforces per-session bandwidth limits (default: 1 GB)
-- Exposes HTTP health and Prometheus metrics on port 7001
+## 🔒 Zero-Knowledge Security Principles
 
-## Environment variables
+1. **Blind Forwarding**: The relay NEVER decrypts, inspects, or modifies user traffic. All traffic is end-to-end encrypted with **AES-256-GCM** using keys negotiated directly between client devices.
+2. **No Private Keys**: The relay NEVER receives, stores, or processes private session keys or user credentials.
+3. **No Plaintext Logging**: Packet contents and browsing payloads are NEVER logged.
+4. **Session Ownership Validation**: Validates session ownership via a 32-byte SHA-256 key hash header.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `UDP_PORT` | No | `7000` | UDP relay port |
-| `PORT` | No | `7001` | HTTP health/metrics port |
-| `RELAY_NODE_ID` | No | `relay-1` | Node identifier |
-| `RELAY_REGION` | No | `default` | Geographic region (e.g. `iad`, `lhr`, `sin`) |
-| `BANDWIDTH_LIMIT_BYTES_PER_SESSION` | No | `1073741824` (1 GB) | Max bytes per session |
+---
 
-## Running locally
+## 📡 Ports & Services
+
+- **UDP 7000**: Encrypted data-plane datagram relay
+- **TCP 7001 / HTTP**: Health checks (`GET /health`), Prometheus metrics (`GET /metrics`), and session control (`POST /sessions`, `DELETE /sessions/:id`)
+
+---
+
+## 📦 Wire Framing Protocol (V2 Header: 95 Bytes)
+
+```text
+┌──────────┬─────────┬──────────────┬──────────┬──────┬──────┬───────────┬─────────┬───────────────────────┐
+│ Magic    │ Version │ Session ID   │ Key Hash │ Role │ Type │ Sequence  │ Nonce   │ Ciphertext + Auth Tag │
+│ (4B)     │ (1B)    │ (36B UUID)   │ (32B)    │ (1B) │ (1B) │ (8B)      │ (12B)   │ (Variable + 16B tag)  │
+└──────────┴─────────┴──────────────┴──────────┴──────┴──────┴───────────┴─────────┴───────────────────────┘
+```
+
+* **Magic**: `0x4C, 0x4B, 0x4F, 0x32` (`"LKO2"`)
+* **Role**: `1 = Provider`, `2 = Client`
+* **Type**: `1 = Data`, `2 = Handshake`, `3 = Keepalive`, `4 = Close`
+
+---
+
+## 🚀 Running Locally
 
 ```bash
+cd relay
 npm install
+npm test
 npm run dev
 ```
 
-## Running with Docker
+---
+
+## 🐳 Docker
 
 ```bash
 docker build -t linko-relay .
@@ -37,51 +56,19 @@ docker run -p 7000:7000/udp -p 7001:7001 \
   linko-relay
 ```
 
-## Health check
+---
+
+## ☁️ Fly.io Deployment
+
+The canonical Fly.io application name is **`linko-relay`**.
 
 ```bash
-curl http://localhost:7001/health
+# Deploy to Fly.io using the canonical configuration
+fly deploy -c infra/fly.relay.toml --dockerfile relay/Dockerfile --app linko-relay
+
+# Verify dedicated IPv4 allocation for UDP on Fly.io
+fly ips allocate-v4 -a linko-relay
+
+# Check health
+curl https://linko-relay.fly.dev/health
 ```
-
-## Session registration
-
-The Linko control plane registers sessions via the HTTP API:
-
-```bash
-# Register a session
-curl -X POST http://localhost:7001/sessions \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"<uuid>","key":"<base64url-32-byte-key>"}'
-
-# Remove a session
-curl -X DELETE http://localhost:7001/sessions/<uuid>
-```
-
-## Deploying to Fly.io
-
-```bash
-fly launch --name linko-relay --region iad --no-deploy
-fly secrets set RELAY_NODE_ID=iad-1 RELAY_REGION=iad
-fly deploy
-# Add more regions
-fly scale count 1 --region lhr
-fly scale count 1 --region sin
-```
-
-## Packet format
-
-```
-Bytes 0-35:   Session ID (36-byte UUID ASCII string)
-Bytes 36-67:  SHA-256 hash of session key (32 bytes binary)
-Bytes 68+:    Encrypted payload (AES-256-GCM — relay is blind)
-```
-
-The relay strips the 68-byte header and forwards only the encrypted payload to the other party.
-
-## Security notes
-
-- The relay NEVER decrypts payloads. All traffic is AES-256-GCM encrypted end-to-end.
-- Session keys are never sent to the relay. Only the SHA-256 hash of the key is used for verification.
-- Third-party packet injection is blocked (only 2 parties per session are accepted).
-- Sessions expire after 4 hours maximum.
-- Bandwidth limits prevent relay abuse.

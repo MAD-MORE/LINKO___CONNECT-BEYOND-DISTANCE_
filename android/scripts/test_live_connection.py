@@ -19,7 +19,7 @@ if sys.platform == "win32":
 
 SUPABASE_URL = "https://pbnvssbtshvesqwhckfa.supabase.co"
 PUBLISHABLE_KEY = "sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9"
-RELAY_HOST = "linkoconnect-beyond-distance.fly.dev"
+RELAY_HOST = "linko-relay.fly.dev"
 RELAY_PORT = 7000
 
 def test_supabase_control_plane():

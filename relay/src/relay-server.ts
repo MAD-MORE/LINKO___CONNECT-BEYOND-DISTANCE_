@@ -1,125 +1,178 @@
-import { createSocket, type RemoteInfo } from "node:dgram";
-import { createHash } from "node:crypto";
+import { createSocket, type Socket, type RemoteInfo } from "node:dgram";
+import { type Server } from "node:http";
 import { SessionRegistry } from "./session-registry.js";
 import { startHealthServer, recordPacket } from "./health.js";
 
 /**
- * Linko Data-Plane Relay Server (V2)
+ * LINKO Data-Plane Relay Server (V2)
  *
  * Wire Framing Format:
  * ┌──────────┬─────────┬──────────────┬──────────┬──────┬──────┬───────────┬─────────┬───────────────────────┐
  * │ Magic    │ Version │ Session ID   │ Key Hash │ Role │ Type │ Sequence  │ Nonce   │ Ciphertext + Auth Tag │
  * │ (4B)     │ (1B)    │ (36B UUID)   │ (32B)    │ (1B) │ (1B) │ (8B)      │ (12B)   │ (Variable + 16B tag)  │
  * └──────────┴─────────┴──────────────┴──────────┴──────┴──────┴───────────┴─────────┴───────────────────────┘
- * Total Header: 95 bytes.
+ * Total Header: 95 bytes. Minimum Datagram: 111 bytes (95B Header + 16B GCM Auth Tag).
  *
- * The relay is strictly a zero-knowledge data-plane forwarder:
- * - Never decrypts traffic (relay has no private session keys).
- * - Validates session ownership via 32-byte key hash.
- * - Routes packets between Provider and Client endpoints.
+ * ZERO-KNOWLEDGE PRINCIPLES:
+ * 1. The relay NEVER possesses private session keys or user credentials.
+ * 2. The relay NEVER decrypts or inspects packet payloads.
+ * 3. The relay NEVER logs packet contents or browsing metadata.
+ * 4. The relay ONLY routes complete, unmodified encrypted datagrams between verified endpoints.
  */
 
-const UDP_PORT = Number(process.env.UDP_PORT ?? 7000);
-const HTTP_PORT = Number(process.env.PORT ?? 7001);
-const MAGIC = Buffer.from([0x4C, 0x4B, 0x4F, 0x32]); // "LKO2"
-const HEADER_LENGTH = 95;
-const MAX_SESSION_BYTES = Number(process.env.BANDWIDTH_LIMIT_BYTES_PER_SESSION ?? 1_073_741_824); // 1 GB default
+export const MAGIC = Buffer.from([0x4C, 0x4B, 0x4F, 0x32]); // "LKO2"
+export const HEADER_LENGTH = 95;
+export const MIN_PACKET_LENGTH = HEADER_LENGTH + 16; // 111 bytes
 
-const registry = new SessionRegistry();
-const socket = createSocket("udp4");
+export interface RelayOptions {
+  udpPort?: number;
+  httpPort?: number;
+  maxSessionBytes?: number;
+  nodeId?: string;
+  region?: string;
+}
 
-socket.on("error", (err) => {
-  console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", message: "UDP socket error", error: err.message }));
-});
+export interface RelayInstance {
+  socket: Socket;
+  httpServer: Server;
+  registry: SessionRegistry;
+  close: () => Promise<void>;
+}
 
-socket.on("message", (msg: Buffer, remote: RemoteInfo) => {
-  if (msg.length < HEADER_LENGTH + 16) {
-    // Packet too short
-    return;
-  }
+export function createRelayServer(options: RelayOptions = {}): Promise<RelayInstance> {
+  const udpPort = options.udpPort ?? Number(process.env.UDP_PORT ?? 7000);
+  const httpPort = options.httpPort ?? Number(process.env.PORT ?? 7001);
+  const maxSessionBytes = options.maxSessionBytes ?? Number(process.env.BANDWIDTH_LIMIT_BYTES_PER_SESSION ?? 1_073_741_824);
+  const nodeId = options.nodeId ?? process.env.RELAY_NODE_ID ?? "relay-1";
+  const region = options.region ?? process.env.RELAY_REGION ?? "iad";
 
-  // 1. Verify Magic
-  if (!msg.subarray(0, 4).equals(MAGIC)) {
-    return;
-  }
+  const registry = new SessionRegistry();
+  const socket = createSocket("udp4");
+  let isUdpBound = false;
 
-  // 2. Parse Header fields
-  const sessionId = msg.subarray(5, 41).toString("ascii");
-  const incomingKeyHash = msg.subarray(41, 73).toString("hex");
+  socket.on("error", (err) => {
+    console.error(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "error",
+      message: "UDP socket error",
+      error: err.message,
+    }));
+  });
 
-  // 3. Auto-register or look up in session registry
-  let entry = registry.getById(sessionId);
-  if (!entry) {
-    // Allow dynamic session creation on verified cryptographic key hash
-    entry = {
-      sessionId,
-      keyHash: incomingKeyHash,
-      partyA: null,
-      partyB: null,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 4 * 60 * 60 * 1000,
-      bytesForwarded: 0,
-    };
-    (registry as any).sessions.set(sessionId, entry);
-    (registry as any).keyIndex.set(incomingKeyHash, sessionId);
-  } else if (entry.keyHash !== incomingKeyHash) {
-    // Key hash mismatch
-    return;
-  }
+  socket.on("message", (msg: Buffer, remote: RemoteInfo) => {
+    // 1. Minimum Length Validation
+    if (msg.length < MIN_PACKET_LENGTH) {
+      return; // Malformed / short packet
+    }
 
-  // 4. Bandwidth Quota Check
-  if (entry.bytesForwarded + msg.length > MAX_SESSION_BYTES) {
-    registry.removeSession(sessionId);
-    return;
-  }
+    // 2. Verify Magic ("LKO2")
+    if (!msg.subarray(0, 4).equals(MAGIC)) {
+      return; // Invalid protocol magic
+    }
 
-  // 5. Register Endpoint
-  const party = registry.registerEndpoint(sessionId, remote);
-  if (party === null) {
-    return;
-  }
+    // 3. Parse Header Fields
+    const sessionId = msg.subarray(5, 41).toString("ascii");
+    const incomingKeyHash = msg.subarray(41, 73).toString("hex").toLowerCase();
+    const role = msg[73]; // 1 = Provider, 2 = Client
+    const type = msg[74]; // 1 = Data, 2 = Handshake, 3 = Keepalive, 4 = Close
 
-  // 6. Forward Full Encrypted Datagram to the peer
-  const dest = party === "a" ? entry.partyB : entry.partyA;
-  if (!dest) {
-    // Waiting for peer to connect
-    return;
-  }
+    // Basic UUID validation
+    if (sessionId.length !== 36) {
+      return;
+    }
 
-  socket.send(msg, dest.port, dest.address, (err) => {
-    if (err) {
-      console.error(JSON.stringify({
-        ts: new Date().toISOString(),
-        level: "error",
-        message: "Relay UDP forward error",
-        sessionId,
-        error: err.message,
-      }));
+    // 4. Session Lookup & Cryptographic Key-Hash Verification
+    let entry = registry.getById(sessionId);
+    if (!entry) {
+      // Dynamically register session from first cryptographic datagram
+      entry = registry.addSession(sessionId, incomingKeyHash);
+    } else if (entry.keyHash !== incomingKeyHash) {
+      // Key hash mismatch: drop unauthorized spoofed packet
+      return;
+    }
+
+    // 5. Bandwidth Quota Enforcement
+    if (entry.bytesForwarded + msg.length > maxSessionBytes) {
+      registry.removeSession(sessionId);
+      return;
+    }
+
+    // 6. Endpoint Registration & Network Roaming
+    const party = registry.registerEndpoint(sessionId, remote, role);
+    if (party === null) {
+      return;
+    }
+
+    // 7. Route to Peer Endpoint
+    const dest = (role === 1 || party === "a") ? entry.partyB : entry.partyA;
+    if (dest) {
+      socket.send(msg, dest.port, dest.address, (err) => {
+        if (err) {
+          console.error(JSON.stringify({
+            ts: new Date().toISOString(),
+            level: "error",
+            message: "Relay UDP forward error",
+            sessionId,
+            error: err.message,
+          }));
+        }
+      });
+
+      registry.recordBytes(sessionId, msg.length);
+      recordPacket(msg.length);
+    }
+
+    // 8. Handle Session Teardown Datagram
+    if (type === 4) {
+      registry.removeSession(sessionId);
     }
   });
 
-  registry.recordBytes(sessionId, msg.length);
-  recordPacket(msg.length);
-});
+  const httpServer = startHealthServer(httpPort, registry, () => isUdpBound);
 
-socket.bind(UDP_PORT, () => {
-  console.log(JSON.stringify({
-    ts: new Date().toISOString(),
-    level: "info",
-    message: `Linko Data-Plane Relay listening on UDP :${UDP_PORT} (HTTP :${HTTP_PORT})`,
-    nodeId: process.env.RELAY_NODE_ID ?? "relay-1",
-  }));
-});
+  return new Promise((resolve, reject) => {
+    socket.once("error", reject);
 
-// Start HTTP health and metrics server
-startHealthServer(HTTP_PORT, registry);
+    socket.bind(udpPort, "0.0.0.0", () => {
+      isUdpBound = true;
+      socket.removeListener("error", reject);
 
-process.on("SIGTERM", () => {
-  socket.close();
-  process.exit(0);
-});
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "info",
+        message: `LINKO Data-Plane Relay listening on UDP :${udpPort} (HTTP :${httpPort})`,
+        nodeId,
+        region,
+      }));
 
-process.on("SIGINT", () => {
-  socket.close();
-  process.exit(0);
-});
+      resolve({
+        socket,
+        httpServer,
+        registry,
+        close: async () => {
+          isUdpBound = false;
+          registry.destroy();
+          await new Promise<void>((res) => {
+            socket.close(() => res());
+          });
+          await new Promise<void>((res) => {
+            httpServer.close(() => res());
+          });
+        },
+      });
+    });
+  });
+}
+
+// Auto-run if executed directly as script entry point
+const isDirectEntry = process.argv[1] && (
+  process.argv[1].endsWith("relay-server.ts") ||
+  process.argv[1].endsWith("relay-server.js")
+);
+
+if (isDirectEntry) {
+  createRelayServer().catch((err) => {
+    console.error("Failed to start LINKO relay server:", err);
+    process.exit(1);
+  });
+}

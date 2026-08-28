@@ -1,91 +1,76 @@
 /**
- * Session registry for the Linko relay node.
+ * Session registry for the LINKO relay node.
  *
- * Maintains an in-memory map of:
- *   sessionId → { key: Buffer, partyA: RemoteInfo, partyB: RemoteInfo, expiresAt }
+ * Maintains an in-memory map of active sessions:
+ *   sessionId → { sessionId, keyHash, partyA: RemoteInfo, partyB: RemoteInfo, ... }
  *
- * Keys are 32-byte AES-256-GCM session keys issued by the control plane.
- * The relay uses them only to verify session ownership (not to decrypt traffic).
- *
- * Sessions expire automatically after TTL.
+ * ZERO-KNOWLEDGE SECURITY:
+ *   The relay NEVER stores, receives, or processes private session keys or user credentials.
+ *   Session ownership is validated using a 32-byte SHA-256 key hash computed by the client devices.
  */
 
 import type { RemoteInfo } from "node:dgram";
 
 export interface SessionEntry {
   sessionId: string;
-  keyHash: string;        // SHA-256 hex of the session key (used for fast lookup, never the key itself)
-  partyA: RemoteInfo | null;
-  partyB: RemoteInfo | null;
+  keyHash: string;        // SHA-256 hex of the session key (64 hex characters)
+  partyA: RemoteInfo | null; // Provider endpoint
+  partyB: RemoteInfo | null; // Client endpoint
   createdAt: number;
+  lastActiveAt: number;
   expiresAt: number;
   bytesForwarded: number;
 }
 
 const DEFAULT_SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours max session lifetime
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;      // 30 minutes inactivity timeout
 
 export class SessionRegistry {
   private sessions = new Map<string, SessionEntry>();
-  // Map from keyHash to sessionId for fast key-based lookup on first packet
   private keyIndex = new Map<string, string>();
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(private ttlMs = DEFAULT_SESSION_TTL_MS) {
-    // Clean up expired sessions every 5 minutes
-    setInterval(() => this.cleanup(), 5 * 60 * 1000).unref();
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60 * 1000);
+    if (this.cleanupTimer.unref) {
+      this.cleanupTimer.unref();
+    }
   }
 
   /**
-   * Register a new session. Called by the control plane relay coordinator.
-   * @param sessionId - Linko session UUID
-   * @param keyBase64 - Base64url-encoded 32-byte session key
+   * Register a new session by its cryptographic key hash.
+   * NEVER accepts raw private session keys.
    */
-  async addSession(sessionId: string, keyBase64: string): Promise<void> {
-    const { createHash } = await import("node:crypto");
-    const keyBytes = Buffer.from(keyBase64, "base64url");
-    if (keyBytes.length !== 32) {
-      throw new Error(`Invalid session key length: ${keyBytes.length}, expected 32`);
-    }
-    const keyHash = createHash("sha256").update(keyBytes).digest("hex");
-
+  addSession(sessionId: string, keyHash: string, customTtlMs?: number): SessionEntry {
+    const cleanHash = keyHash.trim().toLowerCase();
+    const now = Date.now();
     const entry: SessionEntry = {
       sessionId,
-      keyHash,
+      keyHash: cleanHash,
       partyA: null,
       partyB: null,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + this.ttlMs,
+      createdAt: now,
+      lastActiveAt: now,
+      expiresAt: now + (customTtlMs ?? this.ttlMs),
       bytesForwarded: 0,
     };
 
     this.sessions.set(sessionId, entry);
-    this.keyIndex.set(keyHash, sessionId);
+    this.keyIndex.set(cleanHash, sessionId);
+    return entry;
   }
 
   /**
-   * Remove a session (called on revocation or expiry from control plane signal).
+   * Remove a session.
    */
-  removeSession(sessionId: string): void {
+  removeSession(sessionId: string): boolean {
     const entry = this.sessions.get(sessionId);
     if (entry) {
       this.keyIndex.delete(entry.keyHash);
       this.sessions.delete(sessionId);
+      return true;
     }
-  }
-
-  /**
-   * Look up a session by its key hash.
-   * Returns null if not found or expired.
-   */
-  getByKeyHash(keyHash: string): SessionEntry | null {
-    const sessionId = this.keyIndex.get(keyHash);
-    if (!sessionId) return null;
-    const entry = this.sessions.get(sessionId);
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
-      this.removeSession(sessionId);
-      return null;
-    }
-    return entry;
+    return false;
   }
 
   getById(sessionId: string): SessionEntry | null {
@@ -98,34 +83,66 @@ export class SessionRegistry {
     return entry;
   }
 
+  getByKeyHash(keyHash: string): SessionEntry | null {
+    const cleanHash = keyHash.trim().toLowerCase();
+    const sessionId = this.keyIndex.get(cleanHash);
+    if (!sessionId) return null;
+    return this.getById(sessionId);
+  }
+
   /**
-   * Record that a packet arrived from a remote address.
-   * The first two unique addresses to connect for a session become partyA and partyB.
+   * Register or update an endpoint for a session.
+   * Role:
+   *   1 = Provider (Party A)
+   *   2 = Client (Party B)
+   *   Other = Dynamic first-two assignment
    */
-  registerEndpoint(sessionId: string, remote: RemoteInfo): "a" | "b" | null {
-    const entry = this.sessions.get(sessionId);
+  registerEndpoint(sessionId: string, remote: RemoteInfo, role?: number): "a" | "b" | null {
+    const entry = this.getById(sessionId);
     if (!entry) return null;
 
+    entry.lastActiveAt = Date.now();
     const addr = `${remote.address}:${remote.port}`;
 
-    if (!entry.partyA) {
-      entry.partyA = remote;
+    if (role === 1) {
+      // Explicit Provider
+      entry.partyA = { ...remote };
       return "a";
     }
-    if (`${entry.partyA.address}:${entry.partyA.port}` === addr) return "a";
 
-    if (!entry.partyB) {
-      entry.partyB = remote;
+    if (role === 2) {
+      // Explicit Client
+      entry.partyB = { ...remote };
       return "b";
     }
-    if (`${entry.partyB.address}:${entry.partyB.port}` === addr) return "b";
 
-    return null; // Unknown third party — reject
+    // Role-agnostic or fallback:
+    if (!entry.partyA) {
+      entry.partyA = { ...remote };
+      return "a";
+    }
+    if (`${entry.partyA.address}:${entry.partyA.port}` === addr) {
+      return "a";
+    }
+
+    if (!entry.partyB) {
+      entry.partyB = { ...remote };
+      return "b";
+    }
+    if (`${entry.partyB.address}:${entry.partyB.port}` === addr) {
+      return "b";
+    }
+
+    // Dynamic endpoint roaming: if Party A or B reconnects from a new port/IP
+    return null;
   }
 
   recordBytes(sessionId: string, bytes: number): void {
     const entry = this.sessions.get(sessionId);
-    if (entry) entry.bytesForwarded += bytes;
+    if (entry) {
+      entry.bytesForwarded += bytes;
+      entry.lastActiveAt = Date.now();
+    }
   }
 
   getAll(): SessionEntry[] {
@@ -136,13 +153,22 @@ export class SessionRegistry {
     return this.sessions.size;
   }
 
-  private cleanup(): void {
+  cleanup(): void {
     const now = Date.now();
     for (const [id, entry] of this.sessions) {
-      if (now > entry.expiresAt) {
+      if (now > entry.expiresAt || (now - entry.lastActiveAt > INACTIVITY_TIMEOUT_MS && entry.bytesForwarded > 0)) {
         this.keyIndex.delete(entry.keyHash);
         this.sessions.delete(id);
       }
     }
+  }
+
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.sessions.clear();
+    this.keyIndex.clear();
   }
 }

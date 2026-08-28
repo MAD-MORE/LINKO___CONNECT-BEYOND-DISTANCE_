@@ -2,32 +2,47 @@ name: Deploy Relay Node
 
 on:
   push:
-    branches: [main, feature/real-data-plane-internet-sharing]
+    branches: [main, fix/fly-relay-production]
+    paths:
+      - 'relay/**'
+      - 'infra/fly.relay.toml'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-relay-deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy-relay:
     name: Deploy Relay Node to Fly.io
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy UDP Relay
+      - name: Deploy LINKO UDP Relay to Fly.io
         run: |
           flyctl deploy \
             --config infra/fly.relay.toml \
             --dockerfile relay/Dockerfile \
-            --app linkoconnect-beyond-distance \
+            --app linko-relay \
             --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        continue-on-error: true
 
-      - name: Verify Relay Health Check
+      - name: Verify Relay Health Endpoint
         run: |
-          sleep 10
-          curl --fail https://linkoconnect-beyond-distance.fly.dev/health || echo "Relay health check completed."
+          echo "Waiting 15 seconds for Fly machine to boot and register DNS..."
+          sleep 15
+          curl --fail --show-error --silent --max-time 10 https://linko-relay.fly.dev/health
+          echo ""
+          echo "Relay health check verified successfully!"

@@ -2,7 +2,7 @@ name: Relay CI
 
 on:
   push:
-    branches: [main, develop, feature/real-data-plane-internet-sharing]
+    branches: [main, develop, fix/fly-relay-production]
     paths:
       - 'relay/**'
       - '.github/workflows/relay-ci.yml'
@@ -11,6 +11,10 @@ on:
     paths:
       - 'relay/**'
   workflow_dispatch:
+
+concurrency:
+  group: relay-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -60,27 +64,6 @@ jobs:
             -e RELAY_REGION=ci \
             -p 7001:7001 \
             linko-relay:${{ github.sha }}
-          sleep 3
+          sleep 4
           curl --fail http://localhost:7001/health
           docker stop test-relay
-
-  deploy:
-    runs-on: ubuntu-latest
-    name: Deploy Relay to Fly.io
-    needs: [docker-build]
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/real-data-plane-internet-sharing') && github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy relay to Fly.io
-        uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - run: fly deploy -c infra/fly.relay.toml --dockerfile relay/Dockerfile --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        continue-on-error: true
-
-      - name: Verify relay health check
-        run: |
-          sleep 10
-          curl --fail https://linko-relay.fly.dev/health || echo "Relay health check completed."

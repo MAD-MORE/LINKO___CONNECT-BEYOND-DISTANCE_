@@ -1,6 +1,6 @@
-# fly.toml — Linko Relay Node
-# Deploy: fly deploy -c infra/fly.relay.toml
-# Add regions: fly scale count 1 --region lhr,sin -c infra/fly.relay.toml
+# fly.toml — LINKO Data-Plane Relay Node
+# Canonical app: linko-relay
+# Deploy: fly deploy -c infra/fly.relay.toml --dockerfile relay/Dockerfile
 
 app = "linko-relay"
 primary_region = "iad"
@@ -13,9 +13,10 @@ primary_region = "iad"
   UDP_PORT = "7000"
   PORT = "7001"
   RELAY_REGION = "iad"
-  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824"
+  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824" # 1 GB default per session
 
-# UDP service — relay traffic
+# UDP service — Encrypted Data-Plane Relay (Port 7000)
+# Dedicated public IPv4 is required on Fly.io for UDP packet forwarding.
 [[services]]
   protocol = "udp"
   internal_port = 7000
@@ -23,12 +24,36 @@ primary_region = "iad"
   [[services.ports]]
     port = 7000
 
-# HTTP service — health checks
+# HTTP service — Health Checks & Prometheus Metrics (Port 7001)
+[[services]]
+  protocol = "tcp"
+  internal_port = 7001
+
+  [[services.ports]]
+    port = 7001
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 800
+
+# Critical for Fly.io UDP relay:
+# Fly proxy does NOT auto-start stopped machines on incoming raw UDP datagrams.
+# Therefore, auto_stop_machines MUST be "off" to ensure continuous UDP availability.
 [http_service]
   internal_port = 7001
   force_https = false
-  auto_stop_machines = "stop"
-  auto_start_machines = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
   min_machines_running = 1
 
   [[http_service.checks]]
@@ -41,6 +66,3 @@ primary_region = "iad"
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
-
-# Secrets to set:
-# fly secrets set RELAY_NODE_ID=iad-1 -c infra/fly.relay.toml

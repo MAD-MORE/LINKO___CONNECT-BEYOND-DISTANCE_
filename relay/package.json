@@ -9,7 +9,7 @@
     "dev": "tsx src/relay-server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/relay-server.js",
-    "test": "find src -type f -name '*.test.ts' -print0 | xargs -0 -r node --test --import tsx"
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {},
   "devDependencies": {

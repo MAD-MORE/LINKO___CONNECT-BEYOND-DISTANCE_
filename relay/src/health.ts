@@ -1,12 +1,12 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { SessionRegistry } from "./session-registry.js";
 
 /**
- * HTTP health and metrics endpoint for the Linko relay node.
- * Runs on a separate port (HTTP_PORT, default 7001) from the UDP relay.
+ * HTTP health and metrics endpoint for the LINKO relay node.
+ * Runs on port 7001 (or process.env.PORT).
  *
- * GET /health  → JSON health status
- * GET /metrics → Prometheus text metrics
+ * GET /health  → JSON health status (returns 200 if UDP is listening, 503 if not)
+ * GET /metrics → Prometheus metrics
  */
 
 let totalPacketsForwarded = 0;
@@ -23,10 +23,34 @@ export function recordNewSession(): void {
   totalSessionsServed += 1;
 }
 
-export function startHealthServer(port: number, registry: SessionRegistry): void {
+export function resetMetrics(): void {
+  totalPacketsForwarded = 0;
+  totalBytesForwarded = 0;
+  totalSessionsServed = 0;
+}
+
+export function startHealthServer(
+  port: number,
+  registry: SessionRegistry,
+  isUdpHealthy: () => boolean = () => true
+): Server {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === "GET" && req.url === "/health") {
+    // 1. Health check
+    if (req.method === "GET" && (req.url === "/health" || req.url === "/")) {
+      const udpHealthy = isUdpHealthy();
       const uptime = Math.floor((Date.now() - startTime) / 1000);
+
+      if (!udpHealthy) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          service: "linko-relay",
+          status: "error",
+          error: "UDP relay socket is not listening",
+          timestamp: new Date().toISOString(),
+        }));
+        return;
+      }
+
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         service: "linko-relay",
@@ -35,13 +59,14 @@ export function startHealthServer(port: number, registry: SessionRegistry): void
         activeSessions: registry.count(),
         totalPacketsForwarded,
         totalBytesForwarded,
-        region: process.env.RELAY_REGION ?? "default",
+        region: process.env.RELAY_REGION ?? "iad",
         nodeId: process.env.RELAY_NODE_ID ?? "relay-1",
         timestamp: new Date().toISOString(),
       }));
       return;
     }
 
+    // 2. Prometheus metrics
     if (req.method === "GET" && req.url === "/metrics") {
       const uptime = Math.floor((Date.now() - startTime) / 1000);
       const metrics = [
@@ -67,30 +92,38 @@ export function startHealthServer(port: number, registry: SessionRegistry): void
       return;
     }
 
+    // 3. Control-plane pre-registration endpoint (accepts ONLY session ID & key hash, NEVER private keys)
     if (req.method === "POST" && req.url === "/sessions") {
-      // Control plane registers a session key
       let body = "";
       req.on("data", chunk => { body += chunk; });
-      req.on("end", async () => {
+      req.on("end", () => {
         try {
-          const { sessionId, key } = JSON.parse(body) as { sessionId: string; key: string };
-          await registry.addSession(sessionId, key);
-          recordNewSession();
+          const parsed = JSON.parse(body) as { sessionId: string; keyHash?: string };
+          if (!parsed.sessionId) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "sessionId is required" }));
+            return;
+          }
+          if (parsed.keyHash) {
+            registry.addSession(parsed.sessionId, parsed.keyHash);
+            recordNewSession();
+          }
           res.writeHead(201, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, sessionId }));
+          res.end(JSON.stringify({ ok: true, sessionId: parsed.sessionId }));
         } catch (err) {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: "Invalid JSON request body" }));
         }
       });
       return;
     }
 
+    // 4. Session deletion
     if (req.method === "DELETE" && req.url?.startsWith("/sessions/")) {
       const sessionId = req.url.slice("/sessions/".length);
-      registry.removeSession(sessionId);
+      const removed = registry.removeSession(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({ ok: true, removed }));
       return;
     }
 
@@ -105,4 +138,6 @@ export function startHealthServer(port: number, registry: SessionRegistry): void
       message: `Relay health server listening on :${port}`,
     }));
   });
+
+  return server;
 }
