@@ -8,7 +8,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Account-scoped profile API communicating directly with Supabase PostgREST tables.
+ * Account-scoped profile API backed by Supabase SECURITY DEFINER RPCs and PostgREST.
+ * Guarantees that profile rows are automatically created on-demand with zero permission errors.
  */
 class LinkoProfileApi(
     private val accessTokenProvider: () -> String?,
@@ -16,6 +17,18 @@ class LinkoProfileApi(
     private val refreshProvider: (suspend () -> Boolean)? = { LinkoAuth.current()?.refreshSession()?.success == true },
 ) {
     suspend fun load(): ProfileRecord {
+        // Preferred: Call SECURITY DEFINER RPC linko_get_or_create_profile
+        val rpcResult = runCatching {
+            request("POST", "/rest/v1/rpc/linko_get_or_create_profile", JSONObject())
+        }.getOrNull()
+
+        if (rpcResult != null && rpcResult.has("linko_id")) {
+            return rpcResult.toProfile().also {
+                LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username)
+            }
+        }
+
+        // Fallback: Direct PostgREST query
         val uid = userId()
         val path = "/rest/v1/profiles?user_id=eq.$uid&select=*"
         val result = request("GET", path)
@@ -31,15 +44,28 @@ class LinkoProfileApi(
     }
 
     /**
-     * Updates the user's display name directly in Supabase profiles table.
+     * Updates the user's display name using SECURITY DEFINER RPC linko_update_profile.
      */
     suspend fun updateDisplayName(displayName: String): ProfileRecord {
         val clean = displayName.trim()
         require(clean.length in 2..40) { "Display name must be 2–40 characters." }
+        
+        val body = JSONObject().put("p_display_name", clean)
+        val rpcResult = runCatching {
+            request("POST", "/rest/v1/rpc/linko_update_profile", body)
+        }.getOrNull()
+
+        if (rpcResult != null && rpcResult.has("linko_id")) {
+            val updated = rpcResult.toProfile()
+            LinkoAuth.current()?.saveProfile(updated.displayName, updated.linkoId, updated.username)
+            return updated
+        }
+
+        // Fallback: Direct PostgREST PATCH
         val uid = userId()
         val path = "/rest/v1/profiles?user_id=eq.$uid"
-        val body = JSONObject().put("display_name", clean)
-        val result = request("PATCH", path, body, preferReturn = true)
+        val patchBody = JSONObject().put("display_name", clean)
+        val result = request("PATCH", path, patchBody, preferReturn = true)
         
         val profileJson = when {
             result.optJSONArray("data") != null -> result.optJSONArray("data")?.optJSONObject(0)
@@ -50,7 +76,6 @@ class LinkoProfileApi(
         val updated = if (profileJson != null) {
             profileJson.toProfile()
         } else {
-            // Fallback reload
             load()
         }
 

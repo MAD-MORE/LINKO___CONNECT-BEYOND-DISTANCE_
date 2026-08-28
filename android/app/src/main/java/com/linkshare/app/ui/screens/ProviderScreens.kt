@@ -1,15 +1,22 @@
 package com.linkshare.app.ui.screens
 
-import android.Manifest
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -17,7 +24,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,46 +37,65 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.LinkoProfileApi
+import com.linkshare.app.network.LinkoProviderService
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
-import com.linkshare.app.provider.LinkoProviderService
+import com.linkshare.app.provider.ProviderReadyAlgorithm
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.Ring
+import com.linkshare.app.ui.theme.Blue
 import com.linkshare.app.ui.theme.Border
 import com.linkshare.app.ui.theme.Green
+import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.Surface
 import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
-import com.linkshare.app.ui.theme.JetBrainsMono
+import com.linkshare.app.ui.theme.Yellow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-
-private object ProviderReadyAlgorithm {
-    fun requestNotificationPermission(context: Context) {
-        if (Build.VERSION.SDK_INT >= 33 && context is Activity && ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7002)
-        }
-    }
-}
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { LinkoAuth(context) }
+    val api = remember { LinkoProfileApi(auth::currentAccessToken, auth::currentUserId) }
     var username by remember { mutableStateOf(auth.currentUsername() ?: auth.currentDisplayName().orEmpty()) }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
     var copied by remember { mutableStateOf(false) }
 
+    fun copyId(idToCopy: String) {
+        if (idToCopy.isBlank()) return
+        val clean = idToCopy.removePrefix("@")
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("LINKO ID", clean))
+        copied = true
+        Toast.makeText(context, "LINKO ID copied: $clean", Toast.LENGTH_SHORT).show()
+    }
+
     LaunchedEffect(Unit) {
-        username = auth.currentUsername() ?: auth.currentDisplayName().orEmpty()
-        linkoId = auth.currentLinkoId().orEmpty()
-        providerState = if (linkoId.isNotBlank()) "READY" else "ID_ERROR"
         ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
+
+        // Asynchronously ensure and load canonical profile
+        runCatching {
+            val profile = withContext(Dispatchers.IO) { api.load() }
+            username = profile.username ?: profile.displayName
+            linkoId = profile.linkoId
+            auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
+            if (providerState == "LOADING" || providerState == "ID_ERROR") {
+                providerState = "READY"
+            }
+        }.onFailure {
+            if (linkoId.isBlank()) {
+                providerState = "ID_ERROR"
+            }
+        }
 
         LinkoRealtimeManager.events.collect { event ->
             when (event) {
@@ -80,18 +111,24 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                         else -> providerState
                     }
                 }
-                is LinkoRealtimeEvent.TransportError -> if (linkoId.isNotBlank()) providerState = "OFFLINE"
+                is LinkoRealtimeEvent.TransportError -> if (linkoId.isNotBlank() && providerState == "SHARING") providerState = "OFFLINE"
                 else -> Unit
             }
         }
     }
 
     LaunchedEffect(copied) {
-        if (copied) { delay(1400); copied = false }
+        if (copied) { delay(1500); copied = false }
     }
 
     val connectionBusy = providerState == "LOADING" || providerState == "REQUESTED" || providerState == "APPROVED" || providerState == "SIGNALING"
-    val shareVisualActive = linkoId.isNotBlank() && providerState != "OFFLINE" && providerState != "ID_ERROR"
+    val ringColor = when (providerState) {
+        "SHARING", "CONNECTED" -> Green
+        "LOADING", "READY", "REQUESTED", "APPROVED", "SIGNALING" -> Blue
+        "DECLINED", "ENDED", "OFFLINE" -> Yellow
+        "ID_ERROR" -> Red
+        else -> Blue
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(8.dp))
@@ -100,49 +137,91 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         Text("Share your connection with a friend", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(14.dp))
 
-        Ring(color = if (shareVisualActive) Green else Border, size = 190.dp, idle = true, label = "SHARE")
+        Ring(color = ringColor, size = 190.dp, pulse = connectionBusy || providerState == "SHARING", label = if (providerState == "SHARING") "SHARING" else "READY")
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(14.dp)) {
+        Spacer(Modifier.height(14.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Surface)
+                .border(1.dp, Border, RoundedCornerShape(12.dp))
+                .clickable { copyId(linkoId) }
+                .padding(14.dp)
+        ) {
             Column(Modifier.weight(1f)) {
                 Text("USERNAME", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                Text("@${username.removePrefix("@").ifBlank { "LINKO User" }}", color = Green, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                Text("LINKO ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                Text("@${username.removePrefix("@").ifBlank { "LINKO User" }}", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("LINKO ID (TAP TO COPY)", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (linkoId.isBlank()) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Green, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(9.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Blue, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…", color = if (linkoId.isBlank()) Red else Green, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…",
+                        color = if (linkoId.isBlank()) Blue else Green,
+                        fontSize = 18.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
-            IconButton(enabled = linkoId.isNotBlank(), onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("LINKO ID", linkoId)); copied = true
-            }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy LINKO ID", tint = if (linkoId.isNotBlank()) Green else TextMuted) }
+            IconButton(enabled = linkoId.isNotBlank(), onClick = { copyId(linkoId) }) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy LINKO ID", tint = if (linkoId.isNotBlank()) Green else TextMuted)
+            }
         }
 
-        if (copied) Text("COPIED", color = Green, fontSize = 9.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
+        if (copied) Text("✓ LINKO ID COPIED", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
         Spacer(Modifier.height(14.dp))
 
         LinkoCard {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("ROLE", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono); Text("PROVIDER", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
+                Column {
+                    Text("ROLE", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                    Text("PROVIDER", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("STATUS", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (connectionBusy) { CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Green, strokeWidth = 2.dp); Spacer(Modifier.width(7.dp)) }
-                        Text(providerState, color = when (providerState) { "OFFLINE", "ID_ERROR", "DECLINED", "ENDED" -> Red; "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> TextSub; else -> Green }, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        if (connectionBusy) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Blue, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            providerState,
+                            color = when (providerState) {
+                                "OFFLINE", "DECLINED", "ENDED" -> Red
+                                "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> Blue
+                                else -> Green
+                            },
+                            fontSize = 15.sp,
+                            fontFamily = JetBrainsMono,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Text(when (providerState) { "READY" -> "Waiting for a friend to connect..."; "SHARING" -> "A friend is using your authorized connection."; "REQUESTED" -> "A friend is requesting access to your connection."; "APPROVED" -> "Connection approved. Preparing the tunnel..."; "SIGNALING" -> "Establishing a secure connection..."; "OFFLINE" -> "The connection service is offline."; "ID_ERROR" -> "Your LINKO profile is not initialized."; else -> "Preparing your LINKO provider..." }, color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
-            if (connectionBusy) {
-                Spacer(Modifier.height(12.dp))
-                Text(when (providerState) { "LOADING" -> "Preparing your sharing service…"; "REQUESTED" -> "Waiting for your approval…"; "APPROVED" -> "Preparing secure sharing…"; "SIGNALING" -> "Connecting the devices…"; else -> "Working…" }, color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-            }
+            Text(
+                when (providerState) {
+                    "READY" -> "Waiting for a friend to connect… Your LINKO ID is ready."
+                    "SHARING" -> "A friend is actively using your shared internet connection."
+                    "REQUESTED" -> "A friend is requesting access to your connection."
+                    "APPROVED" -> "Connection approved. Preparing the secure tunnel…"
+                    "SIGNALING" -> "Establishing encrypted AES-256-GCM data plane…"
+                    "LOADING" -> "Loading your account profile and LINKO ID…"
+                    "OFFLINE" -> "The connection service is offline."
+                    else -> "Preparing your LINKO provider…"
+                },
+                color = TextSub,
+                fontSize = 11.sp,
+                fontFamily = JetBrainsMono
+            )
         }
+
         Spacer(Modifier.weight(1f))
         Text("Your connection is never shared without your approval.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono)
         Spacer(Modifier.height(12.dp))
