@@ -73,7 +73,12 @@ export class RelayCoordinator {
     maxSessions: number;
   }): Promise<void> {
     const node: RelayNode = {
-      ...params,
+      id: params.nodeId,
+      host: params.host,
+      port: params.port,
+      region: params.region,
+      currentSessions: params.currentSessions,
+      maxSessions: params.maxSessions,
       status: "healthy",
       lastHealthAt: Date.now(),
     };

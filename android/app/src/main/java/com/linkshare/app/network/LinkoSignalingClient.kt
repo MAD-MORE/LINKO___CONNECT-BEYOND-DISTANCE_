@@ -1,56 +1,59 @@
 package com.linkshare.app.network
 
+import com.linkshare.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Authenticated client for the LINKO control-plane signaling API. */
+/** Authenticated client for Supabase-backed signaling. */
 class LinkoSignalingClient(
-    private val baseUrl: String,
+    private val baseUrl: String = BuildConfig.LINKO_SUPABASE_URL,
     private val accessToken: String,
 ) {
     suspend fun requestTicket(sessionId: String): SignalingTicket = withContext(Dispatchers.IO) {
-        val response = request("POST", "/v1/sessions/$sessionId/signaling/ticket")
+        val response = rpc("linko_signaling_ticket", JSONObject().put("p_session_id", sessionId))
         SignalingTicket(
-            sessionId = response.getString("sessionId"),
-            deviceId = response.getString("deviceId"),
-            expiresAtEpochMillis = response.getLong("expiresAt")
+            sessionId = response.optString("sessionId", sessionId),
+            deviceId = response.optString("deviceId"),
+            expiresAtEpochMillis = response.optLong("expiresAt", System.currentTimeMillis() + 300_000L)
         )
     }
 
     suspend fun send(sessionId: String, kind: SignalKind, payload: JSONObject): SignalEnvelope = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("kind", kind.wireValue).put("payload", payload)
-        val response = request("POST", "/v1/sessions/$sessionId/signaling", body)
+        val body = JSONObject()
+            .put("p_session_id", sessionId)
+            .put("p_kind", kind.wireValue)
+            .put("p_payload", payload)
+        val response = rpc("linko_send_signal", body)
         SignalEnvelope.fromJson(response)
     }
 
     suspend fun receive(sessionId: String): List<SignalEnvelope> = withContext(Dispatchers.IO) {
-        val response = request("GET", "/v1/sessions/$sessionId/signaling")
-        val result = response.getJSONArray("signals")
+        val response = rpc("linko_receive_signals", JSONObject().put("p_session_id", sessionId))
+        val result = response.optJSONArray("signals") ?: org.json.JSONArray()
         buildList(result.length()) { for (i in 0 until result.length()) add(SignalEnvelope.fromJson(result.getJSONObject(i))) }
     }
 
-    private fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
-        val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
+    private fun rpc(function: String, body: JSONObject): JSONObject {
+        val connection = (URL(baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
             connectTimeout = 10_000
             readTimeout = 15_000
+            doOutput = true
             setRequestProperty("Authorization", "Bearer $accessToken")
+            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
             setRequestProperty("Accept", "application/json")
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-            }
+            setRequestProperty("Content-Type", "application/json")
         }
         try {
-            body?.let { connection.outputStream.use { out -> out.write(it.toString().toByteArray(Charsets.UTF_8)) } }
+            connection.outputStream.use { out -> out.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = if (text.isBlank()) JSONObject() else JSONObject(text)
-            if (status !in 200..299) throw LinkoSignalingException(status, json.optString("error", "control_plane_error"))
+            if (status !in 200..299) throw LinkoSignalingException(status, json.optString("message", json.optString("error", "supabase_rpc_error")))
             return json
         } finally {
             connection.disconnect()
@@ -73,13 +76,13 @@ data class SignalEnvelope(
 ) {
     companion object {
         fun fromJson(json: JSONObject) = SignalEnvelope(
-            id = json.getString("id"),
-            sessionId = json.getString("sessionId"),
-            senderDeviceId = json.getString("senderDeviceId"),
-            recipientDeviceId = json.getString("recipientDeviceId"),
-            kind = when (json.getString("kind")) { "offer" -> SignalKind.OFFER; "answer" -> SignalKind.ANSWER; else -> SignalKind.ICE },
+            id = json.optString("id", java.util.UUID.randomUUID().toString()),
+            sessionId = json.optString("sessionId"),
+            senderDeviceId = json.optString("senderDeviceId"),
+            recipientDeviceId = json.optString("recipientDeviceId"),
+            kind = when (json.optString("kind")) { "offer" -> SignalKind.OFFER; "answer" -> SignalKind.ANSWER; else -> SignalKind.ICE },
             payload = json.optJSONObject("payload") ?: JSONObject(),
-            createdAtEpochMillis = json.getLong("createdAt"),
+            createdAtEpochMillis = json.optLong("createdAt", System.currentTimeMillis()),
         )
     }
 }

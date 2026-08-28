@@ -105,7 +105,7 @@ BANDWIDTH_LIMIT_BYTES_PER_SESSION=1073741824
 ### Android (`gradle.properties` / CI secrets)
 
 ```
-LINKO_CONTROL_PLANE_URL=https://linko-backend.fly.dev
+LINKO_CONTROL_PLANE_URL=https://<project>.supabase.co
 LINKO_SUPABASE_URL=https://<project>.supabase.co
 LINKO_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```

@@ -100,8 +100,8 @@ export class UsageService {
       [deviceId]
     );
     const row = result.rows[0];
-    const bytesUp = parseInt(row.bytes_up, 10);
-    const bytesDown = parseInt(row.bytes_down, 10);
+    const bytesUp = parseInt(row?.bytes_up ?? "0", 10);
+    const bytesDown = parseInt(row?.bytes_down ?? "0", 10);
     return { bytesUp, bytesDown, total: bytesUp + bytesDown };
   }
 

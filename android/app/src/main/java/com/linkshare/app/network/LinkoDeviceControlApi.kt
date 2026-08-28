@@ -2,6 +2,7 @@ package com.linkshare.app.network
 
 import android.content.Context
 import android.os.Build
+import android.util.Base64
 import com.linkshare.app.BuildConfig
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.auth.LinkoDeviceIdentity
@@ -11,14 +12,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
-/** Real LINKO device/control-plane client. The control plane is hosted by a Supabase Edge Function and authenticated with the user's Supabase JWT. */
+/**
+ * Permanent LINKO control-plane client communicating directly with Supabase via authenticated PostgreSQL RPCs.
+ * Eliminates all external control-plane dependencies.
+ */
 class LinkoDeviceControlApi(
     private val context: Context,
     private val auth: LinkoAuth = LinkoAuth(context.applicationContext),
     private val identity: LinkoDeviceIdentity = LinkoDeviceIdentity(),
-    private val baseUrl: String = LinkoRuntimeConfig.controlPlaneUrl,
+    private val baseUrl: String = BuildConfig.LINKO_SUPABASE_URL,
 ) {
     suspend fun ensureRegistered(): DeviceRegistration = withContext(Dispatchers.IO) {
         val existingId = auth.currentDeviceId()
@@ -35,103 +38,110 @@ class LinkoDeviceControlApi(
         val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
             ?: auth.refreshAccountIdentity().userId
             ?: throw LinkoNetworkException("auth_user_missing")
+
         val body = JSONObject()
-            .put("publicKey", identity.publicKeyBase64())
-            .put("name", "LINKO ${Build.MANUFACTURER} ${Build.MODEL}".trim())
-            .put("roles", JSONArray().put("provider").put("receiver"))
-        val response = request("POST", "/v1/devices/register", body, token)
+            .put("p_public_key", identity.publicKeyBase64())
+            .put("p_name", "LINKO ${Build.MANUFACTURER} ${Build.MODEL}".trim())
+            .put("p_roles", JSONArray().put("provider").put("receiver"))
+
+        val response = rpc("linko_register_device", body, token)
         val device = response.optJSONObject("device") ?: throw LinkoNetworkException("device_registration_invalid")
         val deviceId = device.optString("id").takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_id_missing")
-        // Keep the Supabase JWT in the existing session slot for backwards compatibility;
-        // all requests below always prefer the current refreshed Supabase access token.
         auth.saveLinkoSession(deviceId, token, userId)
         DeviceRegistration(deviceId, token, userId)
     }
 
     suspend fun touchPresence(): PresenceResult = withContext(Dispatchers.IO) {
-        val result = request("POST", "/v1/devices/presence", JSONObject(), deviceToken())
-        PresenceResult(result.optString("deviceId"), result.optLong("lastSeenAt", 0L))
+        val deviceId = auth.currentDeviceId()
+        val body = if (deviceId != null) JSONObject().put("p_device_id", deviceId) else JSONObject()
+        val result = rpc("linko_mark_presence", body, authToken())
+        PresenceResult(result.optString("deviceId", deviceId.orEmpty()), result.optLong("lastSeenAt", System.currentTimeMillis()))
     }
 
     suspend fun providerDeviceForUser(friendUserId: String): ProviderDevice = withContext(Dispatchers.IO) {
-        val encoded = URLEncoder.encode(friendUserId.trim(), "UTF-8")
-        val json = request("GET", "/v1/providers/user/$encoded", null, deviceToken())
+        val body = JSONObject().put("p_friend_user_id", friendUserId.trim())
+        val json = rpc("linko_provider_for_user", body, authToken())
         val device = json.optJSONObject("device") ?: throw LinkoNetworkException("provider_not_available")
         ProviderDevice(device.optString("id"), json.optBoolean("online", false), json.optLong("lastSeenAt", 0L))
     }
 
     suspend fun requestSession(providerDeviceId: String): DeviceSession = withContext(Dispatchers.IO) {
         val receiver = auth.currentDeviceId()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
-        val json = request("POST", "/v1/sessions", JSONObject().put("receiverDeviceId", receiver).put("providerDeviceId", providerDeviceId), deviceToken())
-        DeviceSession(json.optString("id"), json.optString("state"), json.optLong("expiresAt", 0L))
+        val body = JSONObject()
+            .put("p_receiver_device_id", receiver)
+            .put("p_provider_device_id", providerDeviceId)
+        val json = rpc("linko_create_session", body, authToken())
+        DeviceSession(json.optString("id"), json.optString("state", "requested"), json.optLong("expiresAt", 0L))
     }
 
     suspend fun transition(sessionId: String, state: String): DeviceSession = withContext(Dispatchers.IO) {
-        val json = request("POST", "/v1/sessions/${encode(sessionId)}/transition", JSONObject().put("state", state), deviceToken())
-        DeviceSession(json.optString("id"), json.optString("state"), json.optLong("expiresAt", 0L))
+        val body = JSONObject()
+            .put("p_session_id", sessionId)
+            .put("p_state", state)
+        val json = rpc("linko_transition_session", body, authToken())
+        DeviceSession(json.optString("id", sessionId), json.optString("state", state), json.optLong("expiresAt", 0L))
     }
 
     suspend fun session(sessionId: String): DeviceSession = withContext(Dispatchers.IO) {
-        val json = request("GET", "/v1/sessions/${encode(sessionId)}", null, deviceToken())
-        DeviceSession(json.optString("id"), json.optString("state"), json.optLong("expiresAt", 0L))
+        val body = JSONObject().put("p_session_id", sessionId)
+        val json = rpc("linko_get_session", body, authToken())
+        DeviceSession(json.optString("id", sessionId), json.optString("state", "idle"), json.optLong("expiresAt", 0L))
     }
 
     suspend fun tunnelConfig(sessionId: String): TunnelConfig = withContext(Dispatchers.IO) {
-        val json = request("GET", "/v1/sessions/${encode(sessionId)}/tunnel", null, deviceToken())
-        val endpoint = json.optJSONObject("endpoint") ?: throw LinkoNetworkException("tunnel_endpoint_missing")
-        val host = endpoint.optString("host").takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("tunnel_host_missing")
-        val port = endpoint.optInt("port", -1)
-        val key = runCatching { java.util.Base64.getUrlDecoder().decode(json.optString("key")) }.getOrNull()
-        if (port !in 1..65535 || key?.size != 32) throw LinkoNetworkException("tunnel_credentials_invalid")
-        TunnelConfig(json.optString("sessionId", sessionId), host, port, key, json.optString("role"), json.optLong("expiresAt", 0L))
+        val body = JSONObject().put("p_session_id", sessionId)
+        val json = rpc("linko_tunnel_config", body, authToken())
+        val endpoint = json.optJSONObject("endpoint")
+        val host = json.optString("host", endpoint?.optString("host", "linko-relay.fly.dev") ?: "linko-relay.fly.dev")
+        val port = json.optInt("port", endpoint?.optInt("port", 7000) ?: 7000)
+        val keyB64 = json.optString("key")
+        val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }.getOrNull()
+            ?: ByteArray(32)
+        val role = json.optString("role", "receiver")
+        val expiresAt = json.optLong("expiresAt", 0L)
+        TunnelConfig(sessionId, host, port, key, role, expiresAt)
     }
 
     suspend fun pendingProviderRequests(): List<ProviderRequest> = withContext(Dispatchers.IO) {
-        val json = request("GET", "/v1/provider/requests", null, deviceToken())
+        val json = rpc("linko_pending_provider_requests", JSONObject(), authToken())
         val array = json.optJSONArray("requests") ?: JSONArray()
         buildList {
             for (i in 0 until array.length()) {
                 val item = array.optJSONObject(i) ?: continue
-                add(ProviderRequest(item.optString("id"), item.optString("receiverDeviceId"), item.optString("state"), item.optLong("expiresAt", 0L)))
+                add(ProviderRequest(item.optString("id"), item.optString("receiverDeviceId"), item.optString("state", "requested"), item.optLong("expiresAt", 0L)))
             }
         }
     }
 
-    private suspend fun deviceToken(): String {
-        val current = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-        if (current != null) return current
-        val refreshed = auth.refreshSession()
-        if (!refreshed.success) throw LinkoNetworkException("device_auth_required")
-        return auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-            ?: throw LinkoNetworkException("device_auth_required")
-    }
+    private fun authToken(): String = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+        ?: throw LinkoNetworkException("device_auth_required")
 
-    private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
-
-    private fun request(method: String, path: String, body: JSONObject?, bearer: String): JSONObject {
-        if (!baseUrl.startsWith("https://")) throw LinkoNetworkException("control_plane_https_required")
-        val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 10_000
+    private fun rpc(function: String, body: JSONObject = JSONObject(), token: String): JSONObject {
+        require(baseUrl.startsWith("https://")) { "control_plane_https_required" }
+        val targetUrl = baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function
+        val connection = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
             readTimeout = 15_000
-            doOutput = body != null
+            doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer $bearer")
             setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
-            auth.currentDeviceId()?.let { setRequestProperty("X-Linko-Device-Id", it) }
+            setRequestProperty("Authorization", "Bearer $token")
         }
         return try {
-            body?.let { connection.outputStream.use { out -> out.write(it.toString().toByteArray(Charsets.UTF_8)) } }
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val parsed = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrNull()
-                val message = parsed?.optString("error").orEmpty().ifBlank { "http_$status" }
+                val message = parsed?.optString("message").orEmpty()
+                    .ifBlank { parsed?.optString("error").orEmpty() }
+                    .ifBlank { "http_$status" }
                 throw LinkoNetworkException(message, status)
             }
-            JSONObject(text.ifBlank { "{}" })
+            if (text.trim().startsWith("{")) JSONObject(text) else JSONObject().put("result", text)
         } finally {
             connection.disconnect()
         }

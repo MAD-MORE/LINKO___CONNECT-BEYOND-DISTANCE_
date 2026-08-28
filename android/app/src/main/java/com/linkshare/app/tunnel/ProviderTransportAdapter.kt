@@ -4,24 +4,40 @@ import java.io.Closeable
 import java.net.DatagramSocket
 
 /**
- * Provider data-plane boundary. Implementations receive complete IP packets and return
- * complete IP packets. The default implementation supports the currently implemented
- * IPv4/UDP adapter and rejects protocols it cannot safely forward.
+ * Provider data-plane boundary interface.
+ * Receives complete raw IP packets from client over the encrypted tunnel,
+ * forwards them via provider's active network connection, and returns response packets.
  */
 interface ProviderTransportAdapter : Closeable {
-    fun forward(packet: ByteArray, timeoutMs: Int = 2_000): ByteArray?
+    fun forward(packet: ByteArray): List<ByteArray>
+    fun drainPending(maxCount: Int = 32): List<ByteArray>
 }
 
-class UdpOnlyProviderTransportAdapter : ProviderTransportAdapter {
-    private val delegate = ProviderUdpPacketForwarder()
+/** Full IP implementation handling UDP, TCP, and ICMP. */
+class FullIpProviderTransportAdapter : ProviderTransportAdapter {
+    private val delegate = ProviderIpPacketForwarder()
 
-    override fun forward(packet: ByteArray, timeoutMs: Int): ByteArray? =
-        delegate.forward(packet, timeoutMs)
+    override fun forward(packet: ByteArray): List<ByteArray> =
+        delegate.forward(packet)
+
+    override fun drainPending(maxCount: Int): List<ByteArray> =
+        delegate.drainTcpResponses(maxCount)
 
     override fun close() = delegate.close()
 }
 
-/** Creates protected provider sockets; the caller must protect the socket with VpnService. */
+/** Legacy UDP-only implementation. */
+class UdpOnlyProviderTransportAdapter : ProviderTransportAdapter {
+    private val delegate = ProviderUdpPacketForwarder()
+
+    override fun forward(packet: ByteArray): List<ByteArray> =
+        listOfNotNull(delegate.forward(packet))
+
+    override fun drainPending(maxCount: Int): List<ByteArray> = emptyList()
+
+    override fun close() = delegate.close()
+}
+
 object ProviderSocketFactory {
     fun openDatagramSocket(): DatagramSocket = DatagramSocket()
 }

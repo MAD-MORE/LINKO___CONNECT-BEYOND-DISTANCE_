@@ -1,6 +1,6 @@
 package com.linkshare.app.network
 
-/** UI-facing states. Transport events only move the state; the backend remains authoritative. */
+/** UI-facing state machine. Transport and protocol events transition the state. */
 object LinkoStateMachine {
     enum class Friendship {
         NONE,
@@ -22,14 +22,26 @@ object LinkoStateMachine {
     enum class Connection {
         IDLE,
         REQUESTED,
-        APPROVED,
+        AUTHORIZED,
         SIGNALING,
-        CONNECTING,
+        HANDSHAKING,
+        TUNNEL_ESTABLISHED,
+        TRAFFIC_ACTIVE,
+        DISCONNECTING,
         CONNECTED,
         DENIED,
         REVOKED,
         EXPIRED,
         DISCONNECTED,
+        AUTH_FAILED,
+        SESSION_EXPIRED,
+        HANDSHAKE_FAILED,
+        DIRECT_PATH_FAILED,
+        RELAY_FAILED,
+        NETWORK_LOST,
+        PROVIDER_OFFLINE,
+        CLIENT_OFFLINE,
+        TIMEOUT,
     }
 
     fun friendshipFromBackend(state: String?): Friendship = when (state?.trim()?.lowercase()) {
@@ -51,13 +63,24 @@ object LinkoStateMachine {
 
     fun connectionFromBackend(state: String?): Connection = when (state?.trim()?.lowercase()) {
         "requested" -> Connection.REQUESTED
-        "approved" -> Connection.APPROVED
+        "approved", "authorized" -> Connection.AUTHORIZED
         "signaling" -> Connection.SIGNALING
-        "connecting" -> Connection.CONNECTING
+        "handshaking" -> Connection.HANDSHAKING
+        "tunnel_established" -> Connection.TUNNEL_ESTABLISHED
+        "traffic_active" -> Connection.TRAFFIC_ACTIVE
+        "connecting" -> Connection.HANDSHAKING
         "connected" -> Connection.CONNECTED
         "denied" -> Connection.DENIED
         "revoked" -> Connection.REVOKED
         "expired" -> Connection.EXPIRED
+        "auth_failed" -> Connection.AUTH_FAILED
+        "session_expired" -> Connection.SESSION_EXPIRED
+        "handshake_failed" -> Connection.HANDSHAKE_FAILED
+        "relay_failed" -> Connection.RELAY_FAILED
+        "network_lost" -> Connection.NETWORK_LOST
+        "provider_offline" -> Connection.PROVIDER_OFFLINE
+        "timeout" -> Connection.TIMEOUT
+        "disconnecting" -> Connection.DISCONNECTING
         "disconnected", "failed" -> Connection.DISCONNECTED
         else -> Connection.IDLE
     }

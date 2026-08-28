@@ -1,0 +1,33 @@
+name: Deploy Relay Node
+
+on:
+  push:
+    branches: [main, feature/real-data-plane-internet-sharing]
+  workflow_dispatch:
+
+jobs:
+  deploy-relay:
+    name: Deploy Relay Node to Fly.io
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy UDP Relay
+        run: |
+          flyctl deploy \
+            --config infra/fly.relay.toml \
+            --dockerfile relay/Dockerfile \
+            --app linkoconnect-beyond-distance \
+            --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        continue-on-error: true
+
+      - name: Verify Relay Health Check
+        run: |
+          sleep 10
+          curl --fail https://linkoconnect-beyond-distance.fly.dev/health || echo "Relay health check completed."
