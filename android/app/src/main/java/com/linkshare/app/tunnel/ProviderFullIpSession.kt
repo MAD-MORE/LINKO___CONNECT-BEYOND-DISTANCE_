@@ -49,9 +49,9 @@ class ProviderFullIpSession(
             ParcelFileDescriptor.AutoCloseOutputStream(tun.dup()).use { output ->
                 while (isActive) {
                     try {
-                        val packet = tunnel.receive(1_000) ?: continue
-                        if (packet.size <= MAX_IP_PACKET) {
-                            output.write(packet)
+                        val rx = tunnel.receive(1_000) ?: continue
+                        if (rx.payload.size <= MAX_IP_PACKET) {
+                            output.write(rx.payload)
                             output.flush()
                         }
                     } catch (_: SocketTimeoutException) {
