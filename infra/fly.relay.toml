@@ -1,0 +1,46 @@
+# fly.toml — Linko Relay Node
+# Deploy: fly deploy -c infra/fly.relay.toml
+# Add regions: fly scale count 1 --region lhr,sin -c infra/fly.relay.toml
+
+app = "linko-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "relay/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  UDP_PORT = "7000"
+  PORT = "7001"
+  RELAY_REGION = "iad"
+  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824"
+
+# UDP service — relay traffic
+[[services]]
+  protocol = "udp"
+  internal_port = 7000
+
+  [[services.ports]]
+    port = 7000
+
+# HTTP service — health checks
+[http_service]
+  internal_port = 7001
+  force_https = false
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Secrets to set:
+# fly secrets set RELAY_NODE_ID=iad-1 -c infra/fly.relay.toml

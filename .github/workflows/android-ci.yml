@@ -1,0 +1,49 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build Debug APK & Run Unit Tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant Gradle execute permission
+        run: chmod +x android/gradlew
+
+      - name: Run unit tests
+        working-directory: android
+        run: ./gradlew test --no-daemon
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+        env:
+          LINKO_CONTROL_PLANE_URL: https://linko-backend.fly.dev
+          LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL }}
+          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: linko-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
