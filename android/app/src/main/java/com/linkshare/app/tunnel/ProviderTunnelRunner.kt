@@ -40,7 +40,7 @@ class ProviderTunnelRunner(
         if (receiveJob != null) return
 
         receiveJob = scope.launch(Dispatchers.IO) {
-            Log.i(TAG, "Provider tunnel loop started for session=$sessionId endpoint=$endpoint")
+            runCatching { Log.i(TAG, "Provider tunnel loop started for session=$sessionId endpoint=$endpoint") }
             while (isActive) {
                 try {
                     val rx = tunnel.receive(500) ?: continue
@@ -60,7 +60,7 @@ class ProviderTunnelRunner(
                             tunnel.sendPong(timestamp)
                         }
                         EncryptedDatagramTunnel.PacketType.CLOSE -> {
-                            Log.i(TAG, "Received CLOSE signal from client for session=$sessionId")
+                            runCatching { Log.i(TAG, "Received CLOSE signal from client for session=$sessionId") }
                             break
                         }
                         else -> Unit
@@ -68,7 +68,7 @@ class ProviderTunnelRunner(
                 } catch (_: java.net.SocketTimeoutException) {
                     // Poll again while keeping session alive.
                 } catch (e: Exception) {
-                    Log.w(TAG, "Provider packet processing error: ${e.message}")
+                    runCatching { Log.w(TAG, "Provider packet processing error: ${e.message}") }
                 }
             }
         }
@@ -97,7 +97,7 @@ class ProviderTunnelRunner(
         drainJob = null
         adapter.close()
         tunnel.close()
-        Log.i(TAG, "Provider tunnel stopped for session=$sessionId")
+        runCatching { Log.i(TAG, "Provider tunnel stopped for session=$sessionId") }
     }
 
     override fun close() = stop()

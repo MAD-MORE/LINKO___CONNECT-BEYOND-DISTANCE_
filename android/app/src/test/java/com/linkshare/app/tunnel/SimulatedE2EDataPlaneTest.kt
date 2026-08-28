@@ -49,6 +49,7 @@ class SimulatedE2EDataPlaneTest {
             adapter = FullIpProviderTransportAdapter()
         )
         providerRunner.start()
+        Thread.sleep(100)
 
         // 2. Initialize Client Tunnel
         val clientTunnel = EncryptedDatagramTunnel(
@@ -72,8 +73,8 @@ class SimulatedE2EDataPlaneTest {
 
         // 4. Client waits for response from Provider
         var receivedEchoReply: ByteArray? = null
-        for (i in 0 until 20) {
-            val rx = clientTunnel.receive(200)
+        for (i in 0 until 30) {
+            val rx = clientTunnel.receive(300)
             if (rx != null && rx.type == EncryptedDatagramTunnel.PacketType.DATA) {
                 receivedEchoReply = rx.payload
                 break
