@@ -146,12 +146,12 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                     SignInScreen(
                         auth,
                         onSignedIn = {
-                            bootstrapping = true
+                            splashShowing = true
                             bootstrapFailed = false
                             scope.launch {
                                 val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
                                 bootstrapFailed = !initialized && !auth.isSignedIn()
-                                bootstrapping = false
+                                splashShowing = false
                                 nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
                             }
                         },
