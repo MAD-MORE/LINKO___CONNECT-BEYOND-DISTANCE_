@@ -92,7 +92,7 @@ class LinkoDeviceControlApi(
         val body = JSONObject().put("p_session_id", sessionId)
         val json = rpc("linko_tunnel_config", body, authToken())
         val endpoint = json.optJSONObject("endpoint")
-        val host = json.optString("host", endpoint?.optString("host", "linko-relay.fly.dev") ?: "linko-relay.fly.dev")
+        val host = json.optString("host", endpoint?.optString("host", "linkoconnect-beyond-distance.fly.dev") ?: "linkoconnect-beyond-distance.fly.dev")
         val port = json.optInt("port", endpoint?.optInt("port", 7000) ?: 7000)
         val keyB64 = json.optString("key")
         val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }.getOrNull()

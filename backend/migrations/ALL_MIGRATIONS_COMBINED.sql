@@ -432,7 +432,7 @@ DECLARE
     v_user_id UUID;
     v_session RECORD;
     v_provider RECORD;
-    v_relay_host TEXT := 'linko-relay.fly.dev';
+    v_relay_host TEXT := 'linkoconnect-beyond-distance.fly.dev';
     v_relay_port INT := 7000;
 BEGIN
     v_user_id := auth.uid();
@@ -463,7 +463,7 @@ BEGIN
     LIMIT 1;
 
     IF v_relay_host IS NULL THEN
-        v_relay_host := 'linko-relay.fly.dev';
+        v_relay_host := 'linkoconnect-beyond-distance.fly.dev';
         v_relay_port := 7000;
     END IF;
 
@@ -644,7 +644,7 @@ DECLARE
     v_role TEXT;
     v_key_bytes BYTEA;
     v_key_b64 TEXT;
-    v_relay_host TEXT := 'linko-relay.fly.dev';
+    v_relay_host TEXT := 'linkoconnect-beyond-distance.fly.dev';
     v_relay_port INT := 7000;
 BEGIN
     v_user_id := auth.uid();
@@ -680,7 +680,7 @@ BEGIN
     LIMIT 1;
 
     IF v_relay_host IS NULL THEN
-        v_relay_host := 'linko-relay.fly.dev';
+        v_relay_host := 'linkoconnect-beyond-distance.fly.dev';
         v_relay_port := 7000;
     END IF;
 
