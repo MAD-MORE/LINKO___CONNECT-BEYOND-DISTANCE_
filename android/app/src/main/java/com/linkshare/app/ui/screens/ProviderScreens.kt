@@ -77,6 +77,9 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         Toast.makeText(context, "LINKO ID copied: $clean", Toast.LENGTH_SHORT).show()
     }
 
+    val scope = rememberCoroutineScope()
+    var pendingRequestId by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(Unit) {
         LinkoProviderService.start(context)
 
@@ -95,22 +98,52 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             }
         }
 
-        LinkoRealtimeManager.events.collect { event ->
-            when (event) {
-                is LinkoRealtimeEvent.FriendRequestReceived -> onIncomingRequest()
-                is LinkoRealtimeEvent.SessionStateChanged -> {
-                    providerState = when (event.state) {
-                        "requested" -> "REQUESTED"
-                        "approved" -> "APPROVED"
-                        "signaling" -> "SIGNALING"
-                        "connected" -> "SHARING"
-                        "denied" -> "DECLINED"
-                        "revoked", "expired" -> "ENDED"
-                        else -> providerState
+        // Realtime event listener
+        launch {
+            LinkoRealtimeManager.events.collect { event ->
+                when (event) {
+                    is LinkoRealtimeEvent.IncomingConnectionRequest -> {
+                        pendingRequestId = event.sessionId
+                        providerState = "REQUESTED"
+                    }
+                    is LinkoRealtimeEvent.FriendRequestReceived -> onIncomingRequest()
+                    is LinkoRealtimeEvent.SessionStateChanged -> {
+                        if (event.state == "requested") {
+                            pendingRequestId = event.sessionId
+                            providerState = "REQUESTED"
+                        } else {
+                            providerState = when (event.state) {
+                                "approved" -> "APPROVED"
+                                "signaling" -> "SIGNALING"
+                                "connected" -> "SHARING"
+                                "denied" -> "DECLINED"
+                                "revoked", "expired" -> "ENDED"
+                                else -> providerState
+                            }
+                            if (event.state != "requested") pendingRequestId = null
+                        }
+                    }
+                    is LinkoRealtimeEvent.TransportError -> if (linkoId.isNotBlank() && providerState == "SHARING") providerState = "OFFLINE"
+                    else -> Unit
+                }
+            }
+        }
+
+        // Polling fallback every 2 seconds for resilient request detection
+        launch {
+            while (true) {
+                runCatching {
+                    val requests = withContext(Dispatchers.IO) { LinkoEngineBridge.api?.pendingProviderRequests() }
+                    val first = requests?.firstOrNull()
+                    if (first != null) {
+                        pendingRequestId = first.id
+                        providerState = "REQUESTED"
+                    } else if (providerState == "REQUESTED") {
+                        pendingRequestId = null
+                        providerState = "READY"
                     }
                 }
-                is LinkoRealtimeEvent.TransportError -> if (linkoId.isNotBlank() && providerState == "SHARING") providerState = "OFFLINE"
-                else -> Unit
+                delay(2000)
             }
         }
     }
@@ -173,6 +206,43 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         }
 
         if (copied) Text("✓ LINKO ID COPIED", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
+        
+        if (pendingRequestId != null || providerState == "REQUESTED") {
+            Spacer(Modifier.height(14.dp))
+            LinkoCard(modifier = Modifier.fillMaxWidth().border(1.dp, Green, RoundedCornerShape(12.dp))) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Green, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("⚡ FRIEND WANTS TO CONNECT", color = Green, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("A LINKO friend has requested to use your shared internet connection.", color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono)
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrimaryButton("APPROVE & SHARE", {
+                        scope.launch {
+                            LinkoEngineBridge.approvePendingProviderRequest { state ->
+                                if (state == "approved") {
+                                    LinkoEngineBridge.startApprovedProviderSession()
+                                    pendingRequestId = null
+                                    providerState = "SHARING"
+                                    Toast.makeText(context, "Connection Approved! Sharing Internet.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }, color = Green)
+                    PrimaryButton("DECLINE", {
+                        scope.launch {
+                            LinkoEngineBridge.denyPendingProviderRequest {
+                                pendingRequestId = null
+                                providerState = "READY"
+                            }
+                        }
+                    }, color = Red, outline = true)
+                }
+            }
+        }
+
         Spacer(Modifier.height(14.dp))
 
         LinkoCard {

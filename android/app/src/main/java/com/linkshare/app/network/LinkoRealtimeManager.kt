@@ -120,10 +120,12 @@ object LinkoRealtimeManager {
             runCatching {
                 flow.collect { action ->
                     val record = recordToJson(action)
-                    _events.tryEmit(LinkoRealtimeEvent.SessionStateChanged(
-                        record?.optString("id")?.takeIf { it.isNotBlank() },
-                        record?.optString("state")?.takeIf { it.isNotBlank() },
-                    ))
+                    val sessionId = record?.optString("id")?.takeIf { it.isNotBlank() }
+                    val state = record?.optString("state")?.takeIf { it.isNotBlank() }
+                    _events.tryEmit(LinkoRealtimeEvent.SessionStateChanged(sessionId, state))
+                    if (state == "requested" && sessionId != null) {
+                        notify(LinkoRealtimeEvent.IncomingConnectionRequest(sessionId))
+                    }
                 }
             }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
         }
@@ -184,6 +186,7 @@ object LinkoRealtimeManager {
         _events.tryEmit(event)
         if (foreground) return
         val title = when (event) {
+            is LinkoRealtimeEvent.IncomingConnectionRequest -> "⚡ Incoming LINKO Connection Request"
             is LinkoRealtimeEvent.FriendRequestReceived -> "New LINKO friend request"
             is LinkoRealtimeEvent.FriendRequestAccepted -> "LINKO friend request accepted"
             is LinkoRealtimeEvent.FriendRequestDeclined -> "LINKO friend request declined"
@@ -191,6 +194,7 @@ object LinkoRealtimeManager {
             else -> return
         }
         val text = when (event) {
+            is LinkoRealtimeEvent.IncomingConnectionRequest -> "A friend is requesting to share your internet connection. Tap to approve."
             is LinkoRealtimeEvent.FriendRequestReceived -> "Open LINKO to accept or decline the request."
             is LinkoRealtimeEvent.FriendRequestAccepted -> "You are now friends."
             is LinkoRealtimeEvent.FriendRequestDeclined -> "The request was declined."
@@ -239,6 +243,7 @@ object LinkoRealtimeManager {
 data class LinkoPresence(val userId: String, val deviceId: String, val state: String, val online: Boolean)
 
 sealed interface LinkoRealtimeEvent {
+    data class IncomingConnectionRequest(val sessionId: String, val peerName: String? = null) : LinkoRealtimeEvent
     data class FriendRequestReceived(val requestId: String) : LinkoRealtimeEvent
     data class FriendRequestSent(val requestId: String) : LinkoRealtimeEvent
     data class FriendRequestAccepted(val requestId: String) : LinkoRealtimeEvent
