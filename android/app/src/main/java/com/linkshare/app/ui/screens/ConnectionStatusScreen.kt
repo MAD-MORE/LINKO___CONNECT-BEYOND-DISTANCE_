@@ -1,5 +1,9 @@
 package com.linkshare.app.ui.screens
 
+import android.app.Activity
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -19,9 +23,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,7 +57,21 @@ fun ConnectionStatusScreen(
     onConnected: () -> Unit,
     onFailed: () -> Unit,
 ) {
+    val context = LocalContext.current
     val state by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
+    var vpnGranted by remember { mutableStateOf(VpnService.prepare(context) == null) }
+    val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        vpnGranted = result.resultCode == Activity.RESULT_OK || VpnService.prepare(context) == null
+    }
+
+    LaunchedEffect(Unit) {
+        val prepareIntent = VpnService.prepare(context)
+        if (prepareIntent != null) {
+            vpnLauncher.launch(prepareIntent)
+        } else {
+            vpnGranted = true
+        }
+    }
 
     LaunchedEffect(state.phase) {
         if (state.phase == LinkoConnectionPhase.Connected) onConnected()
@@ -119,6 +141,7 @@ fun ConnectionStatusScreen(
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
+
             Spacer(Modifier.height(8.dp))
             Text(
                 detailedExplanation,
@@ -126,43 +149,105 @@ fun ConnectionStatusScreen(
                 fontSize = 12.sp,
                 fontFamily = JetBrainsMono,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 12.dp)
+                lineHeight = 18.sp
             )
+
+            if (!vpnGranted) {
+                Spacer(Modifier.height(14.dp))
+                LinkoCard {
+                    Text("VPN PERMISSION REQUIRED", color = Yellow, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Android requires one-time VPN permission to route device internet traffic through your friend's connection.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+                    Spacer(Modifier.height(10.dp))
+                    PrimaryButton("ALLOW VPN PERMISSION", {
+                        val prepareIntent = VpnService.prepare(context)
+                        if (prepareIntent != null) vpnLauncher.launch(prepareIntent)
+                        else vpnGranted = true
+                    }, color = Blue)
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Step-by-step 4-Phase Progress Checklist
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .background(Surface)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "CONNECTION PIPELINE",
+                    color = TextMuted,
+                    fontSize = 10.sp,
+                    fontFamily = JetBrainsMono,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.15.sp
+                )
+
+                PipelineStepRow(
+                    stepNumber = 1,
+                    title = "Device Discovery",
+                    subtitle = "Finding friend on LINKO network",
+                    currentStep = stepIndex,
+                    stepTarget = 1
+                )
+
+                PipelineStepRow(
+                    stepNumber = 2,
+                    title = "Friend Authorization",
+                    subtitle = "Waiting for friend approval",
+                    currentStep = stepIndex,
+                    stepTarget = 2
+                )
+
+                PipelineStepRow(
+                    stepNumber = 3,
+                    title = "AES-256-GCM Key Exchange",
+                    subtitle = "Securing zero-knowledge data tunnel",
+                    currentStep = stepIndex,
+                    stepTarget = 3
+                )
+
+                PipelineStepRow(
+                    stepNumber = 4,
+                    title = "VPN Packet Routing",
+                    subtitle = "Piping Android IP traffic through tunnel",
+                    currentStep = stepIndex,
+                    stepTarget = 4
+                )
+            }
         }
 
-        // Live Connection Steps Progress Card
-        if (state.phase != LinkoConnectionPhase.Failed) {
-            LinkoCard {
-                Text("CONNECTION PIPELINE", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
-                StepRow("1. Device Discovery", stepIndex >= 1, stepIndex == 1)
-                Spacer(Modifier.height(8.dp))
-                StepRow("2. Friend Authorization", stepIndex >= 2, stepIndex == 2)
-                Spacer(Modifier.height(8.dp))
-                StepRow("3. AES-256-GCM Key Exchange", stepIndex >= 3, stepIndex == 3)
-                Spacer(Modifier.height(8.dp))
-                StepRow("4. VPN Packet Routing", stepIndex >= 4, stepIndex == 4)
-            }
-        } else {
-            LinkoCard {
-                Text("WHAT WENT WRONG?", color = Red, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text(detailedExplanation, color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
-                Spacer(Modifier.height(8.dp))
-                Text("What you can do: Ask your friend to open LINKO and verify 'Share My Network' is running, then tap Retry below.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
-            }
-        }
-
-        // Action Buttons
-        Column(Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             if (state.phase == LinkoConnectionPhase.Failed) {
-                PrimaryButton("RETRY CONNECTION", { LinkoEngineBridge.reconnect() }, color = Blue)
+                PrimaryButton(
+                    label = "RETRY CONNECTION",
+                    onClick = {
+                        LinkoEngineBridge.disconnect()
+                        onFailed()
+                    },
+                    color = Blue
+                )
                 Spacer(Modifier.height(10.dp))
-                PrimaryButton("RETURN TO FRIENDS", onFailed, outline = true)
+                PrimaryButton(
+                    label = "CANCEL",
+                    onClick = {
+                        LinkoEngineBridge.disconnect()
+                        onFailed()
+                    },
+                    color = Red,
+                    outline = true
+                )
             } else {
                 PrimaryButton(
-                    "CANCEL CONNECTION",
-                    {
+                    label = "CANCEL REQUEST",
+                    onClick = {
                         LinkoEngineBridge.disconnect()
                         onFailed()
                     },
@@ -176,57 +261,86 @@ fun ConnectionStatusScreen(
 }
 
 @Composable
-private fun StepRow(title: String, completed: Boolean, inProgress: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun PipelineStepRow(
+    stepNumber: Int,
+    title: String,
+    subtitle: String,
+    currentStep: Int,
+    stepTarget: Int
+) {
+    val isComplete = currentStep > stepTarget
+    val isActive = currentStep == stepTarget
+    val isFailed = currentStep == -1
+
+    val iconColor = when {
+        isComplete -> Green
+        isActive -> Blue
+        isFailed -> TextMuted
+        else -> TextMuted
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(20.dp)
+                .size(24.dp)
                 .clip(CircleShape)
-                .background(
-                    when {
-                        completed && !inProgress -> Green.copy(alpha = 0.2f)
-                        inProgress -> Blue.copy(alpha = 0.2f)
-                        else -> Surface
-                    }
-                ),
-            contentAlignment = Alignment.Center
+                .background(iconColor.copy(alpha = if (isActive || isComplete) 0.2f else 0.1f))
         ) {
-            if (inProgress) {
-                CircularProgressIndicator(modifier = Modifier.size(12.dp), color = Blue, strokeWidth = 2.dp)
+            if (isActive) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    color = Blue,
+                    strokeWidth = 2.dp
+                )
             } else {
                 Text(
-                    if (completed) "✓" else "·",
-                    color = if (completed) Green else TextMuted,
+                    text = if (isComplete) "✓" else stepNumber.toString(),
+                    color = iconColor,
                     fontSize = 11.sp,
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
+
         Spacer(Modifier.width(12.dp))
-        Text(
-            title,
-            color = when {
-                completed && !inProgress -> Green
-                inProgress -> Blue
-                else -> TextMuted
-            },
-            fontSize = 12.sp,
-            fontFamily = JetBrainsMono,
-            fontWeight = if (inProgress || completed) FontWeight.Bold else FontWeight.Normal
-        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                color = if (isActive || isComplete) TextPrimary else TextMuted,
+                fontSize = 13.sp,
+                fontFamily = JetBrainsMono,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
+            )
+            Text(
+                subtitle,
+                color = if (isActive) Blue else TextSub,
+                fontSize = 10.sp,
+                fontFamily = JetBrainsMono
+            )
+        }
     }
 }
 
 private fun resolveFriendlyErrorMessage(raw: String): String {
-    val clean = raw.lowercase()
+    val lower = raw.lowercase()
     return when {
-        clean.contains("provider_offline") -> "Your friend is currently offline or not sharing. Ask them to open LINKO and tap 'Share My Network'."
-        clean.contains("denied") -> "Your friend declined the connection request."
-        clean.contains("expired") || clean.contains("timeout") -> "The connection request timed out. Make sure your friend's phone has LINKO open."
-        clean.contains("auth_required") || clean.contains("session") -> "Account authentication expired. Please sign in again."
-        clean.contains("internet") || clean.contains("network") -> "Network issue: please check that your device has mobile data or Wi-Fi turned on."
-        clean.contains("vpn") -> "Android VPN permission is required to route your connection."
-        else -> "Could not connect (${raw.replace('_', ' ')}). Please verify your friend is sharing and try again."
+        lower.contains("timeout") || lower.contains("timed out") ->
+            "The connection request timed out. Make sure your friend's phone has LINKO open and screen turned on."
+        lower.contains("denied") || lower.contains("rejected") || lower.contains("declined") ->
+            "Your friend declined the connection request."
+        lower.contains("offline") || lower.contains("not_sharing") || lower.contains("provider_not_ready") ->
+            "Your friend is currently offline or not sharing. Ask them to open LINKO and tap 'Share My Network'."
+        lower.contains("permission") || lower.contains("vpn") ->
+            "Android requires VPN permission to route device internet traffic. Tap Allow to continue."
+        lower.contains("network") || lower.contains("unreachable") || lower.contains("socket") ->
+            "Network issue: please check that your device has mobile data or Wi-Fi turned on."
+        else ->
+            "Unable to connect: ${raw.replace('_', ' ')}. Please try again."
     }
 }
