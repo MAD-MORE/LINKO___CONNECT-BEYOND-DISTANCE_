@@ -39,10 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoProfileApi
-import com.linkshare.app.network.LinkoProviderService
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
-import com.linkshare.app.provider.ProviderReadyAlgorithm
+import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.Ring
 import com.linkshare.app.ui.theme.Blue
@@ -79,7 +78,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        ProviderReadyAlgorithm.requestNotificationPermission(context)
         LinkoProviderService.start(context)
 
         // Asynchronously ensure and load canonical profile
