@@ -174,12 +174,14 @@ class LinkoProviderService : Service() {
             }
 
             stopRunner(requestId)
+            val socket = java.net.DatagramSocket(0)
             val runner = ProviderTunnelRunner(
+                socket = socket,
+                endpoint = InetSocketAddress(activeConfig.host, activeConfig.port),
                 sessionId = activeConfig.sessionId,
-                preSharedKey = activeConfig.encryptionKey,
-                remoteEndpoint = InetSocketAddress(activeConfig.relayHost, activeConfig.relayPort),
-                transportAdapter = FullIpProviderTransportAdapter(),
-                socketFactory = ProviderSocketFactory(),
+                sessionKey = activeConfig.key,
+                scope = scope,
+                adapter = FullIpProviderTransportAdapter(),
             )
             runners[requestId] = runner
             runner.start()
