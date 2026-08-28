@@ -1,8 +1,11 @@
 package com.linkshare.app.vpn
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.net.wifi.WifiManager
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.util.Log
 import com.linkshare.app.tunnel.EncryptedDatagramTunnel
 import com.linkshare.app.tunnel.IpPacketRouter
@@ -27,6 +30,8 @@ class LinkShareVpnService : VpnService() {
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
     private val lastPongReceivedAt = AtomicLong(0)
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val host = intent?.getStringExtra(EXTRA_PEER_HOST)
@@ -48,6 +53,7 @@ class LinkShareVpnService : VpnService() {
         }
 
         stopTunnel()
+        acquireLocks()
 
         tunnelInterface = Builder()
             .setSession("LINKO Tunnel")
@@ -61,6 +67,7 @@ class LinkShareVpnService : VpnService() {
             .establish()
             ?: run {
                 Log.e(TAG, "Failed to establish Android VPN interface")
+                releaseLocks()
                 return START_NOT_STICKY
             }
 
@@ -90,11 +97,40 @@ class LinkShareVpnService : VpnService() {
         scheduler?.scheduleWithFixedDelay({
             if (running.get()) {
                 transport?.sendPing()
+                val silentMs = System.currentTimeMillis() - lastPongReceivedAt.get()
+                if (silentMs > 20_000L) {
+                    Log.w(TAG, "Tunnel peer silent for ${silentMs}ms, sending high-priority keepalive")
+                    transport?.sendPing()
+                }
             }
         }, 3, 5, TimeUnit.SECONDS)
 
         Log.i(TAG, "LINKO VPN service started successfully for session=$sessionId to $host:$port")
         return START_STICKY
+    }
+
+    private fun acquireLocks() {
+        runCatching {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LINKO:VpnWakeLock")?.apply {
+                setReferenceCounted(false)
+                acquire(24 * 60 * 60 * 1000L)
+            }
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "LINKO:VpnWifiLock")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+            wakeLock = null
+            if (wifiLock?.isHeld == true) wifiLock?.release()
+            wifiLock = null
+        }
     }
 
     private fun outboundLoop() {
@@ -173,6 +209,7 @@ class LinkShareVpnService : VpnService() {
 
     private fun stopTunnel() {
         if (!running.getAndSet(false)) return
+        releaseLocks()
         scheduler?.shutdownNow()
         scheduler = null
         transport?.sendClose()

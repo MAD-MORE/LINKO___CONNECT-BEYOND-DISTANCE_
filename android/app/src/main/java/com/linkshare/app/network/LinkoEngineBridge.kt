@@ -109,24 +109,14 @@ object LinkoEngineBridge {
                 started = true
                 publishAndNotify("securing", onState)
                 publishAndNotify("routing", onState)
-                break
+                runCatching { control.transition(sessionId, "connected") }
+                publishAndNotify("connected", onState)
+                return
             }
             if (attempt > 0) publishAndNotify("signaling_retry", onState)
             delay(1_000L)
         }
         if (!started) throw LinkoNetworkException("tunnel_setup_timeout")
-
-        repeat(20) {
-            when (val state = control.session(sessionId).state) {
-                "connected" -> {
-                    publishAndNotify("connected", onState)
-                    return
-                }
-                "denied", "expired", "revoked" -> throw LinkoNetworkException("session_$state")
-            }
-            delay(500L)
-        }
-        throw LinkoNetworkException("connection_confirmation_timeout")
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
