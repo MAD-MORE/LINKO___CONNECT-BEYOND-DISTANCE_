@@ -29,7 +29,15 @@ jobs:
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: Check FLY_API_TOKEN
+        if: ${{ secrets.FLY_API_TOKEN == '' }}
+        run: |
+          echo "::error::FLY_API_TOKEN secret is missing in GitHub repository secrets."
+          echo "Please generate a Fly.io access token ('fly auth token') and add it to GitHub Settings -> Secrets and variables -> Actions as FLY_API_TOKEN."
+          exit 1
+
       - name: Deploy LINKO UDP Relay to Fly.io
+        if: ${{ secrets.FLY_API_TOKEN != '' }}
         run: |
           flyctl deploy \
             --config infra/fly.relay.toml \
@@ -40,6 +48,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Verify Relay Health Endpoint
+        if: ${{ secrets.FLY_API_TOKEN != '' }}
         run: |
           echo "Waiting 15 seconds for Fly machine to boot and register DNS..."
           sleep 15
