@@ -74,6 +74,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
         reload()
         LinkoRealtimeManager.events.collect { event ->
             when (event) {
+                is LinkoRealtimeEvent.IncomingConnectionRequest,
                 is LinkoRealtimeEvent.FriendRequestReceived,
                 is LinkoRealtimeEvent.FriendRequestSent,
                 is LinkoRealtimeEvent.FriendRequestAccepted,
@@ -85,6 +86,7 @@ fun LiveFriendsScreen(onFindFriends: () -> Unit, onFriendTap: () -> Unit) {
                     presence = presence + (userPresence.userId to LinkoStateMachine.availabilityFromPresence(userPresence.state, userPresence.online))
                 }
                 is LinkoRealtimeEvent.TransportError -> message = "Realtime connection unavailable"
+                else -> Unit
             }
         }
     }

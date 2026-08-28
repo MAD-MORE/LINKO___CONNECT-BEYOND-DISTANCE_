@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,11 +39,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoProfileApi
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.ui.components.LinkoCard
+import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.components.Ring
 import com.linkshare.app.ui.theme.Blue
 import com.linkshare.app.ui.theme.Border
@@ -56,16 +59,19 @@ import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.ui.theme.Yellow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
 fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val auth = remember { LinkoAuth(context) }
     val api = remember { LinkoProfileApi(auth::currentAccessToken, auth::currentUserId) }
     var username by remember { mutableStateOf(auth.currentUsername() ?: auth.currentDisplayName().orEmpty()) }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
+    var pendingRequestId by remember { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
 
     fun copyId(idToCopy: String) {
@@ -76,9 +82,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         copied = true
         Toast.makeText(context, "LINKO ID copied: $clean", Toast.LENGTH_SHORT).show()
     }
-
-    val scope = rememberCoroutineScope()
-    var pendingRequestId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         LinkoProviderService.start(context)
