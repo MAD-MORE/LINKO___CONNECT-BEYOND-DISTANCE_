@@ -82,7 +82,10 @@ dependencies {
 
     implementation(platform("io.github.jan-tennert.supabase:bom:3.7.0"))
     implementation("io.github.jan-tennert.supabase:realtime-kt")
+    implementation("io.github.jan-tennert.supabase:auth-kt")
     implementation("io.ktor:ktor-client-android:3.5.1")
+
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     implementation("com.zaneschepke:hevtunnel:1.0.1")
 
