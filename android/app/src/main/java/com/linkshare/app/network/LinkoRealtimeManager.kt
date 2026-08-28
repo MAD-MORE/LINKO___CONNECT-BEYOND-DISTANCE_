@@ -64,12 +64,13 @@ object LinkoRealtimeManager {
             supabaseKey = com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY
         ) { install(Realtime) }
         client = supabase
+        val rt = supabase.pluginManager.getPlugin(Realtime)
         scope.launch {
             while (started.get() && auth?.currentAccessToken().isNullOrBlank()) delay(1_000L)
             if (!started.get()) return@launch
             runCatching {
-                supabase.realtime.setAuth(auth?.currentAccessToken())
-                supabase.realtime.connect()
+                rt.setAuth(auth?.currentAccessToken())
+                rt.connect()
                 subscribeFriendEvents(supabase)
                 subscribeSessionEvents(supabase)
                 subscribePresence(supabase)
@@ -86,7 +87,7 @@ object LinkoRealtimeManager {
         if (!started.compareAndSet(true, false)) return
         scope.launch {
             runCatching {
-                val realtime = client?.realtime
+                val realtime = client?.pluginManager?.getPlugin(Realtime)
                 presenceChannel?.let { realtime?.removeChannel(it) }
                 friendChannel?.let { realtime?.removeChannel(it) }
                 sessionChannel?.let { realtime?.removeChannel(it) }
