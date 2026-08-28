@@ -1,22 +1,20 @@
 # fly.toml — LINKO Data-Plane Relay Node
 # Canonical app: linko-relay
-# Deploy: fly deploy -c infra/fly.relay.toml --dockerfile relay/Dockerfile
 
 app = "linko-relay"
 primary_region = "iad"
 
 [build]
-  dockerfile = "../relay/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
   UDP_PORT = "7000"
   PORT = "7001"
   RELAY_REGION = "iad"
-  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824" # 1 GB default per session
+  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824"
 
 # UDP service — Encrypted Data-Plane Relay (Port 7000)
-# Dedicated public IPv4 is required on Fly.io for UDP packet forwarding.
 [[services]]
   protocol = "udp"
   internal_port = 7000
@@ -46,9 +44,6 @@ primary_region = "iad"
     hard_limit = 1000
     soft_limit = 800
 
-# Critical for Fly.io UDP relay:
-# Fly proxy does NOT auto-start stopped machines on incoming raw UDP datagrams.
-# Therefore, auto_stop_machines MUST be "off" to ensure continuous UDP availability.
 [http_service]
   internal_port = 7001
   force_https = false
