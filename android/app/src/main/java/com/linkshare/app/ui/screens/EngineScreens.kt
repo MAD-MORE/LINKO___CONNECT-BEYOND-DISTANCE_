@@ -69,6 +69,8 @@ import com.linkshare.app.ui.theme.*
         loading = false
     }
 
+    var connectingUserId by remember { mutableStateOf<String?>(null) }
+
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Title("Choose a Friend", "Tap a friend to connect to their shared network")
         Spacer(Modifier.height(16.dp))
@@ -91,14 +93,17 @@ import com.linkshare.app.ui.theme.*
             }
             else -> {
                 friends.forEach { friend ->
+                    val isConnectingThis = connectingUserId == friend.userId
                     LinkoCard {
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable {
+                                .clickable(enabled = connectingUserId == null) {
+                                    connectingUserId = friend.userId
                                     LinkoEngineBridge.connectToFriend(friend.userId) { state ->
                                         if (state != "requesting" && state != "connecting" && state != "connected" && state != "resolving_provider" && state != "provider_ready") {
                                             message = state
+                                            connectingUserId = null
                                         }
                                     }
                                     onRequest()
@@ -111,7 +116,15 @@ import com.linkshare.app.ui.theme.*
                                     Spacer(Modifier.height(4.dp))
                                     Text(friend.linkoId, color = Blue, fontSize = 12.sp, fontFamily = JetBrainsMono)
                                 }
-                                Text("CONNECT ›", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                if (isConnectingThis) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Green, strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("CONNECTING…", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Text("CONNECT ›", color = if (connectingUserId != null) TextMuted else Green, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -120,7 +133,13 @@ import com.linkshare.app.ui.theme.*
             }
         }
         Spacer(Modifier.weight(1f))
-        PrimaryButton(if (loading) "REFRESHING…" else "REFRESH FRIENDS", { refreshTrigger++ }, outline = true)
+        PrimaryButton(
+            label = if (loading) "REFRESHING…" else "REFRESH FRIENDS",
+            onClick = { if (!loading) refreshTrigger++ },
+            outline = true,
+            enabled = !loading,
+            loading = loading
+        )
         Spacer(Modifier.height(24.dp))
     }
 }

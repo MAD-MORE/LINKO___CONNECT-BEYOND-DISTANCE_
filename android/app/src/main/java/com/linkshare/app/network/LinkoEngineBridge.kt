@@ -135,6 +135,10 @@ object LinkoEngineBridge {
         }
     }
 
+    suspend fun getPendingProviderRequests(): List<ProviderRequest> {
+        return runCatching { api?.pendingProviderRequests() }.getOrNull() ?: emptyList()
+    }
+
     fun approvePendingProviderRequest(onState: (String) -> Unit = {}) {
         val context = appContext ?: return onState("engine_not_initialized")
         context.startForegroundService(Intent(context, LinkoProviderService::class.java))

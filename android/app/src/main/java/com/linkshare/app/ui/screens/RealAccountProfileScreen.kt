@@ -147,8 +147,8 @@ fun RealAccountProfileScreen(onDone: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
         PrimaryButton(
-            if (saving) "SAVING…" else "SAVE PROFILE",
-            {
+            label = if (saving) "SAVING…" else "SAVE PROFILE",
+            onClick = {
                 if (!saving && !loading) {
                     saving = true
                     message = null
@@ -177,6 +177,8 @@ fun RealAccountProfileScreen(onDone: () -> Unit) {
                     }
                 }
             },
+            enabled = !saving && !loading,
+            loading = saving
         )
         Spacer(Modifier.height(4.dp))
         GhostButton("Done", onDone)

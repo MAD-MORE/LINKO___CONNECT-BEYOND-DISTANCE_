@@ -78,8 +78,8 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     val onboarding = route in onboardingScreens
     val scope = rememberCoroutineScope()
     var deleting by remember { mutableStateOf(false) }
-    var bootstrapping by remember(signedIn) { mutableStateOf(signedIn) }
-    var bootstrapFailed by remember(signedIn) { mutableStateOf(false) }
+    var splashShowing by remember { mutableStateOf(true) }
+    var bootstrapFailed by remember { mutableStateOf(false) }
     var offlineBypass by remember { mutableStateOf(false) }
 
     val onDeleteAccount: () -> Unit = {
@@ -93,35 +93,37 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
         }
     }
 
-    LaunchedEffect(signedIn, offlineBypass) {
-        if (!signedIn) {
-            bootstrapping = false
-            bootstrapFailed = false
-        } else if (!offlineBypass) {
-            bootstrapping = true
-            val initialized = withContext(Dispatchers.IO) {
-                runCatching { runtime.initialize() }.getOrDefault(true)
-            }
-            bootstrapFailed = !initialized && !auth.isSignedIn()
-            bootstrapping = false
+    LaunchedEffect(Unit) {
+        val start = System.currentTimeMillis()
+        val ok = withContext(Dispatchers.IO) {
+            runCatching { runtime.initialize() }.getOrDefault(true)
         }
+        val elapsed = System.currentTimeMillis() - start
+        if (elapsed < 2200) {
+            kotlinx.coroutines.delay(2200 - elapsed)
+        }
+        if (!ok && signedIn && !auth.isSignedIn()) {
+            bootstrapFailed = true
+        }
+        splashShowing = false
     }
 
-    if ((bootstrapping || bootstrapFailed) && !offlineBypass) {
-        LinkoStartupScreen(
+    if ((splashShowing || bootstrapFailed) && !offlineBypass) {
+        StartupSplashScreen(
             failed = bootstrapFailed,
             onRetry = {
                 bootstrapFailed = false
-                bootstrapping = true
+                splashShowing = true
                 scope.launch {
                     val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
+                    kotlinx.coroutines.delay(1200)
                     bootstrapFailed = !ok
-                    bootstrapping = false
+                    splashShowing = false
                 }
             },
             onContinueOffline = {
                 offlineBypass = true
-                bootstrapping = false
+                splashShowing = false
                 bootstrapFailed = false
             },
             onSignOut = {

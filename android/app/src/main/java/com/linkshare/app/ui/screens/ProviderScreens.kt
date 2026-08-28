@@ -136,8 +136,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         launch {
             while (true) {
                 runCatching {
-                    val requests = withContext(Dispatchers.IO) { LinkoEngineBridge.api?.pendingProviderRequests() }
-                    val first = requests?.firstOrNull()
+                    val requests = withContext(Dispatchers.IO) { LinkoEngineBridge.getPendingProviderRequests() }
+                    val first = requests.firstOrNull()
                     if (first != null) {
                         pendingRequestId = first.id
                         providerState = "REQUESTED"
@@ -210,6 +210,8 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
 
         if (copied) Text("✓ LINKO ID COPIED", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
         
+        var isProcessingApproval by remember { mutableStateOf(false) }
+        
         if (pendingRequestId != null || providerState == "REQUESTED") {
             Spacer(Modifier.height(14.dp))
             LinkoCard(modifier = Modifier.fillMaxWidth().border(1.dp, Green, RoundedCornerShape(12.dp))) {
@@ -222,26 +224,51 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 Text("A LINKO friend has requested to use your shared internet connection.", color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono)
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("APPROVE & SHARE", {
-                        scope.launch {
-                            LinkoEngineBridge.approvePendingProviderRequest { state ->
-                                if (state == "approved") {
-                                    LinkoEngineBridge.startApprovedProviderSession()
-                                    pendingRequestId = null
-                                    providerState = "SHARING"
-                                    Toast.makeText(context, "Connection Approved! Sharing Internet.", Toast.LENGTH_SHORT).show()
+                    PrimaryButton(
+                        label = if (isProcessingApproval) "APPROVING…" else "APPROVE & SHARE",
+                        onClick = {
+                            if (!isProcessingApproval) {
+                                isProcessingApproval = true
+                                scope.launch {
+                                    LinkoEngineBridge.approvePendingProviderRequest { state ->
+                                        if (state == "approved") {
+                                            LinkoEngineBridge.startApprovedProviderSession()
+                                            pendingRequestId = null
+                                            isProcessingApproval = false
+                                            providerState = "SHARING"
+                                            Toast.makeText(context, "Connection Approved! Sharing Internet.", Toast.LENGTH_SHORT).show()
+                                        } else if (state.contains("failed") || state.contains("error")) {
+                                            isProcessingApproval = false
+                                            Toast.makeText(context, "Approval error: $state", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }, color = Green)
-                    PrimaryButton("DECLINE", {
-                        scope.launch {
-                            LinkoEngineBridge.denyPendingProviderRequest {
-                                pendingRequestId = null
-                                providerState = "READY"
+                        },
+                        color = Green,
+                        enabled = !isProcessingApproval,
+                        loading = isProcessingApproval,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PrimaryButton(
+                        label = "DECLINE",
+                        onClick = {
+                            if (!isProcessingApproval) {
+                                isProcessingApproval = true
+                                scope.launch {
+                                    LinkoEngineBridge.denyPendingProviderRequest {
+                                        pendingRequestId = null
+                                        isProcessingApproval = false
+                                        providerState = "READY"
+                                    }
+                                }
                             }
-                        }
-                    }, color = Red, outline = true)
+                        },
+                        color = Red,
+                        outline = true,
+                        enabled = !isProcessingApproval,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }

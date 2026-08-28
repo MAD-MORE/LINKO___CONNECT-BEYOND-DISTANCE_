@@ -35,6 +35,8 @@ fun LinkoRealtimeOverlay() {
     var friendRequestId by remember { mutableStateOf<String?>(null) }
     var connectionSessionId by remember { mutableStateOf<String?>(null) }
     var statusText by remember { mutableStateOf<String?>(null) }
+    var processingConnection by remember { mutableStateOf(false) }
+    var processingFriend by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         LinkoRealtimeManager.events.collect { event ->
@@ -42,31 +44,39 @@ fun LinkoRealtimeOverlay() {
                 is LinkoRealtimeEvent.IncomingConnectionRequest -> {
                     connectionSessionId = event.sessionId
                     statusText = null
+                    processingConnection = false
                 }
                 is LinkoRealtimeEvent.SessionStateChanged -> {
                     if (event.state == "requested" && event.sessionId != null) {
                         connectionSessionId = event.sessionId
                         statusText = null
+                        processingConnection = false
                     } else if (event.state == "approved" || event.state == "connected") {
                         connectionSessionId = null
+                        processingConnection = false
                     } else if (event.state == "denied" || event.state == "revoked" || event.state == "expired") {
                         connectionSessionId = null
+                        processingConnection = false
                     }
                 }
                 is LinkoRealtimeEvent.FriendRequestReceived -> {
                     friendRequestId = event.requestId
                     statusText = null
+                    processingFriend = false
                 }
                 is LinkoRealtimeEvent.FriendRequestAccepted -> {
                     friendRequestId = null
+                    processingFriend = false
                     statusText = "ACCEPTED • YOU ARE NOW FRIENDS"
                 }
                 is LinkoRealtimeEvent.FriendRequestDeclined -> {
                     friendRequestId = null
+                    processingFriend = false
                     statusText = "DECLINED • REQUEST NOT ACCEPTED"
                 }
                 is LinkoRealtimeEvent.FriendRemoved -> {
                     friendRequestId = null
+                    processingFriend = false
                     statusText = "FRIEND REMOVED"
                 }
                 else -> Unit
@@ -75,7 +85,7 @@ fun LinkoRealtimeOverlay() {
     }
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-        // 1. Prominent Incoming Connection (Session) Request Banner
+        // 1. Prominent Incoming Connection (Session) Request Banner with Anti-Double-Tap Loading
         if (connectionSessionId != null) {
             LinkoCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -87,30 +97,55 @@ fun LinkoRealtimeOverlay() {
                 Text("A friend is requesting to connect and share your internet.", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
                 SpacerSmall()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("APPROVE & SHARE", {
-                        scope.launch {
-                            LinkoEngineBridge.approvePendingProviderRequest { state ->
-                                if (state == "approved") {
-                                    LinkoEngineBridge.startApprovedProviderSession()
-                                    connectionSessionId = null
-                                    statusText = "SHARING ACTIVE • FRIEND CONNECTED"
+                    PrimaryButton(
+                        label = if (processingConnection) "APPROVING…" else "APPROVE & SHARE",
+                        onClick = {
+                            if (!processingConnection) {
+                                processingConnection = true
+                                scope.launch {
+                                    LinkoEngineBridge.approvePendingProviderRequest { state ->
+                                        if (state == "approved") {
+                                            LinkoEngineBridge.startApprovedProviderSession()
+                                            connectionSessionId = null
+                                            processingConnection = false
+                                            statusText = "SHARING ACTIVE • FRIEND CONNECTED"
+                                        } else if (state.contains("failed") || state.contains("error")) {
+                                            processingConnection = false
+                                            statusText = state
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }, color = Green)
-                    PrimaryButton("DECLINE", {
-                        scope.launch {
-                            LinkoEngineBridge.denyPendingProviderRequest {
-                                connectionSessionId = null
-                                statusText = "DECLINED • CONNECTION DISMISSED"
+                        },
+                        color = Green,
+                        enabled = !processingConnection,
+                        loading = processingConnection,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PrimaryButton(
+                        label = "DECLINE",
+                        onClick = {
+                            if (!processingConnection) {
+                                processingConnection = true
+                                scope.launch {
+                                    LinkoEngineBridge.denyPendingProviderRequest {
+                                        connectionSessionId = null
+                                        processingConnection = false
+                                        statusText = "DECLINED • CONNECTION DISMISSED"
+                                    }
+                                }
                             }
-                        }
-                    }, color = Red, outline = true)
+                        },
+                        color = Red,
+                        outline = true,
+                        enabled = !processingConnection,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
 
-        // 2. Incoming Friend Invitation Banner
+        // 2. Incoming Friend Invitation Banner with Anti-Double-Tap Loading
         if (friendRequestId != null) {
             LinkoCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text("NEW FRIEND REQUEST", color = Yellow, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
@@ -118,22 +153,56 @@ fun LinkoRealtimeOverlay() {
                 Text("A LINKO user wants to add you to their network.", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
                 SpacerSmall()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton("ACCEPT", {
-                        val id = friendRequestId ?: return@PrimaryButton
-                        scope.launch {
-                            runCatching { LinkoFriendsApiHolder.api.respond(id, true) }
-                                .onSuccess { friendRequestId = null; statusText = "ACCEPTED • YOU ARE NOW FRIENDS" }
-                                .onFailure { statusText = it.message ?: "Accept failed" }
-                        }
-                    }, color = Green)
-                    PrimaryButton("DECLINE", {
-                        val id = friendRequestId ?: return@PrimaryButton
-                        scope.launch {
-                            runCatching { LinkoFriendsApiHolder.api.respond(id, false) }
-                                .onSuccess { friendRequestId = null; statusText = "DECLINED • REQUEST NOT ACCEPTED" }
-                                .onFailure { statusText = it.message ?: "Decline failed" }
-                        }
-                    }, color = Red, outline = true)
+                    PrimaryButton(
+                        label = if (processingFriend) "ACCEPTING…" else "ACCEPT",
+                        onClick = {
+                            val id = friendRequestId ?: return@PrimaryButton
+                            if (!processingFriend) {
+                                processingFriend = true
+                                scope.launch {
+                                    runCatching { LinkoFriendsApiHolder.api.respond(id, true) }
+                                        .onSuccess {
+                                            friendRequestId = null
+                                            processingFriend = false
+                                            statusText = "ACCEPTED • YOU ARE NOW FRIENDS"
+                                        }
+                                        .onFailure {
+                                            processingFriend = false
+                                            statusText = it.message ?: "Accept failed"
+                                        }
+                                }
+                            }
+                        },
+                        color = Green,
+                        enabled = !processingFriend,
+                        loading = processingFriend,
+                        modifier = Modifier.weight(1f)
+                    )
+                    PrimaryButton(
+                        label = "DECLINE",
+                        onClick = {
+                            val id = friendRequestId ?: return@PrimaryButton
+                            if (!processingFriend) {
+                                processingFriend = true
+                                scope.launch {
+                                    runCatching { LinkoFriendsApiHolder.api.respond(id, false) }
+                                        .onSuccess {
+                                            friendRequestId = null
+                                            processingFriend = false
+                                            statusText = "DECLINED • REQUEST NOT ACCEPTED"
+                                        }
+                                        .onFailure {
+                                            processingFriend = false
+                                            statusText = it.message ?: "Decline failed"
+                                        }
+                                }
+                            }
+                        },
+                        color = Red,
+                        outline = true,
+                        enabled = !processingFriend,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }

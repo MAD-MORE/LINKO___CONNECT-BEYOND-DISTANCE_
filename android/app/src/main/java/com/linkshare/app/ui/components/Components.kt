@@ -51,12 +51,57 @@ fun LinkoInput(label: String, value: String, onValueChange: (String) -> Unit, pl
 }
 
 @Composable
-fun PrimaryButton(label: String, onClick: () -> Unit, color: Color = Blue, outline: Boolean = false, modifier: Modifier = Modifier) {
+fun PrimaryButton(
+    label: String,
+    onClick: () -> Unit,
+    color: Color = Blue,
+    outline: Boolean = false,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    modifier: Modifier = Modifier
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) 0.97f else 1f, label = "btnScale")
-    Box(contentAlignment = Alignment.Center, modifier = modifier.fillMaxWidth().scale(scale).clip(RoundedCornerShape(14.dp)).background(if (outline) Color.Transparent else if (isPressed) BlueD else color).border(if (outline) 1.5.dp else 0.dp, if (outline) color else Color.Transparent, RoundedCornerShape(14.dp)).clickable(interactionSource = interactionSource, indication = null, onClick = onClick).padding(vertical = 15.dp)) {
-        Text(label, color = if (outline) color else Color.White, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.14.sp)
+    val scale by animateFloatAsState(if (isPressed && enabled && !loading) 0.97f else 1f, label = "btnScale")
+    val effectiveColor = if (!enabled) color.copy(alpha = 0.4f) else color
+    val textColor = when {
+        !enabled -> if (outline) color.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.6f)
+        outline -> color
+        else -> Color.White
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (outline) Color.Transparent else if (isPressed && enabled && !loading) BlueD else effectiveColor)
+            .border(if (outline) 1.5.dp else 0.dp, if (outline) effectiveColor else Color.Transparent, RoundedCornerShape(14.dp))
+            .then(
+                if (enabled && !loading) Modifier.clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+                else Modifier
+            )
+            .padding(vertical = 15.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            if (loading) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    color = textColor,
+                    strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            Text(
+                label,
+                color = textColor,
+                fontSize = 13.sp,
+                fontFamily = JetBrainsMono,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.14.sp
+            )
+        }
     }
 }
 
