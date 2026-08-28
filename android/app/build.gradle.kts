@@ -26,7 +26,7 @@ android {
 
     buildTypes {
         val configuredSupabaseUrl = providers.gradleProperty("LINKO_SUPABASE_URL").orElse("https://pbnvssbtshvesqwhckfa.supabase.co").get()
-        val configuredControlPlane = providers.gradleProperty("LINKO_CONTROL_PLANE_URL").orElse(configuredSupabaseUrl).get()
+        val configuredControlPlane = providers.gradleProperty("LINKO_CONTROL_PLANE_URL").orElse("${configuredSupabaseUrl}/functions/v1/linko-control-plane").get()
         val configuredSupabaseKey = providers.gradleProperty("LINKO_SUPABASE_PUBLISHABLE_KEY").orElse("sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9").get()
         getByName("debug") {
             buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${configuredControlPlane.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
