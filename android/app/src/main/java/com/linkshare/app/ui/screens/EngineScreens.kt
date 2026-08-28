@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -51,11 +52,11 @@ import com.linkshare.app.ui.theme.*
                             userId = o.optString("user_id"),
                             linkoId = o.optString("linko_id"),
                             displayName = o.optString("display_name"),
-                            avatarUrl = null,
-                            lastActive = null,
+                            deviceId = null,
+                            deviceName = null,
                             isSharing = o.optBoolean("is_sharing", false),
-                            status = "friend",
-                            createdAt = null,
+                            relationshipStatus = "friend",
+                            requestId = null,
                             username = o.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() }
                         )
                     )
