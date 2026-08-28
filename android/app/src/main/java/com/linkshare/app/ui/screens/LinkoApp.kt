@@ -29,8 +29,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.linkshare.app.Navigation.Screen
-import com.linkshare.app.Navigation.onboardingScreens
+import com.linkshare.app.Screen
+import com.linkshare.app.onboardingScreens
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoRuntime
@@ -231,7 +231,14 @@ private data class NavItem(val label: String, val text: String, val route: Strin
         bottomNavItems.forEach { item ->
             val sel = route == item.route
             TextButton(
-                onClick = { if (!sel) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route) { saveState = true }; launchSingleTop = true; restoreState = true } },
+                onClick = {
+                    if (!sel) {
+                        nav.navigate(item.route) {
+                            popUpTo(Screen.HomeEngine.route)
+                            launchSingleTop = true
+                        }
+                    }
+                },
                 modifier = Modifier.weight(1f)
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
