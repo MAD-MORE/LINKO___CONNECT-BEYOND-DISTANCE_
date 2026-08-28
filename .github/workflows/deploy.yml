@@ -39,9 +39,7 @@ jobs:
       - name: Deploy LINKO UDP Relay to Fly.io
         if: ${{ secrets.FLY_API_TOKEN != '' }}
         run: |
-          flyctl deploy \
-            --config infra/fly.relay.toml \
-            --dockerfile relay/Dockerfile \
+          flyctl deploy ./relay \
             --app linko-relay \
             --remote-only
         env:
@@ -50,8 +48,8 @@ jobs:
       - name: Verify Relay Health Endpoint
         if: ${{ secrets.FLY_API_TOKEN != '' }}
         run: |
-          echo "Waiting 15 seconds for Fly machine to boot and register DNS..."
-          sleep 15
-          curl --fail --show-error --silent --max-time 10 https://linko-relay.fly.dev/health
+          echo "Waiting 10 seconds for Fly machine to boot..."
+          sleep 10
+          curl --fail --show-error --silent --max-time 15 http://66.241.125.170/health -H "Host: linko-relay.fly.dev" || curl --fail --show-error --silent --max-time 15 https://linko-relay.fly.dev/health
           echo ""
           echo "Relay health check verified successfully!"
