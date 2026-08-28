@@ -31,11 +31,97 @@ import com.linkshare.app.ui.theme.*
 @Composable private fun Title(text: String, sub: String) { Column(Modifier.fillMaxWidth()) { Text(text, color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Text(sub, color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono) } }
 @Composable fun HomeEngineScreen(onReceiver:()->Unit,onProvider:()->Unit){Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Text("LINKO ENGINE",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(4.dp));Text("Choose how this device participates",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(28.dp));Ring(Blue,190.dp,idle=true,label="READY");Spacer(Modifier.height(30.dp));LinkoCard{InfoRow("RECEIVER","Use a friend's connection","Request permission from a connected LINKO device",Blue);Spacer(Modifier.height(14.dp));PrimaryButton("CONNECT TO A FRIEND",onReceiver)};Spacer(Modifier.height(12.dp));LinkoCard{InfoRow("PROVIDER","Share your connection","Let a friend request access to this device",Green);Spacer(Modifier.height(14.dp));PrimaryButton("SHARE MY CONNECTION",onProvider,color=Green)}}}
 
-@Composable fun RxSelectFriendScreen(onRequest:()->Unit){
-    val api=LinkoFriendsApiHolder.api
-    var friends by remember{mutableStateOf<List<FriendSearchResult>>(emptyList())}; var loading by remember{mutableStateOf(true)}; var message by remember{mutableStateOf<String?>(null)}
-    LaunchedEffect(Unit){runCatching{val json=api.friends();val a=json.optJSONArray("friends")?:org.json.JSONArray();friends=buildList{for(i in 0 until a.length()){val o=a.optJSONObject(i)?:continue;add(FriendSearchResult(o.optString("user_id"),o.optString("linko_id"),o.optString("display_name"),null,null,false,"friend",null,o.optString("username").trim().removePrefix("@").takeIf{it.isNotBlank()}))}}}.onFailure{message=it.message?:"Unable to load friends"};loading=false}
-    Column(Modifier.fillMaxSize().padding(16.dp)){Title("Choose a Friend","Only accepted LINKO friends can request a connection");Spacer(Modifier.height(20.dp));when{loading->LinkoCard{Text("LOADING REAL FRIENDS…",color=TextSub,fontSize=11.sp,fontFamily=JetBrainsMono)};friends.isEmpty()->LinkoCard{Text("NO FRIENDS YET",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text(message?:"Add a friend first. After they accept, you can connect without another code.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)};else->friends.forEach{friend->LinkoCard{Column(Modifier.fillMaxWidth().clickable{LinkoEngineBridge.connectToFriend(friend.userId){state->if(state!="requesting"&&state!="connecting"&&state!="connected"&&state!="resolving_provider"&&state!="provider_ready")message=state};onRequest()}){Text(friend.displayName,color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);friend.username?.let{Text("@$it",color=TextSub,fontSize=10.sp,fontFamily=JetBrainsMono)};Text(friend.linkoId,color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);Text("FRIEND • CONNECT",color=Green,fontSize=10.sp,fontFamily=JetBrainsMono)}};Spacer(Modifier.height(8.dp))}};Spacer(Modifier.weight(1f));PrimaryButton("REFRESH",{loading=true;message=null});Spacer(Modifier.height(24.dp))}
+@Composable fun RxSelectFriendScreen(onRequest: () -> Unit) {
+    val api = LinkoFriendsApiHolder.api
+    var friends by remember { mutableStateOf<List<FriendSearchResult>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshTrigger) {
+        loading = true
+        runCatching {
+            val json = api.friends()
+            val a = json.optJSONArray("friends") ?: org.json.JSONArray()
+            friends = buildList {
+                for (i in 0 until a.length()) {
+                    val o = a.optJSONObject(i) ?: continue
+                    add(
+                        FriendSearchResult(
+                            userId = o.optString("user_id"),
+                            linkoId = o.optString("linko_id"),
+                            displayName = o.optString("display_name"),
+                            avatarUrl = null,
+                            lastActive = null,
+                            isSharing = o.optBoolean("is_sharing", false),
+                            status = "friend",
+                            createdAt = null,
+                            username = o.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() }
+                        )
+                    )
+                }
+            }
+            message = null
+        }.onFailure {
+            message = it.message ?: "Unable to load friends"
+        }
+        loading = false
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Title("Choose a Friend", "Tap a friend to connect to their shared network")
+        Spacer(Modifier.height(16.dp))
+        when {
+            loading && friends.isEmpty() -> {
+                LinkoCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Blue, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Loading your friends…", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                    }
+                }
+            }
+            friends.isEmpty() -> {
+                LinkoCard {
+                    Text("NO FRIENDS ADDED YET", color = TextMuted, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(message ?: "Add friends using their LINKO ID first in the Friends tab. After they accept, you can connect directly.", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                }
+            }
+            else -> {
+                friends.forEach { friend ->
+                    LinkoCard {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    LinkoEngineBridge.connectToFriend(friend.userId) { state ->
+                                        if (state != "requesting" && state != "connecting" && state != "connected" && state != "resolving_provider" && state != "provider_ready") {
+                                            message = state
+                                        }
+                                    }
+                                    onRequest()
+                                }
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(friend.displayName, color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                    friend.username?.let { Text("@$it", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(friend.linkoId, color = Blue, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                                }
+                                Text("CONNECT ›", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        PrimaryButton(if (loading) "REFRESHING…" else "REFRESH FRIENDS", { refreshTrigger++ }, outline = true)
+        Spacer(Modifier.height(24.dp))
+    }
 }
 
 @Composable fun RxRequestScreen(onCancel:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.weight(1f));Ring(Yellow,180.dp,pulse=true,label="REQUEST");Spacer(Modifier.height(24.dp));Text("Connection Requested",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("Your friend will receive a request and decide whether to share their connection",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.weight(1f));PrimaryButton("CANCEL",{LinkoEngineBridge.disconnect();onCancel()},color=Red,outline=true);Spacer(Modifier.height(24.dp))}
