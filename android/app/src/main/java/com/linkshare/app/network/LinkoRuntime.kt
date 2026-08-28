@@ -14,7 +14,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Cache-first startup state machine. Local state makes the UI resilient; server state remains canonical. */
+/**
+ * Offline-first startup state machine.
+ * Restores cached local state immediately so the app is accessible with zero internet;
+ * server state synchronizes asynchronously in the background when connected.
+ */
 class LinkoRuntime(
     context: Context,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -42,12 +46,13 @@ class LinkoRuntime(
         )
     }
 
-    /** Presence state is lazy so UI composition cannot force network initialization. */
     val presence by lazy { presenceManager.state }
 
     /**
-     * Total startup operation: UI readiness is determined by authentication/identity;
-     * synchronization and presence are independent, recoverable services.
+     * Resilient startup initialization:
+     * 1. If signed in and cached identity exists, enters app immediately without network wait.
+     * 2. Background coroutine attempts to synchronize profile, presence, and devices.
+     * 3. If offline, the app continues functioning in offline/cached mode.
      */
     suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         initializeMutex.withLock {
@@ -56,6 +61,7 @@ class LinkoRuntime(
             val currentUserId = auth.currentUserId()
             if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
 
+            // Fast path 1: Usable cached identity
             if (cache.hasUsableIdentity() && cache.userId() == currentUserId) {
                 initializedUserId = currentUserId
                 safeStartPresence()
@@ -63,20 +69,36 @@ class LinkoRuntime(
                 return@withLock true
             }
 
-            val session = runCatching { auth.ensureSession() }.getOrNull()
-            if (session?.success == false && !auth.isSignedIn()) {
-                Log.e(TAG, "LINKO authentication is no longer valid: ${session.message}")
-                return@withLock false
+            // Fast path 2: Stored user ID in Auth preferences (Offline resilient)
+            val storedUserId = currentUserId?.takeIf { it.isNotBlank() }
+                ?: cache.userId()?.takeIf { it.isNotBlank() }
+
+            if (storedUserId != null) {
+                initializedUserId = storedUserId
+                safeStartPresence()
+                scope.launch(Dispatchers.IO) { synchronize(storedUserId) }
+                return@withLock true
             }
 
-            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-                ?: session?.userId?.takeIf { it.isNotBlank() }
-                ?: return@withLock false
+            // Network path: Try to refresh / verify session with Supabase
+            val session = runCatching { auth.ensureSession() }.getOrNull()
+            val resolvedUserId = session?.userId?.takeIf { it.isNotBlank() }
+                ?: auth.currentUserId()?.takeIf { it.isNotBlank() }
 
-            initializedUserId = userId
-            safeStartPresence()
-            scope.launch(Dispatchers.IO) { synchronize(userId) }
-            true
+            if (resolvedUserId != null) {
+                initializedUserId = resolvedUserId
+                safeStartPresence()
+                scope.launch(Dispatchers.IO) { synchronize(resolvedUserId) }
+                return@withLock true
+            }
+
+            // Fallback path: If still marked signed-in, allow entry in offline mode
+            if (auth.isSignedIn()) {
+                initializedUserId = "offline_user"
+                return@withLock true
+            }
+
+            false
         }
     }
 
@@ -91,17 +113,17 @@ class LinkoRuntime(
             if (profile.userId == userId) {
                 cache.saveIdentity(profile.userId, profile.linkoId, profile.username, profile.displayName)
             }
-        }.onFailure { Log.w(TAG, "Profile sync deferred: ${it.message}") }
+        }.onFailure { Log.w(TAG, "Profile sync deferred (offline): ${it.message}") }
 
         runCatching { friendApi.getFriends() }
-            .onFailure { Log.w(TAG, "Friends sync deferred: ${it.message}") }
+            .onFailure { Log.w(TAG, "Friends sync deferred (offline): ${it.message}") }
 
         runCatching {
             val registration = deviceApi.ensureRegistered()
             cache.saveDeviceId(registration.deviceId)
-        }.onFailure { Log.w(TAG, "Device registration deferred: ${it.message}") }
+        }.onFailure { Log.w(TAG, "Device registration deferred (offline): ${it.message}") }
 
-        Log.i(TAG, "LINKO background synchronization complete for user=$userId")
+        Log.i(TAG, "LINKO synchronization attempted for user=$userId")
     }
 
     fun start() { scope.launch { initialize() } }

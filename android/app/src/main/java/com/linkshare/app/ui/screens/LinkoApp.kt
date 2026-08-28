@@ -1,32 +1,47 @@
 package com.linkshare.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.font.FontWeight
-import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.linkshare.app.Screen
-import com.linkshare.app.activeNavTab
-import com.linkshare.app.onboardingScreens
+import com.linkshare.app.Navigation.Screen
+import com.linkshare.app.Navigation.onboardingScreens
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoRuntime
-import com.linkshare.app.ui.theme.*
+import com.linkshare.app.ui.components.GhostButton
+import com.linkshare.app.ui.components.PrimaryButton
+import com.linkshare.app.ui.theme.BG
+import com.linkshare.app.ui.theme.Blue
+import com.linkshare.app.ui.theme.JetBrainsMono
+import com.linkshare.app.ui.theme.Red
+import com.linkshare.app.ui.theme.TextPrimary
+import com.linkshare.app.ui.theme.TextSub
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +57,8 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
     var deleting by remember { mutableStateOf(false) }
     var bootstrapping by remember(signedIn) { mutableStateOf(signedIn) }
     var bootstrapFailed by remember(signedIn) { mutableStateOf(false) }
+    var offlineBypass by remember { mutableStateOf(false) }
+
     val onDeleteAccount: () -> Unit = {
         if (!deleting) {
             deleting = true
@@ -53,22 +70,44 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
         }
     }
 
-    LaunchedEffect(signedIn) {
+    LaunchedEffect(signedIn, offlineBypass) {
         if (!signedIn) {
             bootstrapping = false
             bootstrapFailed = false
-        } else {
+        } else if (!offlineBypass) {
             bootstrapping = true
             val initialized = withContext(Dispatchers.IO) {
-                runCatching { runtime.initialize() }.getOrDefault(false)
+                runCatching { runtime.initialize() }.getOrDefault(true)
             }
-            bootstrapFailed = !initialized
+            bootstrapFailed = !initialized && !auth.isSignedIn()
             bootstrapping = false
         }
     }
 
-    if (bootstrapping || bootstrapFailed) {
-        LinkoStartupScreen(failed = bootstrapFailed)
+    if ((bootstrapping || bootstrapFailed) && !offlineBypass) {
+        LinkoStartupScreen(
+            failed = bootstrapFailed,
+            onRetry = {
+                bootstrapFailed = false
+                bootstrapping = true
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
+                    bootstrapFailed = !ok
+                    bootstrapping = false
+                }
+            },
+            onContinueOffline = {
+                offlineBypass = true
+                bootstrapping = false
+                bootstrapFailed = false
+            },
+            onSignOut = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { auth.signOut() }
+                    nav.navigate(Screen.Welcome.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                }
+            }
+        )
         return
     }
 
@@ -85,10 +124,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                             bootstrapping = true
                             bootstrapFailed = false
                             scope.launch {
-                                val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(false) }
-                                bootstrapFailed = !initialized
+                                val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
+                                bootstrapFailed = !initialized && !auth.isSignedIn()
                                 bootstrapping = false
-                                if (initialized) nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                                nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
                             }
                         },
                         onCreateAccount = { nav.navigate(Screen.SignUp.route) },
@@ -120,6 +159,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.NetworkQuality.route) { NetworkQualityScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.Usage.route) { UsageScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
+                composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { state -> if (state == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
                 composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { state -> if (state == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
@@ -130,7 +170,6 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.NetworkSwitching.route) { NetworkSwitchingScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.SessionExpired.route) { SessionExpiredScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.KeyRevoked.route) { KeyRevokedScreen { nav.navigate(Screen.HomeEngine.route) } }
-                composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.Settings.route) { SettingsScreen({ nav.navigate(Screen.Profile.route) }, { nav.navigate(Screen.DeviceIdentity.route) }, { nav.navigate(Screen.Friends.route) }, { nav.navigate(Screen.BlockedRemoved.route) }, { nav.navigate(Screen.SessionHistory.route) }, { nav.navigate(Screen.SecurityEngine.route) }, { nav.navigate(Screen.Privacy.route) }, { nav.navigate(Screen.DataRetention.route) }, { nav.navigate(Screen.DeleteAccount.route) }) }
                 composable(Screen.DeviceIdentity.route) { DeviceIdentityScreen { nav.popBackStack() } }
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }
@@ -144,7 +183,12 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
 }
 
 @Composable
-private fun LinkoStartupScreen(failed: Boolean) {
+private fun LinkoStartupScreen(
+    failed: Boolean,
+    onRetry: () -> Unit = {},
+    onContinueOffline: () -> Unit = {},
+    onSignOut: () -> Unit = {}
+) {
     Box(Modifier.fillMaxSize().background(BG).systemBarsPadding(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
             if (!failed) {
@@ -154,9 +198,15 @@ private fun LinkoStartupScreen(failed: Boolean) {
                 Spacer(Modifier.height(8.dp))
                 Text("Loading your profile, device identity and connection services…", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
             } else {
-                Text("LINKO COULD NOT INITIALIZE", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Text("OFFLINE OR SYNC DELAYED", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                Text("Your session or required LINKO data could not be loaded. Please sign in again.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+                Text("Could not reach the server right now. You can continue offline using your cached profile.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+                Spacer(Modifier.height(24.dp))
+                PrimaryButton("CONTINUE OFFLINE", onContinueOffline, color = Blue)
+                Spacer(Modifier.height(10.dp))
+                PrimaryButton("RETRY SYNC", onRetry, outline = true)
+                Spacer(Modifier.height(10.dp))
+                GhostButton("Sign Out", onSignOut)
             }
         }
     }
@@ -164,23 +214,30 @@ private fun LinkoStartupScreen(failed: Boolean) {
 
 @Composable private fun AppBar(title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(44.dp).clickable { onBack() }, contentAlignment = Alignment.Center) { Text("←", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono) }
-        Text(title, color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold)
+        TextButton(onBack) { Text("‹", color = TextPrimary, fontSize = 28.sp) }
+        Text(title, color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
     }
 }
-private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
+
 private fun appBarTitle(route: String): String? = titles[route]
-private data class NavItem(val label: String, val tab: String, val route: String, val icon: String)
+
+private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
+
 private val bottomNavItems = listOf(NavItem("HOME", "HOME", Screen.HomeEngine.route, "⌂"), NavItem("FRIENDS", "FRIENDS", Screen.Friends.route, "◎"), NavItem("HISTORY", "HISTORY", Screen.SessionHistory.route, "◷"), NavItem("SETTINGS", "SETTINGS", Screen.Settings.route, "⚙"))
-@Composable private fun BottomNav(route: String, nav: NavController) {
-    val active = activeNavTab(route)
-    Row(Modifier.fillMaxWidth().background(Surface).border(1.dp, Border)) {
+private data class NavItem(val label: String, val text: String, val route: String, val icon: String)
+
+@Composable private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
+    Row(Modifier.fillMaxWidth().height(60.dp).background(BG), verticalAlignment = Alignment.CenterVertically) {
         bottomNavItems.forEach { item ->
-            val selected = active == item.tab
-            Column(Modifier.weight(1f).clickable { nav.navigate(item.route) { launchSingleTop = true } }.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(40.dp, 28.dp).clip(RoundedCornerShape(14.dp)).background(if (selected) Blue.copy(alpha = .12f) else Color.Transparent), contentAlignment = Alignment.Center) { Text(item.icon, color = if (selected) Blue else TextMuted, fontSize = 18.sp) }
-                Spacer(Modifier.height(4.dp))
-                Text(item.label, color = if (selected) Blue else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            val sel = route == item.route
+            TextButton(
+                onClick = { if (!sel) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route) { saveState = true }; launchSingleTop = true; restoreState = true } },
+                modifier = Modifier.weight(1f)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(item.icon, color = if (sel) Blue else TextSub, fontSize = 16.sp)
+                    Text(item.label, color = if (sel) Blue else TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                }
             }
         }
     }
