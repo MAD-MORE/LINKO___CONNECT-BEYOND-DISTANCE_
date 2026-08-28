@@ -1,22 +1,30 @@
 package com.linkshare.app.tunnel
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
-/** Runs the provider side of a LINKO relay session through an explicit IP transport boundary. */
+/**
+ * Runs the provider side of a LINKO tunnel session.
+ * Receives encrypted client IP packets, routes them to the Internet, and returns encrypted responses.
+ */
 class ProviderTunnelRunner(
     private val socket: DatagramSocket,
     private val endpoint: InetSocketAddress,
-    private val sessionId: String,
+    val sessionId: String,
     sessionKey: ByteArray,
     private val scope: CoroutineScope,
-    private val adapter: ProviderTransportAdapter = UdpOnlyProviderTransportAdapter()
-) {
+    private val adapter: ProviderTransportAdapter = FullIpProviderTransportAdapter()
+) : AutoCloseable {
+
     private val tunnel = EncryptedDatagramTunnel(
         socket = socket,
         peer = endpoint,
@@ -24,29 +32,77 @@ class ProviderTunnelRunner(
         role = EncryptedDatagramTunnel.Role.PROVIDER,
         sessionKey = sessionKey
     )
-    private var job: Job? = null
+
+    private var receiveJob: Job? = null
+    private var drainJob: Job? = null
 
     fun start() {
-        if (job != null) return
-        job = scope.launch(Dispatchers.IO) {
+        if (receiveJob != null) return
+
+        receiveJob = scope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Provider tunnel loop started for session=$sessionId endpoint=$endpoint")
             while (isActive) {
                 try {
-                    val packet = tunnel.receive(1_000) ?: continue
-                    val response = adapter.forward(packet)
-                    if (response != null) tunnel.send(response)
+                    val rx = tunnel.receive(500) ?: continue
+                    when (rx.type) {
+                        EncryptedDatagramTunnel.PacketType.DATA -> {
+                            val responses = adapter.forward(rx.payload)
+                            for (resp in responses) {
+                                tunnel.send(resp, EncryptedDatagramTunnel.PacketType.DATA)
+                            }
+                        }
+                        EncryptedDatagramTunnel.PacketType.PING -> {
+                            val timestamp = if (rx.payload.size >= 8) {
+                                ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long
+                            } else {
+                                System.currentTimeMillis()
+                            }
+                            tunnel.sendPong(timestamp)
+                        }
+                        EncryptedDatagramTunnel.PacketType.CLOSE -> {
+                            Log.i(TAG, "Received CLOSE signal from client for session=$sessionId")
+                            break
+                        }
+                        else -> Unit
+                    }
                 } catch (_: java.net.SocketTimeoutException) {
-                    // Keep the authorized session alive while waiting for traffic.
+                    // Poll again while keeping session alive.
+                } catch (e: Exception) {
+                    Log.w(TAG, "Provider packet processing error: ${e.message}")
+                }
+            }
+        }
+
+        drainJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val pending = adapter.drainPending(16)
+                    for (packet in pending) {
+                        tunnel.send(packet, EncryptedDatagramTunnel.PacketType.DATA)
+                    }
+                    if (pending.isEmpty()) {
+                        delay(20)
+                    }
                 } catch (_: Exception) {
-                    // Malformed, unsupported, or failed packets are isolated to this frame.
+                    delay(50)
                 }
             }
         }
     }
 
     fun stop() {
-        job?.cancel()
-        job = null
+        receiveJob?.cancel()
+        drainJob?.cancel()
+        receiveJob = null
+        drainJob = null
         adapter.close()
         tunnel.close()
+        Log.i(TAG, "Provider tunnel stopped for session=$sessionId")
+    }
+
+    override fun close() = stop()
+
+    companion object {
+        private const val TAG = "LINKO_PROVIDER_RUNNER"
     }
 }

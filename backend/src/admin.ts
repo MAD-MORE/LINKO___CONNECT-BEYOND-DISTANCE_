@@ -136,9 +136,9 @@ export async function getAdminMetricsSummary(pool: Pool): Promise<Record<string,
   ]);
 
   return {
-    totalDevices: parseInt(devices.rows[0].count, 10),
-    totalSessions: parseInt(sessions.rows[0].count, 10),
-    activeSessions: parseInt(activeSessions.rows[0].count, 10),
-    totalBytesTransferred: parseInt(usage.rows[0].total, 10),
+    totalDevices: parseInt(devices.rows[0]?.count ?? "0", 10),
+    totalSessions: parseInt(sessions.rows[0]?.count ?? "0", 10),
+    activeSessions: parseInt(activeSessions.rows[0]?.count ?? "0", 10),
+    totalBytesTransferred: parseInt(usage.rows[0]?.total ?? "0", 10),
   };
 }

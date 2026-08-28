@@ -62,3 +62,23 @@ jobs:
           sleep 3
           curl --fail http://localhost:7001/health
           docker stop test-relay
+
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Relay to Fly.io
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy relay to Fly.io
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: fly deploy -c infra/fly.relay.toml --dockerfile relay/Dockerfile --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify relay health check
+        run: |
+          sleep 10
+          curl --fail https://linko-relay.fly.dev/health || echo "Relay health check failed — check Fly logs"

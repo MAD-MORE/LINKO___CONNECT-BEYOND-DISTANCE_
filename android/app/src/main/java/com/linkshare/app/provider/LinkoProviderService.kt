@@ -7,13 +7,17 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.IBinder
+import android.util.Log
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoDeviceControlApi
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
+import com.linkshare.app.tunnel.FullIpProviderTransportAdapter
 import com.linkshare.app.tunnel.ProviderSocketFactory
 import com.linkshare.app.tunnel.ProviderTunnelRunner
 import kotlinx.coroutines.CoroutineScope
@@ -25,8 +29,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.net.InetSocketAddress
-import java.util.Base64
 
+/**
+ * Android Foreground Service managing Phone A's provider-side tunnel execution.
+ * Validates connectivity, manages session approval, and routes client traffic to the Internet.
+ */
 class LinkoProviderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var auth: LinkoAuth
@@ -43,6 +50,14 @@ class LinkoProviderService : Service() {
         scope.launch { runCatching { api.ensureRegistered() } }
         scope.launch { listenToRealtime() }
         scope.launch { heartbeat() }
+    }
+
+    private fun hasActiveInternet(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+               caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private suspend fun listenToRealtime() {
@@ -73,12 +88,17 @@ class LinkoProviderService : Service() {
 
     private fun accept(requestId: String) {
         scope.launch {
+            if (!hasActiveInternet()) {
+                Log.w(TAG, "Provider cannot accept session: No active internet connection")
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active internet connection on this device"))
+                return@launch
+            }
             runCatching {
                 api.transition(requestId, "approved")
                 startApproved(requestId)
             }.onFailure {
                 stopRunner(requestId)
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection failed", "The secure connection could not be started"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection Failed", "The secure connection could not be started"))
             }
         }
     }
@@ -90,7 +110,7 @@ class LinkoProviderService : Service() {
                 establishEngine(requestId)
             }.onFailure {
                 stopRunner(requestId)
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection failed", "The secure connection could not be started"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection Failed", "The secure connection could not be started"))
             }
         }
     }
@@ -102,17 +122,20 @@ class LinkoProviderService : Service() {
                 val config = api.tunnelConfig(sessionId)
                 require(config.role == "provider") { "provider_role_required" }
                 stopRunner(sessionId)
+
                 val runner = ProviderTunnelRunner(
                     socket = ProviderSocketFactory.openDatagramSocket(),
                     endpoint = InetSocketAddress(config.host, config.port),
                     sessionId = sessionId,
                     sessionKey = config.key,
                     scope = scope,
+                    adapter = FullIpProviderTransportAdapter()
                 )
                 runners[sessionId] = runner
                 runner.start()
                 api.transition(sessionId, "connected")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connected", "LINKO is sharing your connection securely"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "LINKO is sharing your connection securely"))
+                Log.i(TAG, "Provider data plane established for session=$sessionId")
                 return
             } catch (error: Exception) {
                 lastError = error
@@ -162,10 +185,17 @@ class LinkoProviderService : Service() {
         return START_STICKY
     }
 
-    override fun onDestroy() { runners.values.toList().forEach { it.stop() }; runners.clear(); scope.cancel(); super.onDestroy() }
+    override fun onDestroy() {
+        runners.values.toList().forEach { it.stop() }
+        runners.clear()
+        scope.cancel()
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val TAG = "LINKO_PROVIDER_SERVICE"
         const val ACTION_ACCEPT = "com.linkshare.app.provider.ACCEPT"
         const val ACTION_DECLINE = "com.linkshare.app.provider.DECLINE"
         const val ACTION_START_APPROVED = "com.linkshare.app.provider.START_APPROVED"

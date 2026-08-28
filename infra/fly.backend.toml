@@ -1,11 +1,11 @@
 # fly.toml — Linko Backend Control Plane
 # Deploy: fly deploy -c infra/fly.backend.toml
 
-app = "linko-backend"
+app = "linkoconnect-beyond-distance"
 primary_region = "iad"
 
 [build]
-  dockerfile = "infra/backend.dockerfile"
+  dockerfile = "backend.dockerfile"
   build_target = "runner"
 
 [env]
