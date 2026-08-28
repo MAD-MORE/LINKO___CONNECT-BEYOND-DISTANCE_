@@ -37,7 +37,7 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
         env:
-          LINKO_CONTROL_PLANE_URL: https://linko-backend.fly.dev
+          LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_SUPABASE_URL }}/functions/v1/linko-control-plane
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY }}
 
