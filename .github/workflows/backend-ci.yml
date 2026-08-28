@@ -28,7 +28,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: npm ci
+        run: npm install
 
       - name: Typecheck
         working-directory: backend
@@ -53,6 +53,6 @@ jobs:
       - name: Audit dependencies
         working-directory: backend
         run: |
-          npm ci
+          npm install
           npm audit --audit-level=high
 
