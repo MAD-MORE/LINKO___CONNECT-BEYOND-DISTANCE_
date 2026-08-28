@@ -2,7 +2,7 @@ name: LINKO Android CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop, feature/real-data-plane-internet-sharing]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -40,8 +40,19 @@ jobs:
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
+      - name: Verify cross-layer integrity
+        working-directory: .
+        run: python android/scripts/verify_linko_integrity.py
+
+      - name: Run unit tests
+        run: ./gradlew test --no-daemon
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+        env:
+          LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
+          LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
+          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
 
       - name: Upload debug APK
         if: success()
