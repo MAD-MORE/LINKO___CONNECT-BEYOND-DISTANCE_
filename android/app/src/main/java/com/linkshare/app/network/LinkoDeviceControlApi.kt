@@ -13,7 +13,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Real LINKO device/control-plane client. Uses the Supabase access token only for device registration; all device operations use the issued LINKO device token. */
+/** Real LINKO device/control-plane client. The control plane is hosted by a Supabase Edge Function and authenticated with the user's Supabase JWT. */
 class LinkoDeviceControlApi(
     private val context: Context,
     private val auth: LinkoAuth = LinkoAuth(context.applicationContext),
@@ -22,12 +22,16 @@ class LinkoDeviceControlApi(
 ) {
     suspend fun ensureRegistered(): DeviceRegistration = withContext(Dispatchers.IO) {
         val existingId = auth.currentDeviceId()
-        val existingToken = auth.currentLinkoToken()
-        if (!existingId.isNullOrBlank() && !existingToken.isNullOrBlank()) {
-            return@withContext DeviceRegistration(existingId, existingToken, auth.currentUserId())
-        }
         val access = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-            ?: throw LinkoNetworkException("device_auth_required")
+        if (!existingId.isNullOrBlank() && access != null) {
+            return@withContext DeviceRegistration(existingId, access, auth.currentUserId())
+        }
+        val token = access ?: run {
+            val refreshed = auth.refreshSession()
+            if (!refreshed.success) throw LinkoNetworkException("device_auth_required")
+            auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+                ?: throw LinkoNetworkException("device_auth_required")
+        }
         val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
             ?: auth.refreshAccountIdentity().userId
             ?: throw LinkoNetworkException("auth_user_missing")
@@ -35,10 +39,11 @@ class LinkoDeviceControlApi(
             .put("publicKey", identity.publicKeyBase64())
             .put("name", "LINKO ${Build.MANUFACTURER} ${Build.MODEL}".trim())
             .put("roles", JSONArray().put("provider").put("receiver"))
-        val response = request("POST", "/v1/devices/register", body, access)
+        val response = request("POST", "/v1/devices/register", body, token)
         val device = response.optJSONObject("device") ?: throw LinkoNetworkException("device_registration_invalid")
         val deviceId = device.optString("id").takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_id_missing")
-        val token = response.optString("accessToken").takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_token_missing")
+        // Keep the Supabase JWT in the existing session slot for backwards compatibility;
+        // all requests below always prefer the current refreshed Supabase access token.
         auth.saveLinkoSession(deviceId, token, userId)
         DeviceRegistration(deviceId, token, userId)
     }
@@ -92,8 +97,14 @@ class LinkoDeviceControlApi(
         }
     }
 
-    private fun deviceToken(): String = auth.currentLinkoToken()?.takeIf { it.isNotBlank() }
-        ?: throw LinkoNetworkException("device_not_registered")
+    private suspend fun deviceToken(): String {
+        val current = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+        if (current != null) return current
+        val refreshed = auth.refreshSession()
+        if (!refreshed.success) throw LinkoNetworkException("device_auth_required")
+        return auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+            ?: throw LinkoNetworkException("device_auth_required")
+    }
 
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
@@ -108,6 +119,7 @@ class LinkoDeviceControlApi(
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Authorization", "Bearer $bearer")
             setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
+            auth.currentDeviceId()?.let { setRequestProperty("X-Linko-Device-Id", it) }
         }
         return try {
             body?.let { connection.outputStream.use { out -> out.write(it.toString().toByteArray(Charsets.UTF_8)) } }
