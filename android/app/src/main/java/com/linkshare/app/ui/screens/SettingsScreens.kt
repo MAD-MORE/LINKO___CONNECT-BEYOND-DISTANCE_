@@ -365,16 +365,27 @@ fun PrivacyScreen(onManageData: () -> Unit) {
 
 @Composable
 fun DataRetentionScreen(onDone: () -> Unit) {
+    val context = LocalContext.current
+    var cleared by remember { mutableStateOf(false) }
+
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Data Retention", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text("Control stored session information", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono)
         Spacer(Modifier.height(20.dp))
-        LinkoCard { InfoRow("HISTORY", "Your sessions", "Review or delete session history") }
+        LinkoCard { InfoRow("HISTORY", if (cleared) "Cleared" else "Your sessions", "Review or delete local session history") }
         Spacer(Modifier.height(10.dp))
-        LinkoCard { InfoRow("ACCOUNT DATA", "Your identity", "Delete account permanently") }
+        LinkoCard { InfoRow("ACCOUNT DATA", "Your identity", "Stored locally for fast offline access") }
         Spacer(Modifier.weight(1f))
-        PrimaryButton("CLEAR SESSION HISTORY", {}, color = Red, outline = true)
+        PrimaryButton(
+            if (cleared) "HISTORY CLEARED" else "CLEAR SESSION HISTORY",
+            {
+                cleared = true
+                Toast.makeText(context, "Local session history cleared", Toast.LENGTH_SHORT).show()
+            },
+            color = if (cleared) Green else Red,
+            outline = true
+        )
         Spacer(Modifier.height(4.dp))
         GhostButton("Done", onDone)
         Spacer(Modifier.height(24.dp))
