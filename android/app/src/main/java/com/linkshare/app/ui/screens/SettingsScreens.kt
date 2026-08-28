@@ -4,6 +4,7 @@ package com.linkshare.app.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -182,11 +183,25 @@ fun AccountProfileScreen(onDone: () -> Unit) {
             Text(if (linkoId.isBlank()) "Loading…" else "@$linkoId", color = Blue, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text("This ID is generated for your account and is not a device-local default.", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+            Spacer(Modifier.height(10.dp))
+            PrimaryButton(
+                "COPY LINKO ID",
+                {
+                    val clean = linkoId.removePrefix("@")
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clip = ClipData.newPlainText("LINKO ID", clean)
+                    clipboard?.setPrimaryClip(clip)
+                    Toast.makeText(context, "LINKO ID copied: $clean", Toast.LENGTH_SHORT).show()
+                    message = "✓ LINKO ID copied: $clean"
+                },
+                color = Green,
+                outline = true
+            )
         }
 
         message?.let {
             Spacer(Modifier.height(10.dp))
-            Text(it, color = if (it.contains("Could")) Red else Green, fontSize = 11.sp, fontFamily = JetBrainsMono)
+            Text(it, color = if (it.contains("Could") || it.contains("✕")) Red else Green, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
 
         Spacer(Modifier.weight(1f))

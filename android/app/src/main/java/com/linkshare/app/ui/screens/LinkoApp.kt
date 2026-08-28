@@ -130,6 +130,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.NetworkSwitching.route) { NetworkSwitchingScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.SessionExpired.route) { SessionExpiredScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.KeyRevoked.route) { KeyRevokedScreen { nav.navigate(Screen.HomeEngine.route) } }
+                composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.Settings.route) { SettingsScreen({ nav.navigate(Screen.Profile.route) }, { nav.navigate(Screen.DeviceIdentity.route) }, { nav.navigate(Screen.Friends.route) }, { nav.navigate(Screen.BlockedRemoved.route) }, { nav.navigate(Screen.SessionHistory.route) }, { nav.navigate(Screen.SecurityEngine.route) }, { nav.navigate(Screen.Privacy.route) }, { nav.navigate(Screen.DataRetention.route) }, { nav.navigate(Screen.DeleteAccount.route) }) }
                 composable(Screen.DeviceIdentity.route) { DeviceIdentityScreen { nav.popBackStack() } }
                 composable(Screen.SecurityEngine.route) { SecurityEngineScreen { nav.navigate(Screen.HomeEngine.route) } }

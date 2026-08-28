@@ -2,58 +2,90 @@ package com.linkshare.app.network
 
 import com.linkshare.app.BuildConfig
 import com.linkshare.app.auth.LinkoAuth
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Account-scoped profile API backed by the deployed LINKO friends/profile function. */
+/**
+ * Account-scoped profile API communicating directly with Supabase PostgREST tables.
+ */
 class LinkoProfileApi(
     private val accessTokenProvider: () -> String?,
     private val userIdProvider: () -> String?,
     private val refreshProvider: (suspend () -> Boolean)? = { LinkoAuth.current()?.refreshSession()?.success == true },
 ) {
     suspend fun load(): ProfileRecord {
-        val result = request("GET", "/profile")
-        val profile = result.optJSONObject("profile") ?: result
-        return profile.toProfile().also { LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) }
+        val uid = userId()
+        val path = "/rest/v1/profiles?user_id=eq.$uid&select=*"
+        val result = request("GET", path)
+        val profileJson = when {
+            result.optJSONArray("data") != null -> result.optJSONArray("data")?.optJSONObject(0)
+            result.has("linko_id") -> result
+            else -> null
+        } ?: throw LinkoNetworkException("profile_not_found")
+
+        return profileJson.toProfile().also { 
+            LinkoAuth.current()?.saveProfile(it.displayName, it.linkoId, it.username) 
+        }
     }
 
     /**
-     * Linear write contract: validate -> update -> require returned canonical value -> persist locally.
-     * The caller performs an additional fresh GET to verify persistence before showing success.
+     * Updates the user's display name directly in Supabase profiles table.
      */
     suspend fun updateDisplayName(displayName: String): ProfileRecord {
         val clean = displayName.trim()
         require(clean.length in 2..40) { "Display name must be 2–40 characters." }
-        val body = JSONObject()
-            .put("displayName", clean)
-            .put("display_name", clean)
-        val result = request("POST", "/profile", body)
-        val profile = (result.optJSONObject("profile") ?: result).toProfile()
-        if (profile.displayName != clean) {
-            throw LinkoNetworkException("profile_save_not_verified")
+        val uid = userId()
+        val path = "/rest/v1/profiles?user_id=eq.$uid"
+        val body = JSONObject().put("display_name", clean)
+        val result = request("PATCH", path, body, preferReturn = true)
+        
+        val profileJson = when {
+            result.optJSONArray("data") != null -> result.optJSONArray("data")?.optJSONObject(0)
+            result.has("linko_id") -> result
+            else -> null
         }
-        LinkoAuth.current()?.saveProfile(profile.displayName, profile.linkoId, profile.username)
-        return profile
+
+        val updated = if (profileJson != null) {
+            profileJson.toProfile()
+        } else {
+            // Fallback reload
+            load()
+        }
+
+        LinkoAuth.current()?.saveProfile(updated.displayName, updated.linkoId, updated.username)
+        return updated
     }
 
     private fun userId(): String = userIdProvider()?.takeIf { it.isNotBlank() }
         ?: throw LinkoNetworkException("auth_user_required")
 
-    private suspend fun request(method: String, path: String, body: JSONObject? = null): JSONObject {
+    private suspend fun request(
+        method: String,
+        path: String,
+        body: JSONObject? = null,
+        preferReturn: Boolean = false
+    ): JSONObject {
         val token = accessTokenProvider()?.takeIf { it.isNotBlank() }
             ?: throw LinkoNetworkException("auth_required")
-        val first = execute(method, path, body, token)
+        val first = execute(method, path, body, token, preferReturn)
         if (first.status == 401 && refreshProvider?.invoke() == true) {
             val newToken = accessTokenProvider()?.takeIf { it.isNotBlank() }
                 ?: throw LinkoNetworkException("auth_required")
-            return parseResponse(execute(method, path, body, newToken))
+            return parseResponse(execute(method, path, body, newToken, preferReturn))
         }
         return parseResponse(first)
     }
 
-    private fun execute(method: String, path: String, body: JSONObject?, token: String): HttpResult {
-        val url = "${BuildConfig.LINKO_SUPABASE_URL}/functions/v1/linko-friends$path"
+    private fun execute(
+        method: String,
+        path: String,
+        body: JSONObject?,
+        token: String,
+        preferReturn: Boolean
+    ): HttpResult {
+        val url = "${BuildConfig.LINKO_SUPABASE_URL.trimEnd('/')}$path"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
@@ -63,6 +95,9 @@ class LinkoProfileApi(
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
+            if (preferReturn) {
+                setRequestProperty("Prefer", "return=representation")
+            }
         }
         return try {
             body?.let { payload ->
@@ -88,7 +123,15 @@ class LinkoProfileApi(
                 .ifBlank { "http_${result.status}" }
             throw LinkoNetworkException(message, result.status)
         }
-        return JSONObject(result.body.ifBlank { "{}" })
+        val trimmed = result.body.trim()
+        return when {
+            trimmed.startsWith("[") -> {
+                val array = runCatching { JSONArray(trimmed) }.getOrDefault(JSONArray())
+                JSONObject().put("data", array)
+            }
+            trimmed.startsWith("{") -> JSONObject(trimmed)
+            else -> JSONObject()
+        }
     }
 
     private fun JSONObject.toProfile(): ProfileRecord {
