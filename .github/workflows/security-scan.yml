@@ -48,13 +48,13 @@ jobs:
       - name: Audit backend
         working-directory: backend
         run: |
-          npm ci
+          npm install
           npm audit --audit-level=moderate
 
       - name: Audit relay
         working-directory: relay
         run: |
-          npm ci
+          npm install
           npm audit --audit-level=moderate
 
   secret-scan:
