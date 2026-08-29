@@ -92,13 +92,31 @@ class LinkoDeviceControlApi(
         val body = JSONObject().put("p_session_id", sessionId)
         val json = rpc("linko_tunnel_config", body, authToken())
         val endpoint = json.optJSONObject("endpoint")
-        val host = json.optString("host", endpoint?.optString("host", "linkoconnect-beyond-distance.fly.dev") ?: "linkoconnect-beyond-distance.fly.dev")
-        val port = json.optInt("port", endpoint?.optInt("port", 7000) ?: 7000)
-        val keyB64 = json.optString("key")
-        val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }.getOrNull()
-            ?: ByteArray(32)
-        val role = json.optString("role", "receiver")
+        val host = json.optString("host").ifBlank { endpoint?.optString("host").orEmpty() }
+        val port = if (json.has("port")) json.optInt("port", -1) else endpoint?.optInt("port", -1) ?: -1
+        val keyB64 = json.optString("key").trim()
+
+        // Fail closed: never substitute a guessed relay hostname or an all-zero AES key.
+        if (host.isBlank() || port !in 1..65535 || keyB64.isBlank()) {
+            throw LinkoNetworkException("invalid_tunnel_config")
+        }
+
+        val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }
+            .getOrElse { throw LinkoNetworkException("invalid_tunnel_key") }
+        if (key.size != 32) {
+            throw LinkoNetworkException("invalid_tunnel_key_length")
+        }
+
+        val role = json.optString("role").trim().lowercase()
+        if (role != "provider" && role != "receiver") {
+            throw LinkoNetworkException("invalid_tunnel_role")
+        }
+
         val expiresAt = json.optLong("expiresAt", 0L)
+        if (expiresAt <= System.currentTimeMillis()) {
+            throw LinkoNetworkException("tunnel_config_expired")
+        }
+
         TunnelConfig(sessionId, host, port, key, role, expiresAt)
     }
 
