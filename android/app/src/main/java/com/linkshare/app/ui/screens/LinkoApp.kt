@@ -20,10 +20,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +67,7 @@ import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
+import com.linkshare.app.diagnostics.DiagnosticCenterScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -143,21 +146,16 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
                 composable(Screen.SignIn.route) {
-                    SignInScreen(
-                        auth,
-                        onSignedIn = {
-                            splashShowing = true
-                            bootstrapFailed = false
-                            scope.launch {
-                                val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
-                                bootstrapFailed = !initialized && !auth.isSignedIn()
-                                splashShowing = false
-                                nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
-                            }
-                        },
-                        onCreateAccount = { nav.navigate(Screen.SignUp.route) },
-                        onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }
-                    )
+                    SignInScreen(auth, onSignedIn = {
+                        splashShowing = true
+                        bootstrapFailed = false
+                        scope.launch {
+                            val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
+                            bootstrapFailed = !initialized && !auth.isSignedIn()
+                            splashShowing = false
+                            nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                        }
+                    }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) })
                 }
                 composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
                 composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) { popUpTo(Screen.RecoveryOtp.route) { inclusive = true } } }, onBack = { nav.popBackStack() }) }
@@ -201,6 +199,12 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
                 composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
                 composable(Screen.DeleteAccount.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
+                composable(Screen.DiagnosticCenter.route) {
+                    DiagnosticCenterScreen(
+                        results = com.linkshare.app.diagnostics.LinkoDiagnosticCenter.initialResults(),
+                        onRunDiagnostics = { /* Real adapters will update the diagnostic state without altering LINKO networking. */ }
+                    )
+                }
             }
         }
         if (!onboarding) BottomNav(route, nav)
@@ -208,12 +212,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
 }
 
 @Composable
-private fun LinkoStartupScreen(
-    failed: Boolean,
-    onRetry: () -> Unit = {},
-    onContinueOffline: () -> Unit = {},
-    onSignOut: () -> Unit = {}
-) {
+private fun LinkoStartupScreen(failed: Boolean, onRetry: () -> Unit = {}, onContinueOffline: () -> Unit = {}, onSignOut: () -> Unit = {}) {
     Box(Modifier.fillMaxSize().background(BG).systemBarsPadding(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
             if (!failed) {
@@ -262,92 +261,40 @@ private val titles = mapOf(
     "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch",
     "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended",
     "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy",
-    "data_retention" to "Data Retention", "delete_account" to "Delete Account"
+    "data_retention" to "Data Retention", "delete_account" to "Delete Account", "diagnostic_center" to "Diagnostic Center"
 )
 
-private sealed class BottomNavItem(
-    val label: String,
-    val route: String,
-    val iconFilled: ImageVector,
-    val iconOutlined: ImageVector
-) {
+private sealed class BottomNavItem(val label: String, val route: String, val iconFilled: ImageVector, val iconOutlined: ImageVector) {
     object Home : BottomNavItem("HOME", Screen.HomeEngine.route, Icons.Filled.Home, Icons.Outlined.Home)
     object Friends : BottomNavItem("FRIENDS", Screen.Friends.route, Icons.Filled.People, Icons.Outlined.People)
     object History : BottomNavItem("HISTORY", Screen.SessionHistory.route, Icons.Filled.History, Icons.Outlined.History)
+    object Diagnostics : BottomNavItem("DIAGNOSTICS", Screen.DiagnosticCenter.route, Icons.Filled.Info, Icons.Outlined.Info)
     object Settings : BottomNavItem("SETTINGS", Screen.Settings.route, Icons.Filled.Settings, Icons.Outlined.Settings)
 }
 
-private val bottomNavItems = listOf(
-    BottomNavItem.Home,
-    BottomNavItem.Friends,
-    BottomNavItem.History,
-    BottomNavItem.Settings
-)
+private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, BottomNavItem.History, BottomNavItem.Diagnostics, BottomNavItem.Settings)
 
 @Composable
 private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
     val activeTab = activeNavTab(route)
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        color = Card,
-        tonalElevation = 8.dp,
-        border = BorderStroke(1.dp, Border)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(62.dp)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceAround
-        ) {
+    Surface(modifier = Modifier.fillMaxWidth().navigationBarsPadding(), color = Card, tonalElevation = 8.dp, border = BorderStroke(1.dp, Border)) {
+        Row(modifier = Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceAround) {
             bottomNavItems.forEach { item ->
                 val selected = activeTab == item.label
                 val activeColor = if (item == BottomNavItem.Friends) Green else Blue
-                val bgModifier = if (selected) {
-                    Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(activeColor.copy(alpha = 0.12f))
-                } else {
-                    Modifier.clip(RoundedCornerShape(12.dp))
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .then(bgModifier)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            if (!selected) {
-                                nav.navigate(item.route) {
-                                    popUpTo(Screen.HomeEngine.route)
-                                    launchSingleTop = true
-                                }
-                            }
+                val bgModifier = if (selected) Modifier.clip(RoundedCornerShape(12.dp)).background(activeColor.copy(alpha = 0.12f)) else Modifier.clip(RoundedCornerShape(12.dp))
+                Box(modifier = Modifier.weight(1f).then(bgModifier).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    if (!selected) {
+                        nav.navigate(item.route) {
+                            popUpTo(Screen.HomeEngine.route)
+                            launchSingleTop = true
                         }
-                        .padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                    }
+                }.padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = if (selected) item.iconFilled else item.iconOutlined,
-                            contentDescription = item.label,
-                            tint = if (selected) activeColor else TextSub,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Icon(imageVector = if (selected) item.iconFilled else item.iconOutlined, contentDescription = item.label, tint = if (selected) activeColor else TextSub, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = item.label,
-                            color = if (selected) activeColor else TextSub,
-                            fontSize = 10.sp,
-                            fontFamily = JetBrainsMono,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                        )
+                        Text(text = item.label, color = if (selected) activeColor else TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
                     }
                 }
             }
