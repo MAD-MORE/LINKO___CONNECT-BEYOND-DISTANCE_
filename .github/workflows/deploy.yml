@@ -22,6 +22,9 @@ jobs:
     timeout-minutes: 20
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # The URL is not secret; keeping the default here prevents environment drift.
+      LINKO_RELAY_HEARTBEAT_URL: ${{ secrets.LINKO_RELAY_HEARTBEAT_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-relay-heartbeat' }}
+      LINKO_RELAY_REGISTRATION_TOKEN: ${{ secrets.LINKO_RELAY_REGISTRATION_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -30,10 +33,14 @@ jobs:
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Verify Fly authentication
+      - name: Verify Fly authentication and relay registration secret
         run: |
           if [ -z "${FLY_API_TOKEN}" ]; then
             echo "::error::FLY_API_TOKEN is not configured in GitHub Actions secrets."
+            exit 1
+          fi
+          if [ -z "${LINKO_RELAY_REGISTRATION_TOKEN}" ]; then
+            echo "::error::LINKO_RELAY_REGISTRATION_TOKEN is not configured in GitHub Actions secrets."
             exit 1
           fi
           flyctl auth whoami
@@ -43,6 +50,15 @@ jobs:
           if ! flyctl ips list --app linko-relay | grep -q "v4"; then
             flyctl ips allocate-v4 --app linko-relay
           fi
+
+      - name: Configure relay control-plane credentials
+        run: |
+          flyctl secrets set \
+            LINKO_RELAY_HEARTBEAT_URL="${LINKO_RELAY_HEARTBEAT_URL}" \
+            LINKO_RELAY_REGISTRATION_TOKEN="${LINKO_RELAY_REGISTRATION_TOKEN}" \
+            RELAY_NODE_ID="relay-1" \
+            RELAY_PUBLIC_HOST="linko-relay.fly.dev" \
+            --app linko-relay
 
       - name: Deploy LINKO UDP Relay
         run: |
