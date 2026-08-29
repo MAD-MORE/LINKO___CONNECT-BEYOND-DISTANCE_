@@ -6,23 +6,23 @@ import { startHealthServer, recordPacket } from "./health.js";
 /**
  * LINKO Data-Plane Relay Server (V2)
  *
- * Wire Framing Format:
- * ┌──────────┬─────────┬──────────────┬──────────┬──────┬──────┬───────────┬─────────┬───────────────────────┐
- * │ Magic    │ Version │ Session ID   │ Key Hash │ Role │ Type │ Sequence  │ Nonce   │ Ciphertext + Auth Tag │
- * │ (4B)     │ (1B)    │ (36B UUID)   │ (32B)    │ (1B) │ (1B) │ (8B)      │ (12B)   │ (Variable + 16B tag)  │
- * └──────────┴─────────┴──────────────┴──────────┴──────┴──────┴───────────┴─────────┴───────────────────────┘
- * Total Header: 95 bytes. Minimum Datagram: 111 bytes (95B Header + 16B GCM Auth Tag).
+ * Wire Framing Format is intentionally identical to Android's EncryptedDatagramTunnel.
+ * The relay never decrypts payloads; it only validates the framing metadata needed
+ * to route the already-authenticated datagram safely.
  *
- * ZERO-KNOWLEDGE PRINCIPLES:
- * 1. The relay NEVER possesses private session keys or user credentials.
- * 2. The relay NEVER decrypts or inspects packet payloads.
- * 3. The relay NEVER logs packet contents or browsing metadata.
- * 4. The relay ONLY routes complete, unmodified encrypted datagrams between verified endpoints.
+ * Packet type contract:
+ *   1 = DATA
+ *   2 = PING
+ *   3 = PONG
+ *   4 = HANDSHAKE
+ *   5 = CLOSE
  */
 
 export const MAGIC = Buffer.from([0x4C, 0x4B, 0x4F, 0x32]); // "LKO2"
 export const HEADER_LENGTH = 95;
-export const MIN_PACKET_LENGTH = HEADER_LENGTH + 16; // 111 bytes
+export const MIN_PACKET_LENGTH = HEADER_LENGTH + 16; // GCM authentication tag
+
+const PACKET_TYPE_CLOSE = 5;
 
 export interface RelayOptions {
   udpPort?: number;
@@ -62,51 +62,43 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayInst
   });
 
   socket.on("message", (msg: Buffer, remote: RemoteInfo) => {
-    // 1. Minimum Length Validation
-    if (msg.length < MIN_PACKET_LENGTH) {
-      return; // Malformed / short packet
-    }
+    // 1. Minimum Length Validation.
+    if (msg.length < MIN_PACKET_LENGTH) return;
 
-    // 2. Verify Magic ("LKO2")
-    if (!msg.subarray(0, 4).equals(MAGIC)) {
-      return; // Invalid protocol magic
-    }
+    // 2. Verify protocol magic.
+    if (!msg.subarray(0, 4).equals(MAGIC)) return;
 
-    // 3. Parse Header Fields
+    // 3. Parse fields shared with the Android tunnel implementation.
     const sessionId = msg.subarray(5, 41).toString("ascii");
     const incomingKeyHash = msg.subarray(41, 73).toString("hex").toLowerCase();
-    const role = msg[73]; // 1 = Provider, 2 = Client
-    const type = msg[74]; // 1 = Data, 2 = Handshake, 3 = Keepalive, 4 = Close
+    const role = msg[73]; // 1 = Provider, 2 = Receiver
+    const type = msg[74]; // 1 = DATA, 2 = PING, 3 = PONG, 4 = HANDSHAKE, 5 = CLOSE
 
-    // Basic UUID validation
-    if (sessionId.length !== 36) {
-      return;
-    }
+    if (sessionId.length !== 36) return;
+    if (role !== 1 && role !== 2) return;
 
-    // 4. Session Lookup & Cryptographic Key-Hash Verification
+    // 4. Bind the session to the first observed key hash.
+    // The relay sees only a SHA-256 hash, never the AES key itself.
     let entry = registry.getById(sessionId);
     if (!entry) {
-      // Dynamically register session from first cryptographic datagram
       entry = registry.addSession(sessionId, incomingKeyHash);
     } else if (entry.keyHash !== incomingKeyHash) {
-      // Key hash mismatch: drop unauthorized spoofed packet
+      // Different key hash means this datagram does not belong to this session.
       return;
     }
 
-    // 5. Bandwidth Quota Enforcement
+    // 5. Enforce per-session bandwidth quota before forwarding.
     if (entry.bytesForwarded + msg.length > maxSessionBytes) {
       registry.removeSession(sessionId);
       return;
     }
 
-    // 6. Endpoint Registration & Network Roaming
+    // 6. Record the authenticated endpoint and support normal NAT port roaming.
     const party = registry.registerEndpoint(sessionId, remote, role);
-    if (party === null) {
-      return;
-    }
+    if (party === null) return;
 
-    // 7. Route to Peer Endpoint
-    const dest = (role === 1 || party === "a") ? entry.partyB : entry.partyA;
+    // 7. Forward the complete encrypted datagram unchanged.
+    const dest = party === "a" ? entry.partyB : entry.partyA;
     if (dest) {
       socket.send(msg, dest.port, dest.address, (err) => {
         if (err) {
@@ -124,8 +116,9 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayInst
       recordPacket(msg.length);
     }
 
-    // 8. Handle Session Teardown Datagram
-    if (type === 4) {
+    // 8. Android sends CLOSE as packet type 5. Type 4 is HANDSHAKE and must
+    // never tear down a session.
+    if (type === PACKET_TYPE_CLOSE) {
       registry.removeSession(sessionId);
     }
   });
@@ -154,19 +147,15 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayInst
         close: async () => {
           isUdpBound = false;
           registry.destroy();
-          await new Promise<void>((res) => {
-            socket.close(() => res());
-          });
-          await new Promise<void>((res) => {
-            httpServer.close(() => res());
-          });
+          await new Promise<void>((res) => socket.close(() => res()));
+          await new Promise<void>((res) => httpServer.close(() => res()));
         },
       });
     });
   });
 }
 
-// Auto-run if executed directly as script entry point
+// Auto-run if executed directly as script entry point.
 const isDirectEntry = process.argv[1] && (
   process.argv[1].endsWith("relay-server.ts") ||
   process.argv[1].endsWith("relay-server.js")
