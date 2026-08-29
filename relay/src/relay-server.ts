@@ -45,6 +45,8 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayInst
   const maxSessionBytes = options.maxSessionBytes ?? Number(process.env.BANDWIDTH_LIMIT_BYTES_PER_SESSION ?? 1_073_741_824);
   const nodeId = options.nodeId ?? process.env.RELAY_NODE_ID ?? "relay-1";
   const region = options.region ?? process.env.RELAY_REGION ?? "iad";
+  // Fly.io UDP services must bind to fly-global-services. Keep 0.0.0.0 as the local/test default.
+  const udpBindHost = process.env.RELAY_UDP_BIND_HOST ?? "0.0.0.0";
 
   const registry = new SessionRegistry();
   const socket = createSocket("udp4");
@@ -133,7 +135,7 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayInst
   return new Promise((resolve, reject) => {
     socket.once("error", reject);
 
-    socket.bind(udpPort, "0.0.0.0", () => {
+    socket.bind(udpPort, udpBindHost, () => {
       isUdpBound = true;
       socket.removeListener("error", reject);
 
