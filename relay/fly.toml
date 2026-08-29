@@ -13,6 +13,7 @@ primary_region = "iad"
   PORT = "7001"
   RELAY_REGION = "iad"
   BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824"
+  RELAY_UDP_BIND_HOST = "fly-global-services"
 
 # UDP service — Encrypted Data-Plane Relay (Port 7000)
 [[services]]
