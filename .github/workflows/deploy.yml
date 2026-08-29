@@ -1,0 +1,68 @@
+name: Deploy Relay Node
+
+on:
+  push:
+    branches: [main, fix/fly-relay-production]
+    paths:
+      - 'relay/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-relay-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-relay:
+    name: Deploy LINKO UDP Relay to Fly.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Verify Fly authentication
+        run: |
+          if [ -z "${FLY_API_TOKEN}" ]; then
+            echo "::error::FLY_API_TOKEN is not configured in GitHub Actions secrets."
+            exit 1
+          fi
+          flyctl auth whoami
+
+      - name: Ensure dedicated IPv4 for UDP
+        run: |
+          if ! flyctl ips list --app linko-relay | grep -q "v4"; then
+            flyctl ips allocate-v4 --app linko-relay
+          fi
+
+      - name: Deploy LINKO UDP Relay
+        run: |
+          flyctl deploy ./relay \
+            --app linko-relay \
+            --remote-only
+
+      - name: Verify relay status
+        run: |
+          flyctl status --app linko-relay
+
+      - name: Verify relay health
+        run: |
+          for i in {1..12}; do
+            if curl --fail --show-error --silent --max-time 5 https://linko-relay.fly.dev/health; then
+              echo
+              echo "Relay health check passed."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Relay health check failed after deployment."
+          exit 1
