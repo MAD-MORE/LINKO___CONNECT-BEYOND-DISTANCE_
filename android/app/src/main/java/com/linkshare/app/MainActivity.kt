@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             LinkoTheme {
                 Box(Modifier.fillMaxSize()) {
-                    if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) LinkoApp(linkoAuth, linkoRuntime)
+                    if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized && ::updateManager.isInitialized) LinkoApp(linkoAuth, linkoRuntime, updateManager)
                     if (::updateManager.isInitialized) {
                         Column(Modifier.fillMaxWidth()) { LinkoUpdateStatusOverlay(updateManager) }
                     }
@@ -66,7 +66,6 @@ class MainActivity : ComponentActivity() {
         runCatching { LinkoRealtimeManager.setForeground(true) }
         if (::updateManager.isInitialized) {
             updateManager.onInstallerReturned()
-            window.decorView.post { checkForUpdates() }
         }
     }
 

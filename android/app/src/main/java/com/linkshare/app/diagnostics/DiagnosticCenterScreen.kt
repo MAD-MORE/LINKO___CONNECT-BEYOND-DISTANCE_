@@ -38,31 +38,33 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.linkshare.app.update.LinkoUpdateManager
+import com.linkshare.app.ui.theme.TextSub
+import com.linkshare.app.ui.theme.TextPrimary
+import com.linkshare.app.ui.theme.JetBrainsMono
+import com.linkshare.app.ui.theme.Green
+import com.linkshare.app.ui.theme.Blue
+import com.linkshare.app.ui.components.PrimaryButton
+import com.linkshare.app.ui.components.LinkoCard
 
 /** LINKO Diagnostic Center with live diagnostics and updater telemetry. */
 @Composable
-fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: () -> Unit, modifier: Modifier = Modifier) {
+fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: () -> Unit, updateManager: LinkoUpdateManager, modifier: Modifier = Modifier) {
     val viewModel: DiagnosticCenterViewModel = viewModel()
     val liveResults by viewModel.results.collectAsStateWithLifecycle()
     val running by viewModel.running.collectAsStateWithLifecycle()
     val completedChecks by viewModel.completedChecks.collectAsStateWithLifecycle()
     val currentCheck by viewModel.currentCheck.collectAsStateWithLifecycle()
     val complete by viewModel.complete.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val updateManager = remember(context) { LinkoUpdateManager(context) }
     val updateState by updateManager.state.collectAsStateWithLifecycle()
-    LaunchedEffect(updateManager) { updateManager.checkAndOfferUpdate() }
     val pulseTransition = rememberInfiniteTransition(label = "diagnostic-network")
     val pulse by pulseTransition.animateFloat(0.45f, 1f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "network-pulse")
     val displayedResults = liveResults.ifEmpty { results }
@@ -74,7 +76,8 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
     val latestIsNewer = (updateState.latestVersionCode ?: updateState.installedVersionCode) > updateState.installedVersionCode
     val updateActive = updateState.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.UpdateAvailable, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.DownloadComplete, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
     val updateFailed = updateState.status == LinkoUpdateManager.UpdateStatus.Error
-    val showUpdateSection = latestIsNewer || updateActive || updateFailed
+    val updateRateLimited = updateState.status == LinkoUpdateManager.UpdateStatus.RateLimited
+    val showUpdateSection = latestIsNewer || updateActive || updateFailed || updateRateLimited
 
     Column(modifier.fillMaxSize().drawBehind {
         val nodes = listOf(0.12f to 0.14f, 0.50f to 0.08f, 0.88f to 0.16f, 0.20f to 0.42f, 0.78f to 0.48f, 0.48f to 0.78f)
@@ -104,9 +107,7 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
         Spacer(Modifier.height(12.dp))
         AnimatedVisibility(visible = showUpdateSection, modifier = Modifier.animateContentSize()) {
             Column(Modifier.fillMaxWidth()) {
-                UpdatePipelineCard(updateState)
-                Spacer(Modifier.height(8.dp))
-                UpdateStatusCard(updateState, onCheck = { updateManager.checkAndOfferUpdate() }, onUpdate = { updateManager.startUpdate() }, onRetry = { updateManager.retry() })
+                StartupStyledUpdateCard(updateState, { updateManager.checkAndOfferUpdate() }, { updateManager.startUpdate() }, { updateManager.retry() })
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -119,27 +120,78 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
 }
 
 @Composable
-private fun UpdatePipelineCard(state: LinkoUpdateManager.UpdateState) {
-    val stage = when (state.status) { LinkoUpdateManager.UpdateStatus.Downloading -> 0; LinkoUpdateManager.UpdateStatus.Verifying -> 1; LinkoUpdateManager.UpdateStatus.Installing -> 2; LinkoUpdateManager.UpdateStatus.Installed -> 3; else -> -1 }
-    val active = stage in 0..2
-    Card(Modifier.fillMaxWidth().animateContentSize()) { Column(Modifier.padding(14.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("UPDATE PIPELINE", style = MaterialTheme.typography.labelLarge); Text(if (stage == 3) "COMPLETE" else if (active) "IN PROGRESS" else "READY", style = MaterialTheme.typography.labelSmall) }
-        Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth()) { listOf("Downloading", "Verifying", "Installing", "Updated").forEachIndexed { index, label -> Column(Modifier.weight(1f), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) { Crossfade(targetState = index == stage, label = "pipeline-$index") { selected -> Icon(if (index == 3) Icons.Default.CheckCircle else if (selected) Icons.Default.Refresh else Icons.Default.SystemUpdate, contentDescription = label, modifier = Modifier.size(22.dp)) }; Spacer(Modifier.height(4.dp)); Text(label, style = MaterialTheme.typography.labelSmall) } } }
-        AnimatedVisibility(visible = active) { Column { Spacer(Modifier.height(8.dp)); if (state.status == LinkoUpdateManager.UpdateStatus.Downloading) { LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.fillMaxWidth()); Spacer(Modifier.height(3.dp)); Text("${state.progressPercent}%", style = MaterialTheme.typography.labelSmall) } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) } }
-    } }
-}
+private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState, onCheck: () -> Unit, onUpdate: () -> Unit, onRetry: () -> Unit) {
+    val status = state.status
+    val active = status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
+    val success = status == LinkoUpdateManager.UpdateStatus.UpToDate || status == LinkoUpdateManager.UpdateStatus.Installed
+    val failure = status == LinkoUpdateManager.UpdateStatus.Error || status == LinkoUpdateManager.UpdateStatus.RateLimited
+    val transition = rememberInfiniteTransition(label = "diagnostic-update-pulse")
+    val pulse by transition.animateFloat(0.65f, 1f, infiniteRepeatable(tween(if (active) 850 else 1600), RepeatMode.Reverse), label = "diagnostic-update-pulse-value")
 
-@Composable
-private fun UpdateStatusCard(state: LinkoUpdateManager.UpdateState, onCheck: () -> Unit, onUpdate: () -> Unit, onRetry: () -> Unit) {
-    val active = state.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
-    Card(Modifier.fillMaxWidth().animateContentSize()) { Column(Modifier.fillMaxWidth().padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Row(Modifier.weight(1f)) { Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(22.dp)); Spacer(Modifier.size(8.dp)); Column { Text("UPDATE STATUS", style = MaterialTheme.typography.titleMedium); AnimatedContent(targetState = state.status, label = "update-stage") { status -> Text(when (status) { LinkoUpdateManager.UpdateStatus.Downloading -> "DOWNLOADING"; LinkoUpdateManager.UpdateStatus.Verifying -> "VERIFYING"; LinkoUpdateManager.UpdateStatus.Installing -> "INSTALLING"; LinkoUpdateManager.UpdateStatus.Installed -> "UPDATED"; else -> state.statusMessage.ifBlank { "UPDATE CHECK READY" } }, style = MaterialTheme.typography.labelSmall) } } }; IconButton(onClick = onCheck, enabled = !active) { Icon(Icons.Default.Refresh, contentDescription = "Check for updates") } }
-        Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Current ${state.installedVersionName} (${state.installedVersionCode})", style = MaterialTheme.typography.bodySmall); Text("Latest ${state.latestVersionName ?: "—"} (${state.latestVersionCode ?: "—"})", style = MaterialTheme.typography.bodySmall) }
-        AnimatedVisibility(visible = state.status in setOf(LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)) { Column { Spacer(Modifier.height(10.dp)); if (state.status == LinkoUpdateManager.UpdateStatus.Downloading) { LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.fillMaxWidth()); Text("${state.progressPercent}% downloaded", style = MaterialTheme.typography.labelSmall) } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) } }
-        AnimatedVisibility(visible = state.errorMessage != null) { Row(Modifier.fillMaxWidth().padding(top = 10.dp)) { Icon(Icons.Default.Error, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.size(6.dp)); Text(state.errorMessage.orEmpty(), style = MaterialTheme.typography.bodySmall) } }
-        if (state.status == LinkoUpdateManager.UpdateStatus.UpdateAvailable) { Spacer(Modifier.height(10.dp)); Button(onClick = onUpdate, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, contentDescription = null); Spacer(Modifier.size(8.dp)); Text("UPDATE LINKO") } }
-        if (state.status == LinkoUpdateManager.UpdateStatus.Error) { Spacer(Modifier.height(6.dp)); Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("RETRY UPDATE CHECK") } }
-    } }
+    LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            androidx.compose.foundation.Canvas(Modifier.size(64.dp)) {
+                val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+                val radius = size.minDimension * 0.30f
+                val nodeColor = when { failure -> TextSub; success -> Green; else -> Blue }
+                drawCircle(nodeColor.copy(alpha = 0.10f * pulse), radius = radius * 1.8f, center = center)
+                drawCircle(nodeColor.copy(alpha = 0.18f), radius = radius, center = center)
+                drawCircle(nodeColor, radius = 6f, center = center)
+                drawLine(nodeColor.copy(alpha = 0.55f), center, androidx.compose.ui.geometry.Offset(center.x, center.y - radius * 1.9f), strokeWidth = 2f)
+                drawLine(nodeColor.copy(alpha = 0.55f), center, androidx.compose.ui.geometry.Offset(center.x - radius * 1.6f, center.y + radius), strokeWidth = 2f)
+                drawLine(nodeColor.copy(alpha = 0.55f), center, androidx.compose.ui.geometry.Offset(center.x + radius * 1.6f, center.y + radius), strokeWidth = 2f)
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("LINKO UPDATE NETWORK", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                Text(
+                    when (status) {
+                        LinkoUpdateManager.UpdateStatus.Checking -> "CHECKING FOR LINKO UPDATES"
+                        LinkoUpdateManager.UpdateStatus.UpdateAvailable -> "NEW LINKO BUILD FOUND"
+                        LinkoUpdateManager.UpdateStatus.Downloading -> "DOWNLOADING LINKO UPDATE"
+                        LinkoUpdateManager.UpdateStatus.DownloadComplete -> "UPDATE RECEIVED"
+                        LinkoUpdateManager.UpdateStatus.Verifying -> "VERIFYING LINKO PACKAGE"
+                        LinkoUpdateManager.UpdateStatus.Installing -> "INSTALLING LINKO"
+                        LinkoUpdateManager.UpdateStatus.Installed -> "LINKO UPDATED"
+                        LinkoUpdateManager.UpdateStatus.UpToDate -> "LINKO IS UP TO DATE"
+                        LinkoUpdateManager.UpdateStatus.RateLimited -> "GITHUB TEMPORARILY RATE LIMITED"
+                        LinkoUpdateManager.UpdateStatus.Error -> "UPDATE CHECK FAILED"
+                        LinkoUpdateManager.UpdateStatus.Idle -> "AUTOMATIC UPDATE DETECTION READY"
+                    },
+                    color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono
+                )
+                Text("Current: ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                state.latestVersionCode?.let {
+                    Text(
+                        if (state.usingCachedData) "Last confirmed: ${state.latestVersionName ?: "unknown"} ($it)" else "Latest: ${state.latestVersionName ?: "unknown"} ($it)",
+                        color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono
+                    )
+                }
+            }
+        }
+        if (active) {
+            Spacer(Modifier.height(10.dp))
+            if (status == LinkoUpdateManager.UpdateStatus.Downloading) {
+                LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(4.dp))
+                Text("${state.progressPercent}% downloaded", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(4.dp))
+                Text(state.statusMessage.ifBlank { "Synchronizing with the LINKO update network…" }, color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+            }
+        }
+        state.errorMessage?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, color = TextPrimary, fontSize = 10.sp, fontFamily = JetBrainsMono)
+        }
+        Spacer(Modifier.height(10.dp))
+        when (status) {
+            LinkoUpdateManager.UpdateStatus.UpdateAvailable -> PrimaryButton("UPDATE NOW", onUpdate, color = Blue)
+            LinkoUpdateManager.UpdateStatus.Error, LinkoUpdateManager.UpdateStatus.RateLimited -> PrimaryButton("TRY AGAIN", onRetry, color = Blue)
+            else -> PrimaryButton("CHECK FOR UPDATES", onCheck, color = Blue, enabled = !active, loading = status == LinkoUpdateManager.UpdateStatus.Checking)
+        }
+    }
 }
 
 @Composable

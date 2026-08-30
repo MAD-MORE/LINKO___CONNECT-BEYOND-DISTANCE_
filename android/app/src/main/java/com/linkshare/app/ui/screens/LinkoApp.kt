@@ -68,12 +68,13 @@ import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.diagnostics.DiagnosticCenterScreen
+import com.linkshare.app.update.LinkoUpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
+fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: LinkoUpdateManager) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val signedIn = auth.isSignedIn()
@@ -202,7 +203,8 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
                 composable(Screen.DiagnosticCenter.route) {
                     DiagnosticCenterScreen(
                         results = com.linkshare.app.diagnostics.LinkoDiagnosticCenter.initialResults(),
-                        onRunDiagnostics = { /* Real adapters will update the diagnostic state without altering LINKO networking. */ }
+                        onRunDiagnostics = { /* Real adapters will update the diagnostic state without altering LINKO networking. */ },
+                        updateManager = updateManager
                     )
                 }
             }
