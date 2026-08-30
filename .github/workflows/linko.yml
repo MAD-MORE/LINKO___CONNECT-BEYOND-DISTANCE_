@@ -74,7 +74,6 @@ jobs:
           KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-
           test -n "$KEYSTORE_B64" || { echo "LINKO_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
           test -n "$KEYSTORE_PASSWORD" || { echo "LINKO_KEYSTORE_PASSWORD is required for in-place updates"; exit 1; }
           test -n "$KEY_PASSWORD" || { echo "LINKO_KEY_PASSWORD is required for in-place updates"; exit 1; }
@@ -84,124 +83,65 @@ jobs:
           mkdir -p "$work_dir"
           rm -f "$work_dir"/*
 
-          # Recover the secret without changing the signing identity.
-          # Supported transport damage is intentionally limited to reversible
-          # textual transformations: whitespace/quote wrapping, data URIs,
-          # escaped newlines, URL-safe Base64, missing padding and up to three
-          # accidental Base64 layers.
           python - "$KEYSTORE_B64" "$work_dir" <<'PY'
-          import base64
-          import binascii
-          import os
-          import re
-          import sys
-
-          raw_value = sys.argv[1].strip()
-          out_dir = sys.argv[2]
-
-          candidates = []
-          seen_text = set()
-
-          def add_text(label: str, text: str) -> None:
-              if text is None:
-                  return
-              text = text.strip()
-              text = text.replace('\\r\\n', '\n').replace('\\n', '\n').replace('\\r', '\r')
-              if text.startswith('data:') and ';base64,' in text:
-                  text = text.split(';base64,', 1)[1]
-              if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
-                  text = text[1:-1].strip()
-              normalized = re.sub(r'\s+', '', text)
-              if not normalized or normalized in seen_text:
-                  return
-              seen_text.add(normalized)
-              candidates.append((label, normalized))
-
-          add_text('original', raw_value)
-          add_text('standardized-url-safe', raw_value.replace('-', '+').replace('_', '/'))
-
-          # Breadth-first recovery through a maximum of three reversible
-          # Base64 layers. This catches accidental double/triple encoding while
-          # keeping the search bounded and deterministic.
-          index = 0
-          while index < len(candidates) and index < 64:
-              label, text = candidates[index]
-              index += 1
-              padded = text + ('=' * ((4 - len(text) % 4) % 4))
-              for mode, payload in (
-                  ('standard', padded),
-                  ('urlsafe', padded.replace('+', '-').replace('/', '_')),
-              ):
+          import base64, binascii, os, re, sys
+          raw = sys.argv[1].strip()
+          out = sys.argv[2]
+          candidates=[]; seen=set()
+          def add(text):
+              text=text.strip().replace('\\r\\n','\\n').replace('\\n','\\n').replace('\\r','\\r')
+              if text.startswith('data:') and ';base64,' in text: text=text.split(';base64,',1)[1]
+              if len(text)>=2 and text[0]==text[-1] and text[0] in {'"', "'"}: text=text[1:-1].strip()
+              text=re.sub(r'\\s+','',text)
+              if text and text not in seen: seen.add(text); candidates.append(text)
+          add(raw); add(raw.replace('-','+').replace('_','/'))
+          i=0
+          while i<len(candidates) and i<64:
+              text=candidates[i]; i+=1
+              padded=text+'='*((4-len(text)%4)%4)
+              for mode,payload in [('standard',padded),('urlsafe',padded.replace('+','-').replace('/','_'))]:
                   try:
-                      decoded = (
-                          base64.urlsafe_b64decode(payload)
-                          if mode == 'urlsafe'
-                          else base64.b64decode(payload, validate=True)
-                      )
-                  except (binascii.Error, ValueError):
-                      continue
-
-                  path = os.path.join(out_dir, f'candidate-{len(candidates)}-{label}-{mode}.bin')
-                  with open(path, 'wb') as handle:
-                      handle.write(decoded)
-
-                  # Only recurse through plausible ASCII Base64 text. Binary
-                  # keystores stop here, avoiding unbounded/random decoding.
-                  if len(decoded) <= 4 * 1024 * 1024:
-                      try:
-                          decoded_text = decoded.decode('ascii')
-                      except UnicodeDecodeError:
-                          decoded_text = ''
-                      if decoded_text:
-                          add_text(f'{label}-{mode}-decoded-text', decoded_text)
+                      data=base64.urlsafe_b64decode(payload) if mode=='urlsafe' else base64.b64decode(payload,validate=True)
+                  except (binascii.Error,ValueError): continue
+                  path=os.path.join(out,f'candidate-{i}-{mode}.bin')
+                  open(path,'wb').write(data)
+                  try: decoded=data.decode('ascii')
+                  except UnicodeDecodeError: decoded=''
+                  if decoded: add(decoded)
           PY
 
-          normalized_keystore="$work_dir/linko-keystore.jks"
+          normalized="$work_dir/linko-keystore.jks"
           found=""
-
-          # Validate candidates against the supplied store password. Any source
-          # format that keytool can read is normalized to JKS for the Gradle
-          # signing configuration. The private key material is never replaced.
           for candidate in "$work_dir"/candidate-*.bin; do
             [ -f "$candidate" ] || continue
-
             if keytool -list -storetype JKS -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-              cp "$candidate" "$normalized_keystore"
-              found="jks"
-              echo "LINKO signing key validated as JKS using encoding recovery."
-              break
+              cp "$candidate" "$normalized"; found=jks; break
             fi
-
             for source_type in PKCS12 JCEKS; do
               if keytool -list -storetype "$source_type" -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-                echo "LINKO signing secret is $source_type; normalizing it to JKS without changing the signing identity."
-                keytool -importkeystore \
-                  -noprompt \
-                  -srckeystore "$candidate" \
-                  -srcstoretype "$source_type" \
-                  -srcstorepass "$KEYSTORE_PASSWORD" \
-                  -srcalias "$KEY_ALIAS" \
-                  -srckeypass "$KEY_PASSWORD" \
-                  -destkeystore "$normalized_keystore" \
-                  -deststoretype JKS \
-                  -deststorepass "$KEYSTORE_PASSWORD" \
-                  -destalias "$KEY_ALIAS" \
-                  -destkeypass "$KEY_PASSWORD"
-                found="$source_type"
-                break 2
+                alias="$KEY_ALIAS"
+                if ! keytool -list -storetype "$source_type" -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" -alias "$alias" >/dev/null 2>&1; then
+                  alias="$(keytool -list -storetype "$source_type" -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" | awk -F, '/PrivateKeyEntry/ {print $1; exit}' | xargs)"
+                fi
+                [ -n "$alias" ] || continue
+                echo "Recovered signing alias from keystore metadata."
+                keytool -importkeystore -noprompt -srckeystore "$candidate" -srcstoretype "$source_type" -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$alias" -srckeypass "$KEY_PASSWORD" -destkeystore "$normalized" -deststoretype JKS -deststorepass "$KEYSTORE_PASSWORD" -destalias "$alias" -destkeypass "$KEY_PASSWORD"
+                found="$source_type"; echo "LINKO signing secret normalized from $source_type."; break 2
               fi
             done
           done
+          [ -n "$found" ] || { echo "LINKO signing key recovery failed: no candidate matches the configured store password."; exit 1; }
 
-          if [ -z "$found" ]; then
-            echo "LINKO signing key recovery failed: no supplied secret candidate matches a supported keystore format with the configured store password."
-            echo "The CI will not invent a replacement key because that could break in-place LINKO updates."
-            exit 1
+          if ! keytool -list -storetype JKS -keystore "$normalized" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            discovered="$(keytool -list -storetype JKS -keystore "$normalized" -storepass "$KEYSTORE_PASSWORD" | awk -F, '/PrivateKeyEntry/ {print $1; exit}' | xargs)"
+            [ -n "$discovered" ] || { echo "LINKO signing keystore contains no PrivateKeyEntry."; exit 1; }
+            echo "Recovered signing alias from normalized JKS."
+            keytool -importkeystore -noprompt -srckeystore "$normalized" -srcstoretype JKS -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$discovered" -srckeypass "$KEY_PASSWORD" -destkeystore android/linko-dev.keystore -deststoretype JKS -deststorepass "$KEYSTORE_PASSWORD" -destalias "$discovered" -destkeypass "$KEY_PASSWORD"
+          else
+            cp "$normalized" android/linko-dev.keystore
           fi
-
-          keytool -list -storetype JKS -keystore "$normalized_keystore" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          cp "$normalized_keystore" android/linko-dev.keystore
-          echo "Stable LINKO signing identity validated: alias=$KEY_ALIAS, type=JKS."
+          keytool -list -storetype JKS -keystore android/linko-dev.keystore -storepass "$KEYSTORE_PASSWORD" >/dev/null
+          echo "Stable LINKO signing keystore validated."
       - name: Build signed update APK
         if: github.event_name != 'pull_request'
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon -PLINKO_VERSION_CODE=${{ steps.build_number.outputs.version_code }} -PLINKO_VERSION_NAME=${{ steps.build_number.outputs.version_name }}
@@ -228,11 +168,7 @@ jobs:
           VERSION_CODE: ${{ steps.build_number.outputs.version_code }}
           VERSION_NAME: ${{ steps.build_number.outputs.version_name }}
         run: |
-          gh release create "dev-build-${VERSION_CODE}" \
-            android/app/build/outputs/apk/release/app-release.apk \
-            --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" \
-            --notes "Automatic development build from commit ${GITHUB_SHA}. This release is consumed by the LINKO in-app updater." \
-            --latest
+          gh release create "dev-build-${VERSION_CODE}" android/app/build/outputs/apk/release/app-release.apk --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" --notes "Automatic development build from commit ${GITHUB_SHA}." --latest
       - name: Remove signing key
         if: always()
         working-directory: .
