@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -36,6 +37,8 @@ import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
+
+val LocalLinkoUpdateManager = staticCompositionLocalOf<LinkoUpdateManager?> { null }
 
 @Composable
 fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
@@ -70,7 +73,7 @@ fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
                 Text("LINKO UPDATE NETWORK", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono)
                 Text(
                     when (status) {
-                        LinkoUpdateManager.UpdateStatus.Checking -> "CONNECTING TO LINKO UPDATE NETWORK"
+                        LinkoUpdateManager.UpdateStatus.Checking -> "CHECKING FOR LINKO UPDATES"
                         LinkoUpdateManager.UpdateStatus.UpdateAvailable -> "NEW LINKO BUILD FOUND"
                         LinkoUpdateManager.UpdateStatus.Downloading -> "DOWNLOADING LINKO UPDATE"
                         LinkoUpdateManager.UpdateStatus.DownloadComplete -> "UPDATE RECEIVED"
