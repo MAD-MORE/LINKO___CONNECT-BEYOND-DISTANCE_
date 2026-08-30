@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
@@ -24,6 +24,7 @@ import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
 import com.linkshare.app.ui.components.LinkoUpdateStatusOverlay
+import com.linkshare.app.ui.components.LocalLinkoUpdateManager
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
 import com.linkshare.app.update.LinkoUpdateManager
@@ -46,17 +47,22 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LinkoTheme {
-                Box(Modifier.fillMaxSize()) {
-                    if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) LinkoApp(linkoAuth, linkoRuntime)
-                    if (::updateManager.isInitialized) {
-                        Column(Modifier.fillMaxWidth()) { LinkoUpdateStatusOverlay(updateManager) }
+                CompositionLocalProvider(
+                    LocalLinkoUpdateManager provides if (::updateManager.isInitialized) updateManager else null
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) LinkoApp(linkoAuth, linkoRuntime)
+                        if (::updateManager.isInitialized) {
+                            Column(Modifier.fillMaxWidth()) { LinkoUpdateStatusOverlay(updateManager) }
+                        }
+                        LinkoRealtimeOverlay()
                     }
-                    LinkoRealtimeOverlay()
                 }
             }
         }
 
         window.decorView.post { runCatching { requestEnginePermissions() }.onFailure { Log.e(TAG, "Permission setup failed", it) } }
+        // One non-blocking update check per Activity/app launch. UI observes the same manager state.
         window.decorView.postDelayed({ checkForUpdates() }, 2500L)
         runCatching { LinkoRealtimeManager.start(this) }.onFailure { Log.e(TAG, "Realtime startup failed", it) }
     }
@@ -64,10 +70,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         runCatching { LinkoRealtimeManager.setForeground(true) }
-        if (::updateManager.isInitialized) {
-            updateManager.onInstallerReturned()
-            window.decorView.post { checkForUpdates() }
-        }
+        if (::updateManager.isInitialized) updateManager.onInstallerReturned()
     }
 
     override fun onPause() {
@@ -81,7 +84,12 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun checkForUpdates() { runCatching { updateManager.checkAndOfferUpdate() }.onFailure { Log.e(TAG, "Update check failed", it) } }
+    private fun checkForUpdates() {
+        if (::updateManager.isInitialized) {
+            runCatching { updateManager.checkAndOfferUpdate() }
+                .onFailure { Log.e(TAG, "Update check failed", it) }
+        }
+    }
 
     private fun requestEnginePermissions() {
         if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
