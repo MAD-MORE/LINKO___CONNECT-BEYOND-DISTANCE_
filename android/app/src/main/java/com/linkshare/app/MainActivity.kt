@@ -11,7 +11,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
 import androidx.core.app.ActivityCompat
 import com.linkshare.app.auth.LinkoAuth
@@ -21,6 +23,7 @@ import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
+import com.linkshare.app.ui.components.LinkoUpdateStatusOverlay
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
 import com.linkshare.app.update.LinkoUpdateManager
@@ -33,9 +36,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        // Startup is a fault-isolated pipeline: failure of an optional subsystem
-        // must never terminate the Android process or prevent the UI from loading.
         runCatching {
             linkoAuth = LinkoAuth(this)
             LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
@@ -50,32 +50,25 @@ class MainActivity : ComponentActivity() {
                     if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) {
                         LinkoApp(linkoAuth, linkoRuntime)
                     }
+                    if (::updateManager.isInitialized) {
+                        Column(Modifier.fillMaxWidth()) {
+                            LinkoUpdateStatusOverlay(onCheckForUpdates = { checkForUpdates() })
+                        }
+                    }
                     LinkoRealtimeOverlay()
                 }
             }
         }
 
-        // Permission prompts happen after the first UI frame, so an Android
-        // permission/activity transition cannot race Compose initialization.
-        window.decorView.post { runCatching { requestEnginePermissions() }
-            .onFailure { Log.e(TAG, "Permission setup failed", it) } }
-
-        // Check once shortly after startup. This remains optional and isolated.
+        window.decorView.post { runCatching { requestEnginePermissions() }.onFailure { Log.e(TAG, "Permission setup failed", it) } }
         window.decorView.postDelayed({ checkForUpdates() }, 2500L)
-
-        // Realtime is auxiliary. It may fail independently without making LINKO crash.
-        runCatching { LinkoRealtimeManager.start(this) }
-            .onFailure { Log.e(TAG, "Realtime startup failed", it) }
+        runCatching { LinkoRealtimeManager.start(this) }.onFailure { Log.e(TAG, "Realtime startup failed", it) }
     }
 
     override fun onResume() {
         super.onResume()
         runCatching { LinkoRealtimeManager.setForeground(true) }
-        // Foreground re-check means LINKO can discover a release without requiring
-        // a process restart, while the updater internally coalesces duplicate checks.
-        if (::updateManager.isInitialized) {
-            window.decorView.post { checkForUpdates() }
-        }
+        if (::updateManager.isInitialized) window.decorView.post { checkForUpdates() }
     }
 
     override fun onPause() {
@@ -90,14 +83,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkForUpdates() {
-        runCatching { updateManager.checkAndOfferUpdate() }
-            .onFailure { Log.e(TAG, "Update check failed", it) }
+        runCatching { updateManager.checkAndOfferUpdate() }.onFailure { Log.e(TAG, "Update check failed", it) }
     }
 
     private fun requestEnginePermissions() {
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
         }
         requestVpnConsentIfNeeded()
@@ -107,30 +97,21 @@ class MainActivity : ComponentActivity() {
     private fun requestBatteryOptimizationExemptionIfNeeded() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             val pm = getSystemService(android.os.PowerManager::class.java)
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName) && !isFinishing && !isDestroyed) {
-                runCatching {
-                    val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = android.net.Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                }
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName) && !isFinishing && !isDestroyed) runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") })
             }
         }
     }
 
     private fun requestVpnConsentIfNeeded() {
         val intent: Intent? = VpnService.prepare(this)
-        if (intent != null && !isFinishing && !isDestroyed) {
-            startActivityForResult(intent, REQUEST_VPN)
-        }
+        if (intent != null && !isFinishing && !isDestroyed) startActivityForResult(intent, REQUEST_VPN)
     }
 
     @Deprecated("Kept for Android compatibility; VPN consent is delivered through the activity result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_VPN && resultCode != Activity.RESULT_OK) {
-            Log.i(TAG, "VPN consent declined; LINKO remains usable until a tunnel is requested")
-        }
+        if (requestCode == REQUEST_VPN && resultCode != Activity.RESULT_OK) Log.i(TAG, "VPN consent declined; LINKO remains usable until a tunnel is requested")
     }
 
     companion object {
