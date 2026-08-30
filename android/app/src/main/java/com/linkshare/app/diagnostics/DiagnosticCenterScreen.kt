@@ -73,11 +73,6 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
     val passed = displayedResults.count { it.status == DiagnosticStatus.PASS }
     val failed = displayedResults.count { it.status == DiagnosticStatus.FAIL }
     val networkColor = MaterialTheme.colorScheme.primary
-    val latestIsNewer = (updateState.latestVersionCode ?: updateState.installedVersionCode) > updateState.installedVersionCode
-    val updateActive = updateState.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.UpdateAvailable, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.DownloadComplete, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
-    val updateFailed = updateState.status == LinkoUpdateManager.UpdateStatus.Error
-    val updateRateLimited = updateState.status == LinkoUpdateManager.UpdateStatus.RateLimited
-    val showUpdateSection = latestIsNewer || updateActive || updateFailed || updateRateLimited
 
     Column(modifier.fillMaxSize().drawBehind {
         val nodes = listOf(0.12f to 0.14f, 0.50f to 0.08f, 0.88f to 0.16f, 0.20f to 0.42f, 0.78f to 0.48f, 0.48f to 0.78f)
@@ -105,11 +100,7 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
             }
         }
         Spacer(Modifier.height(12.dp))
-        AnimatedVisibility(visible = showUpdateSection, modifier = Modifier.animateContentSize()) {
-            Column(Modifier.fillMaxWidth()) {
-                StartupStyledUpdateCard(updateState, { updateManager.checkAndOfferUpdate() }, { updateManager.startUpdate() }, { updateManager.retry() })
-            }
-        }
+        StartupStyledUpdateCard(updateState, { updateManager.checkAndOfferUpdate() }, { updateManager.startUpdate() }, { updateManager.retry() })
         Spacer(Modifier.height(12.dp))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(displayedResults, key = { it.name }) { DiagnosticRow(it) } }
         Spacer(Modifier.height(10.dp))
