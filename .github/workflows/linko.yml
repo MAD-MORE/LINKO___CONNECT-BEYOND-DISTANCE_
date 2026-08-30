@@ -82,6 +82,14 @@ jobs:
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
+      - name: Upload signed release APK
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linko-signed-release-${{ steps.build_number.outputs.version_name }}-${{ steps.build_number.outputs.version_code }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish latest LINKO development release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: .
