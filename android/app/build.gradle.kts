@@ -20,6 +20,12 @@ android {
     }
 
     signingConfigs {
+        create("debug") {
+            storeFile = android.getDefaultKeystorePath()
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("linkoDev") {
             storeFile = rootProject.file("linko-dev.keystore")
             storePassword = System.getenv("LINKO_KEYSTORE_PASSWORD") ?: ""
@@ -39,7 +45,7 @@ android {
             buildType.buildConfigField("String", "LINKO_SUPABASE_URL", "\"${configuredSupabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
             buildType.buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
-        getByName("debug") { signingConfig = signingConfigs.getByName("linkoDev"); addConfig(this) }
+        getByName("debug") { signingConfig = signingConfigs.getByName("debug"); addConfig(this) }
         getByName("release") { signingConfig = signingConfigs.getByName("linkoDev"); addConfig(this) }
     }
 
