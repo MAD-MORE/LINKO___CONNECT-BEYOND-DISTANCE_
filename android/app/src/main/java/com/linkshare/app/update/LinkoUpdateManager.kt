@@ -63,19 +63,10 @@ class LinkoUpdateManager(private val context: Context) {
                     if (cached != null) {
                         latestRelease = cached
                         publishReleaseState(cached, installed, fromCache = true)
-                        updateState(
-                            statusMessage = "LATEST RELEASE TEMPORARILY UNREACHABLE",
-                            errorMessage = "${result.userMessage()} Last known build: ${cached.versionName} (${cached.versionCode}).",
-                            usingCachedData = true
-                        )
+                        updateState(statusMessage = "LATEST RELEASE TEMPORARILY UNREACHABLE", errorMessage = "${result.userMessage()} Last known build: ${cached.versionName} (${cached.versionCode}).", usingCachedData = true)
                     } else {
                         latestRelease = null
-                        updateState(
-                            status = UpdateStatus.Error,
-                            statusMessage = "UPDATE CHECK FAILED",
-                            errorMessage = result.userMessage(),
-                            usingCachedData = false
-                        )
+                        updateState(status = UpdateStatus.Error, statusMessage = "UPDATE CHECK FAILED", errorMessage = result.userMessage(), usingCachedData = false)
                     }
                 }
             }
@@ -114,9 +105,7 @@ class LinkoUpdateManager(private val context: Context) {
             updateState(status = UpdateStatus.Installed, statusMessage = "LINKO UPDATED", errorMessage = null, usingCachedData = false)
             scope.launch {
                 delay(1800L)
-                if (_state.value.status == UpdateStatus.Installed) {
-                    updateState(status = UpdateStatus.UpToDate, statusMessage = "LINKO IS UP TO DATE", errorMessage = null, usingCachedData = false)
-                }
+                if (_state.value.status == UpdateStatus.Installed) updateState(status = UpdateStatus.UpToDate, statusMessage = "LINKO IS UP TO DATE", errorMessage = null, usingCachedData = false)
             }
         } else if (_state.value.status == UpdateStatus.Installing) {
             updateState(status = UpdateStatus.UpdateAvailable, statusMessage = "UPDATE READY", errorMessage = "Installation was cancelled or did not complete.", usingCachedData = false)
@@ -125,52 +114,27 @@ class LinkoUpdateManager(private val context: Context) {
 
     private suspend fun discoverLatestRelease(): UpdateDiscoveryResult = try {
         val releaseResponse = getText(RELEASES_API, "latest release", GITHUB_JSON_ACCEPT)
-        if (releaseResponse.code !in 200..299) {
-            return UpdateDiscoveryResult.HttpError("latest release", releaseResponse.code, releaseResponse.errorMessage())
-        }
-        val release = runCatching { JSONObject(releaseResponse.body) }.getOrElse {
-            return UpdateDiscoveryResult.ParseError("latest release", "GitHub returned invalid release JSON.")
-        }
-        val assets = release.optJSONArray("assets")
-            ?: return UpdateDiscoveryResult.ValidationError("latest release", "The latest release does not contain an assets list.")
-        val manifestAsset = findAsset(assets, UPDATE_MANIFEST_NAME)
-            ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST MISSING")
-        val manifestUrl = manifestAsset.apiUrl ?: manifestAsset.browserUrl
-            ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
-        if (!manifestUrl.startsWith("https://")) {
-            return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
-        }
+        if (releaseResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("latest release", releaseResponse.code, releaseResponse.errorMessage())
+        val release = runCatching { JSONObject(releaseResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("latest release", "GitHub returned invalid release JSON.") }
+        val assets = release.optJSONArray("assets") ?: return UpdateDiscoveryResult.ValidationError("latest release", "The latest release does not contain an assets list.")
+        val manifestAsset = findAsset(assets, UPDATE_MANIFEST_NAME) ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST MISSING")
+        val manifestUrl = manifestAsset.apiUrl ?: manifestAsset.browserUrl ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
+        if (!manifestUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
         val manifestAccept = if (manifestAsset.apiUrl != null && manifestUrl == manifestAsset.apiUrl) GITHUB_ASSET_ACCEPT else GITHUB_JSON_ACCEPT
         val manifestResponse = getText(manifestUrl, "update manifest", manifestAccept)
-        if (manifestResponse.code !in 200..299) {
-            return UpdateDiscoveryResult.HttpError("update manifest", manifestResponse.code, manifestResponse.errorMessage())
-        }
-        val manifest = runCatching { JSONObject(manifestResponse.body) }.getOrElse {
-            return UpdateDiscoveryResult.ParseError("update manifest", "UPDATE MANIFEST INVALID JSON")
-        }
-        if (manifest.optInt("schemaVersion", -1) != SUPPORTED_SCHEMA) {
-            return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST SCHEMA UNSUPPORTED")
-        }
+        if (manifestResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("update manifest", manifestResponse.code, manifestResponse.errorMessage())
+        val manifest = runCatching { JSONObject(manifestResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("update manifest", "UPDATE MANIFEST INVALID JSON") }
+        if (manifest.optInt("schemaVersion", -1) != SUPPORTED_SCHEMA) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST SCHEMA UNSUPPORTED")
         val versionLong = manifest.optLong("versionCode", -1L)
-        if (versionLong !in 1L..Int.MAX_VALUE.toLong()) {
-            return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION INVALID")
-        }
+        if (versionLong !in 1L..Int.MAX_VALUE.toLong()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION INVALID")
         val versionName = manifest.optString("versionName").trim()
-        if (versionName.isBlank()) {
-            return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION NAME INVALID")
-        }
+        if (versionName.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION NAME INVALID")
         val apkAsset = manifest.optString("apkAsset").trim()
-        if (apkAsset.isBlank()) {
-            return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE APK ASSET NAME INVALID")
-        }
+        if (apkAsset.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE APK ASSET NAME INVALID")
         val commit = manifest.optString("commit").takeIf { it.isNotBlank() }
-        val apk = findAsset(assets, apkAsset)
-            ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK ASSET MISSING")
-        val apkUrl = apk.browserUrl ?: apk.apiUrl
-            ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
-        if (!apkUrl.startsWith("https://")) {
-            return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
-        }
+        val apk = findAsset(assets, apkAsset) ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK ASSET MISSING")
+        val apkUrl = apk.browserUrl ?: apk.apiUrl ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
+        if (!apkUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
         UpdateDiscoveryResult.Success(ReleaseInfo(versionLong.toInt(), versionName, apkUrl, commit))
     } catch (t: Throwable) {
         UpdateDiscoveryResult.NetworkError("latest release", t.safeMessage())
@@ -180,9 +144,7 @@ class LinkoUpdateManager(private val context: Context) {
         if (!url.startsWith("https://")) return HttpResponse(400, "", "HTTPS is required for $stage.")
         var current = url
         repeat(MAX_REDIRECTS + 1) { hop ->
-            val connection = runCatching { openConnection(current, accept) }.getOrElse {
-                throw UpdateNetworkException(stage, it.safeMessage())
-            }
+            val connection = runCatching { openConnection(current, accept) }.getOrElse { throw UpdateNetworkException(stage, it.safeMessage()) }
             try {
                 val code = connection.responseCode
                 if (code in 300..399) {
@@ -194,9 +156,7 @@ class LinkoUpdateManager(private val context: Context) {
                     val body = if (code in 200..299) readBounded(connection.inputStream) else readBounded(connection.errorStream)
                     return HttpResponse(code, body, connection.responseMessage ?: "")
                 }
-            } finally {
-                connection.disconnect()
-            }
+            } finally { connection.disconnect() }
         }
         return HttpResponse(599, "", "Unable to resolve $stage.")
     }
@@ -244,24 +204,11 @@ class LinkoUpdateManager(private val context: Context) {
 
     private fun publishReleaseState(release: ReleaseInfo, installed: Pair<Int, String>, fromCache: Boolean) {
         val status = if (release.versionCode > installed.first) UpdateStatus.UpdateAvailable else UpdateStatus.UpToDate
-        updateState(
-            status = status,
-            latestVersionCode = release.versionCode,
-            latestVersionName = release.versionName,
-            statusMessage = if (status == UpdateStatus.UpdateAvailable) "NEW LINKO BUILD FOUND" else "LINKO IS UP TO DATE",
-            errorMessage = null,
-            usingCachedData = fromCache
-        )
+        updateState(status = status, latestVersionCode = release.versionCode, latestVersionName = release.versionName, statusMessage = if (status == UpdateStatus.UpdateAvailable) "NEW LINKO BUILD FOUND" else "LINKO IS UP TO DATE", errorMessage = null, usingCachedData = fromCache)
     }
 
     private fun cacheRelease(release: ReleaseInfo) {
-        cache.edit()
-            .putInt(CACHE_VERSION_CODE, release.versionCode)
-            .putString(CACHE_VERSION_NAME, release.versionName)
-            .putString(CACHE_APK_URL, release.apkUrl)
-            .putString(CACHE_COMMIT, release.commit)
-            .putLong(CACHE_TIME, System.currentTimeMillis())
-            .apply()
+        cache.edit().putInt(CACHE_VERSION_CODE, release.versionCode).putString(CACHE_VERSION_NAME, release.versionName).putString(CACHE_APK_URL, release.apkUrl).putString(CACHE_COMMIT, release.commit).putLong(CACHE_TIME, System.currentTimeMillis()).apply()
     }
 
     private fun readCachedRelease(): ReleaseInfo? {
@@ -279,30 +226,12 @@ class LinkoUpdateManager(private val context: Context) {
         unregisterReceiver()
         progressJob?.cancel()
         val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val request = DownloadManager.Request(Uri.parse(release.apkUrl))
-            .setTitle("LINKO ${release.versionName}")
-            .setDescription("Downloading LINKO update…")
-            .setMimeType(APK_MIME)
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(false)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-            .setDestinationInExternalFilesDir(appContext, Environment.DIRECTORY_DOWNLOADS, "LINKO-${release.versionCode}.apk")
+        val request = DownloadManager.Request(Uri.parse(release.apkUrl)).setTitle("LINKO ${release.versionName}").setDescription("Downloading LINKO update…").setMimeType(APK_MIME).setAllowedOverMetered(true).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE).setDestinationInExternalFilesDir(appContext, Environment.DIRECTORY_DOWNLOADS, "LINKO-${release.versionCode}.apk")
         activeDownloadId = runCatching { manager.enqueue(request) }.getOrElse {
             updateState(status = UpdateStatus.Error, statusMessage = "UPDATE DOWNLOAD FAILED", errorMessage = "Could not start the update download.")
             return
         }
-        updateState(
-            status = UpdateStatus.Downloading,
-            latestVersionCode = release.versionCode,
-            latestVersionName = release.versionName,
-            downloadedBytes = 0,
-            totalBytes = 0,
-            progressPercent = 0,
-            statusMessage = "DOWNLOADING LINKO UPDATE",
-            errorMessage = null,
-            downloadId = activeDownloadId,
-            usingCachedData = false
-        )
+        updateState(status = UpdateStatus.Downloading, latestVersionCode = release.versionCode, latestVersionName = release.versionName, downloadedBytes = 0, totalBytes = 0, progressPercent = 0, statusMessage = "DOWNLOADING LINKO UPDATE", errorMessage = null, downloadId = activeDownloadId, usingCachedData = false)
         val expectedId = activeDownloadId
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
@@ -363,16 +292,12 @@ class LinkoUpdateManager(private val context: Context) {
             val mime = appContext.contentResolver.getType(uri)
             require(mime == null || mime == APK_MIME || mime == "application/octet-stream") { "The downloaded file has an invalid APK MIME type." }
             tempFile = File.createTempFile("linko-update-", ".apk", appContext.cacheDir)
-            appContext.contentResolver.openInputStream(uri)?.use { input -> tempFile!!.outputStream().use { output -> input.copyTo(output) } }
-                ?: return@runCatching "The downloaded LINKO APK is not readable."
-            val info = appContext.packageManager.getPackageArchiveInfo(tempFile!!.absolutePath, PackageManager.GET_META_DATA)
-                ?: return@runCatching "The downloaded file is not a readable Android package."
+            appContext.contentResolver.openInputStream(uri)?.use { input -> tempFile!!.outputStream().use { output -> input.copyTo(output) } } ?: return@runCatching "The downloaded LINKO APK is not readable."
+            val info = appContext.packageManager.getPackageArchiveInfo(tempFile!!.absolutePath, PackageManager.GET_META_DATA) ?: return@runCatching "The downloaded file is not a readable Android package."
             require(info.packageName == appContext.packageName) { "The downloaded package is not LINKO." }
             require(info.longVersionCode == release.versionCode.toLong()) { "The downloaded APK version does not match the update manifest." }
             null
-        }.getOrElse { it.message ?: "The LINKO APK failed validation." }.also {
-            runCatching { tempFile?.delete() }
-        }
+        }.getOrElse { it.message ?: "The LINKO APK failed validation." }.also { runCatching { tempFile?.delete() } }
     }
 
     private fun installApk(uri: Uri) {
@@ -386,14 +311,24 @@ class LinkoUpdateManager(private val context: Context) {
             runCatching { activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))) }
             return
         }
+        val installerFile = File(appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "LINKO-${expectedInstallVersionCode ?: BuildConfig.VERSION_CODE}-installer.apk")
+        val installerUri = runCatching {
+            installerFile.parentFile?.mkdirs()
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                installerFile.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IllegalStateException("The downloaded LINKO APK could not be read for installation.")
+            FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", installerFile)
+        }.getOrElse { error ->
+            updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION PREPARATION FAILED", errorMessage = error.message ?: "The verified LINKO APK could not be prepared for Android's installer.")
+            return
+        }
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, APK_MIME)
+            setDataAndType(installerUri, APK_MIME)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { activity.startActivity(intent) }.onFailure {
-            expectedInstallVersionCode = null
-            updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION FAILED", errorMessage = "Android could not start the installer.")
+        runCatching { activity.startActivity(intent) }.onFailure { error ->
+            updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION FAILED", errorMessage = error.message ?: "Android could not start the LINKO package installer.")
         }
     }
 
@@ -420,50 +355,11 @@ class LinkoUpdateManager(private val context: Context) {
         receiver = null
     }
 
-    private fun updateState(
-        status: UpdateStatus = _state.value.status,
-        installedVersionCode: Int = _state.value.installedVersionCode,
-        installedVersionName: String = _state.value.installedVersionName,
-        latestVersionCode: Int? = _state.value.latestVersionCode,
-        latestVersionName: String? = _state.value.latestVersionName,
-        downloadedBytes: Long = _state.value.downloadedBytes,
-        totalBytes: Long = _state.value.totalBytes,
-        progressPercent: Int = _state.value.progressPercent,
-        statusMessage: String = _state.value.statusMessage,
-        errorMessage: String? = _state.value.errorMessage,
-        downloadId: Long = _state.value.downloadId,
-        usingCachedData: Boolean = _state.value.usingCachedData
-    ) {
-        _state.value = UpdateState(
-            installedVersionCode = installedVersionCode,
-            installedVersionName = installedVersionName,
-            latestVersionCode = latestVersionCode,
-            latestVersionName = latestVersionName,
-            downloadedBytes = downloadedBytes,
-            totalBytes = totalBytes,
-            progressPercent = progressPercent,
-            statusMessage = statusMessage,
-            errorMessage = errorMessage,
-            downloadId = downloadId,
-            usingCachedData = usingCachedData,
-            status = status
-        )
+    private fun updateState(status: UpdateStatus = _state.value.status, installedVersionCode: Int = _state.value.installedVersionCode, installedVersionName: String = _state.value.installedVersionName, latestVersionCode: Int? = _state.value.latestVersionCode, latestVersionName: String? = _state.value.latestVersionName, downloadedBytes: Long = _state.value.downloadedBytes, totalBytes: Long = _state.value.totalBytes, progressPercent: Int = _state.value.progressPercent, statusMessage: String = _state.value.statusMessage, errorMessage: String? = _state.value.errorMessage, downloadId: Long = _state.value.downloadId, usingCachedData: Boolean = _state.value.usingCachedData) {
+        _state.value = UpdateState(installedVersionCode = installedVersionCode, installedVersionName = installedVersionName, latestVersionCode = latestVersionCode, latestVersionName = latestVersionName, downloadedBytes = downloadedBytes, totalBytes = totalBytes, progressPercent = progressPercent, statusMessage = statusMessage, errorMessage = errorMessage, downloadId = downloadId, usingCachedData = usingCachedData, status = status)
     }
 
-    data class UpdateState(
-        val installedVersionCode: Int,
-        val installedVersionName: String,
-        val latestVersionCode: Int? = null,
-        val latestVersionName: String? = null,
-        val downloadedBytes: Long = 0,
-        val totalBytes: Long = 0,
-        val progressPercent: Int = 0,
-        val statusMessage: String = "",
-        val errorMessage: String? = null,
-        val downloadId: Long = -1L,
-        val usingCachedData: Boolean = false,
-        val status: UpdateStatus = UpdateStatus.Idle
-    )
+    data class UpdateState(val installedVersionCode: Int, val installedVersionName: String, val latestVersionCode: Int? = null, val latestVersionName: String? = null, val downloadedBytes: Long = 0, val totalBytes: Long = 0, val progressPercent: Int = 0, val statusMessage: String = "", val errorMessage: String? = null, val downloadId: Long = -1L, val usingCachedData: Boolean = false, val status: UpdateStatus = UpdateStatus.Idle)
 
     enum class UpdateStatus { Idle, Checking, UpToDate, UpdateAvailable, Downloading, DownloadComplete, Verifying, Installing, Installed, Error }
 
