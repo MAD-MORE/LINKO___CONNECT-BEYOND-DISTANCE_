@@ -50,12 +50,8 @@ class LinkShareVpnService : VpnService() {
             .addAddress("10.48.0.2", 32).addRoute("0.0.0.0", 0).addRoute("::", 0)
             .addDnsServer("1.1.1.1").addDnsServer("8.8.8.8").setBlocking(true).establish()
             ?: run { Log.e(TAG, "Failed to establish Android VPN interface"); releaseLocks(); return START_NOT_STICKY }
-
         val socket = DatagramSocket()
-        if (!protect(socket)) {
-            Log.e(TAG, "Failed to protect tunnel socket from VPN routing loop")
-            socket.close(); stopTunnel(); return START_NOT_STICKY
-        }
+        if (!protect(socket)) { Log.e(TAG, "Failed to protect tunnel socket from VPN routing loop"); socket.close(); stopTunnel(); return START_NOT_STICKY }
         transport = EncryptedDatagramTunnel(socket, InetSocketAddress(host, port), sessionId, EncryptedDatagramTunnel.Role.RECEIVER, sessionKey)
         running.set(true); lastPongReceivedAt.set(System.currentTimeMillis()); currentRttMs.set(-1)
         synchronized(STATS_LOCK) { currentSessionId = sessionId; currentPeer = "$host:$port"; currentStartedAt = System.currentTimeMillis() }
@@ -87,6 +83,7 @@ class LinkShareVpnService : VpnService() {
                 val raw = packet.copyOf(count)
                 if (router.parse(raw) == null || raw.size > MAX_TUN_PAYLOAD) continue
                 transport?.send(raw, EncryptedDatagramTunnel.PacketType.DATA); bytesUp.addAndGet(raw.size.toLong())
+                TOTAL_BYTES_UP.addAndGet(raw.size.toLong())
             }
         } } catch (e: Exception) { if (running.get()) { Log.w(TAG, "VPN outbound loop terminated: ${e.message}"); stopTunnel() } }
     }
@@ -97,8 +94,8 @@ class LinkShareVpnService : VpnService() {
             while (running.get()) try {
                 val rx = transport?.receive(RECEIVE_TIMEOUT_MS) ?: continue
                 when (rx.type) {
-                    EncryptedDatagramTunnel.PacketType.DATA -> if (rx.payload.isNotEmpty() && rx.payload.size <= MAX_IP_PACKET && router.parse(rx.payload) != null) { output.write(rx.payload); output.flush(); bytesDown.addAndGet(rx.payload.size.toLong()) }
-                    EncryptedDatagramTunnel.PacketType.PONG -> { val sentAt = if (rx.payload.size >= 8) ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long else 0L; lastPongReceivedAt.set(System.currentTimeMillis()); currentRttMs.set(System.currentTimeMillis() - sentAt) }
+                    EncryptedDatagramTunnel.PacketType.DATA -> if (rx.payload.isNotEmpty() && rx.payload.size <= MAX_IP_PACKET && router.parse(rx.payload) != null) { output.write(rx.payload); output.flush(); bytesDown.addAndGet(rx.payload.size.toLong()); TOTAL_BYTES_DOWN.addAndGet(rx.payload.size.toLong()) }
+                    EncryptedDatagramTunnel.PacketType.PONG -> { val sentAt = if (rx.payload.size >= 8) ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long else 0L; lastPongReceivedAt.set(System.currentTimeMillis()); currentRttMs.set(System.currentTimeMillis() - sentAt); LAST_RTT.set(currentRttMs.get()) }
                     EncryptedDatagramTunnel.PacketType.PING -> { val sentAt = if (rx.payload.size >= 8) ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long else System.currentTimeMillis(); transport?.sendPong(sentAt) }
                     EncryptedDatagramTunnel.PacketType.CLOSE -> { stopTunnel(); break }
                     else -> Unit
@@ -126,19 +123,15 @@ class LinkShareVpnService : VpnService() {
         @Volatile private var currentSessionId: String? = null
         @Volatile private var currentPeer: String? = null
         @Volatile private var currentStartedAt: Long = 0L
+        private val TOTAL_BYTES_UP = AtomicLong(0)
+        private val TOTAL_BYTES_DOWN = AtomicLong(0)
+        private val LAST_RTT = AtomicLong(-1)
         fun isRunning(): Boolean = synchronized(STATS_LOCK) { currentSessionId != null }
         fun sessionId(): String? = currentSessionId
         fun peerEndpoint(): String? = currentPeer
         fun startedAtMs(): Long = currentStartedAt
-        fun bytesUp(): Long = INSTANCE_BYTES_UP.get()
-        fun bytesDown(): Long = INSTANCE_BYTES_DOWN.get()
-        fun rttMs(): Long = INSTANCE_RTT.get()
-        private val INSTANCE_BYTES_UP = AtomicLong(0)
-        private val INSTANCE_BYTES_DOWN = AtomicLong(0)
-        private val INSTANCE_RTT = AtomicLong(-1)
-    }
-
-    private fun syncStats() {
-        INSTANCE_BYTES_UP.set(bytesUp.get()); INSTANCE_BYTES_DOWN.set(bytesDown.get()); INSTANCE_RTT.set(currentRttMs.get())
+        fun bytesUp(): Long = TOTAL_BYTES_UP.get()
+        fun bytesDown(): Long = TOTAL_BYTES_DOWN.get()
+        fun rttMs(): Long = LAST_RTT.get()
     }
 }
