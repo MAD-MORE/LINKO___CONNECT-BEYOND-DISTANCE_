@@ -28,6 +28,7 @@ import com.linkshare.app.update.LinkoUpdateManager
 class MainActivity : ComponentActivity() {
     private lateinit var linkoRuntime: LinkoRuntime
     private lateinit var linkoAuth: LinkoAuth
+    private lateinit var updateManager: LinkoUpdateManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
             LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
             LinkoEngineBridge.configure(this)
             linkoRuntime = LinkoRuntime(this)
+            updateManager = LinkoUpdateManager(this)
         }.onFailure { Log.e(TAG, "Core LINKO setup failed", it) }
 
         setContent {
@@ -58,12 +60,8 @@ class MainActivity : ComponentActivity() {
         window.decorView.post { runCatching { requestEnginePermissions() }
             .onFailure { Log.e(TAG, "Permission setup failed", it) } }
 
-        // Check for a newer GitHub release after the UI has settled. The updater
-        // is optional and isolated so update failures can never block LINKO.
-        window.decorView.postDelayed({
-            runCatching { LinkoUpdateManager(this).checkAndOfferUpdate() }
-                .onFailure { Log.e(TAG, "Update check failed", it) }
-        }, 2500L)
+        // Check once shortly after startup. This remains optional and isolated.
+        window.decorView.postDelayed({ checkForUpdates() }, 2500L)
 
         // Realtime is auxiliary. It may fail independently without making LINKO crash.
         runCatching { LinkoRealtimeManager.start(this) }
@@ -73,6 +71,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         runCatching { LinkoRealtimeManager.setForeground(true) }
+        // Foreground re-check means LINKO can discover a release without requiring
+        // a process restart, while the updater internally coalesces duplicate checks.
+        if (::updateManager.isInitialized) {
+            window.decorView.post { checkForUpdates() }
+        }
     }
 
     override fun onPause() {
@@ -84,6 +87,11 @@ class MainActivity : ComponentActivity() {
         runCatching { LinkoRealtimeManager.stop() }
         if (::linkoRuntime.isInitialized) runCatching { linkoRuntime.stop() }
         super.onDestroy()
+    }
+
+    private fun checkForUpdates() {
+        runCatching { updateManager.checkAndOfferUpdate() }
+            .onFailure { Log.e(TAG, "Update check failed", it) }
     }
 
     private fun requestEnginePermissions() {
