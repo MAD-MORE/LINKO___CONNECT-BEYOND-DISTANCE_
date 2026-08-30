@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.linkshare.app.update.LinkoUpdateManager
@@ -119,12 +120,7 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
 }
 
 @Composable
-private fun StartupStyledUpdateCard(
-    state: LinkoUpdateManager.UpdateState,
-    onCheck: () -> Unit,
-    onUpdate: () -> Unit,
-    onRetry: () -> Unit
-) {
+private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState, onCheck: () -> Unit, onUpdate: () -> Unit, onRetry: () -> Unit) {
     val status = state.status
     val active = status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
     val success = status == LinkoUpdateManager.UpdateStatus.UpToDate || status == LinkoUpdateManager.UpdateStatus.Installed
