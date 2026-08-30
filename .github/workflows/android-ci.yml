@@ -160,6 +160,28 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
+      - name: Create update manifest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: .
+        env:
+          VERSION_CODE: ${{ steps.build_number.outputs.version_code }}
+          VERSION_NAME: ${{ steps.build_number.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          manifest = {
+              "schemaVersion": 1,
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "apkAsset": "app-release.apk",
+              "commit": os.environ["GITHUB_SHA"],
+          }
+          with open("linko-update.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, separators=(",", ":"))
+              f.write("\n")
+          PY
+          cat linko-update.json
       - name: Publish latest LINKO development release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: .
@@ -167,7 +189,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION_CODE: ${{ steps.build_number.outputs.version_code }}
           VERSION_NAME: ${{ steps.build_number.outputs.version_name }}
-        run: gh release create "dev-build-${VERSION_CODE}" android/app/build/outputs/apk/release/app-release.apk --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" --notes "Automatic development build from commit ${GITHUB_SHA}." --latest
+        run: gh release create "dev-build-${VERSION_CODE}" android/app/build/outputs/apk/release/app-release.apk linko-update.json --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" --notes "Automatic development build from commit ${GITHUB_SHA}.\nMachine-readable updater manifest is included as linko-update.json." --latest
+      - name: Remove generated update manifest
+        if: always()
+        working-directory: .
+        run: rm -f linko-update.json
       - name: Remove signing key
         if: always()
         working-directory: .
@@ -302,9 +328,8 @@ jobs:
         run: flyctl status --app linko-relay
       - name: Verify health
         run: |
-          for i in {1..12}; do
-            if curl --fail --show-error --silent --max-time 5 https://linko-relay.fly.dev/health; then echo 'Relay health check passed.'; exit 0; fi
-            sleep 5
+          for i in {1..30}; do
+            if curl --fail --silent https://linko-relay.fly.dev/health >/dev/null; then exit 0; fi
+            sleep 2
           done
-          echo '::error::Relay health check failed after deployment.'
           exit 1
