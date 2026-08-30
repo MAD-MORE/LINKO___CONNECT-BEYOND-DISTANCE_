@@ -1,5 +1,6 @@
 package com.linkshare.app.diagnostics
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,7 +46,10 @@ fun DiagnosticCenterScreen(
     val failed = displayedResults.count { it.status == DiagnosticStatus.FAIL }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.Top
     ) {
         Text("MAD-MORE", style = MaterialTheme.typography.labelLarge)
