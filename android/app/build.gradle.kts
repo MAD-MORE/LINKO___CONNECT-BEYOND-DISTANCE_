@@ -27,6 +27,8 @@ android {
             storePassword = System.getenv("LINKO_KEYSTORE_PASSWORD") ?: ""
             keyAlias = System.getenv("LINKO_KEY_ALIAS") ?: "linko"
             keyPassword = System.getenv("LINKO_KEY_PASSWORD") ?: ""
+            // LINKO's persistent signing guide generates .jks (JKS) release keys.
+            storeType = "JKS"
         }
     }
 
