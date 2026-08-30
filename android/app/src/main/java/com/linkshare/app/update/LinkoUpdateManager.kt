@@ -191,7 +191,7 @@ class LinkoUpdateManager(private val context: Context) {
                     current = location
                 } else {
                     val body = if (code in 200..299) readBounded(connection.inputStream) else readBounded(connection.errorStream)
-                    return HttpResponse(code, body, connection.errorMessage())
+                    return HttpResponse(code, body, connection.responseMessage ?: "")
                 }
             } finally {
                 connection.disconnect()
@@ -473,7 +473,7 @@ class LinkoUpdateManager(private val context: Context) {
         fun errorMessage(): String = when (code) {
             403 -> "GitHub refused the request (403). Check for a temporary API rate limit."
             404 -> "GitHub could not find the requested release data (404)."
-            429 -> "GitHub rate limit reached (429). Try again shortly."
+            429 -> "GitHub rate limit reached (429)."
             in 500..599 -> "GitHub is temporarily unavailable ($code)."
             else -> if (message.isNotBlank()) message else "HTTP $code while fetching the update."
         }
