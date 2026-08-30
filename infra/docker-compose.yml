@@ -1,51 +1,21 @@
-version: "3.9"
-
-# Linko local development stack
-# Usage: docker compose up -d
-# Then: cd backend && npm run dev
-
+# docker-compose to run signaling, relay, and coturn for staging
+version: '3.8'
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: linko-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: linko
-      POSTGRES_USER: linko
-      POSTGRES_PASSWORD: linko_dev_password
+  signaling:
+    build: ./backend/signaling
     ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres-setup.sql:/docker-entrypoint-initdb.d/01-setup.sql
-      - ../backend/migrations:/docker-entrypoint-initdb.d/migrations
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U linko -d linko"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
+      - "3000:3000"
+    restart: unless-stopped
   relay:
-    build:
-      context: ../relay
-      dockerfile: Dockerfile
-    container_name: linko-relay
-    restart: unless-stopped
+    build: ./backend/relay
     ports:
-      - "7000:7000/udp"
-      - "7001:7001"
-    environment:
-      NODE_ENV: development
-      RELAY_NODE_ID: local-1
-      RELAY_REGION: local
-      UDP_PORT: "7000"
-      PORT: "7001"
-      BANDWIDTH_LIMIT_BYTES_PER_SESSION: "10737418240"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:7001/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-
-volumes:
-  postgres_data:
+      - "4000:4000"
+    restart: unless-stopped
+  coturn:
+    image: instrumentisto/coturn
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+    volumes:
+      - ./infra/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    restart: unless-stopped
