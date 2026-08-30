@@ -1,12 +1,11 @@
-# Signaling service README
+# Signaling API README additions
 
-This is a minimal signaling service used by Linko to exchange session metadata and support WebSocket-based signaling.
+New endpoints added:
+- POST /api/pair  { device_a, device_b }  => creates a session and returns { session, token }
+- GET  /api/sessions  => list recent sessions (operator use)
 
-Endpoints:
-- POST /api/register  { device_id }
-- GET  /ws?device_id=...  WebSocket endpoint to receive/send messages to other devices. Messages should be JSON with a `to` field.
+WebSocket behavior:
+- Clients connect to /ws?device_id=<id>&token=<optional_session_token>
+- Messages must be JSON and can include "to", "type", "session_id", and other payload fields. The server forwards messages to the `to` device if connected and logs events to audits.
 
-Build and run (local):
-  docker build -t linko-signaling ./backend/signaling
-  docker build -t linko-relay ./backend/relay
-  docker-compose -f infra/docker-compose.yml up --build
+DB: Postgres is used by default in docker-compose; credentials are in infra/docker-compose.yml (dev only — rotate in prod!).

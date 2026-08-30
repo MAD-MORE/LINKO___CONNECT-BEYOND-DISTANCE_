@@ -1,10 +1,22 @@
-# docker-compose to run signaling, relay, and coturn for staging
 version: '3.8'
 services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: linko
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - linko_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
   signaling:
     build: ./backend/signaling
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/linko?sslmode=disable
     ports:
       - "3000:3000"
+    depends_on:
+      - db
     restart: unless-stopped
   relay:
     build: ./backend/relay
@@ -19,3 +31,5 @@ services:
     volumes:
       - ./infra/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
     restart: unless-stopped
+volumes:
+  linko_db_data:
