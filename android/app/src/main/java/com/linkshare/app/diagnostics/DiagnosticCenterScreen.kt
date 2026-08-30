@@ -24,12 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-/**
- * LINKO Diagnostic Center.
- *
- * The screen exposes an explicit scan state, percentage progress and the
- * currently executing check so a diagnostic run never looks frozen.
- */
+/** LINKO Diagnostic Center with an explicit build marker for update testing. */
 @Composable
 fun DiagnosticCenterScreen(
     results: List<DiagnosticResult>,
@@ -57,6 +52,7 @@ fun DiagnosticCenterScreen(
         Spacer(Modifier.height(6.dp))
         Text("LINKO DIAGNOSTIC CENTER", style = MaterialTheme.typography.headlineSmall)
         Text("REAL SYSTEM VERIFICATION", style = MaterialTheme.typography.labelMedium)
+        Text("UPDATE TEST • BUILD 1261", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(16.dp))
 
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -81,16 +77,10 @@ fun DiagnosticCenterScreen(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    Text(
-                        "${(progress * 100).toInt()}%",
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                    Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.titleLarge)
                 }
                 Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.fillMaxWidth().height(7.dp)
-                )
+                LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(7.dp))
                 Spacer(Modifier.height(8.dp))
                 Text(
                     if (running) "$completedChecks / ${DiagnosticCenterViewModel.TOTAL_CHECKS} checks complete"
@@ -102,14 +92,8 @@ fun DiagnosticCenterScreen(
         }
 
         Spacer(Modifier.height(14.dp))
-
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(displayedResults, key = { it.name }) { result ->
-                DiagnosticRow(result)
-            }
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(displayedResults, key = { it.name }) { result -> DiagnosticRow(result) }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -133,10 +117,7 @@ fun DiagnosticCenterScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             if (running) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp
-                )
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.size(10.dp))
                 Text("CHECKING…")
             } else {
@@ -149,18 +130,11 @@ fun DiagnosticCenterScreen(
 @Composable
 private fun DiagnosticRow(result: DiagnosticResult) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(result.name, style = MaterialTheme.typography.titleSmall)
-                if (result.detail.isNotBlank()) {
-                    Text(result.detail, style = MaterialTheme.typography.bodySmall)
-                }
-                result.latencyMs?.let {
-                    Text("${it} ms", style = MaterialTheme.typography.labelSmall)
-                }
+                if (result.detail.isNotBlank()) Text(result.detail, style = MaterialTheme.typography.bodySmall)
+                result.latencyMs?.let { Text("${it} ms", style = MaterialTheme.typography.labelSmall) }
             }
             Text(
                 when (result.status) {
