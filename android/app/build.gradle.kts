@@ -21,7 +21,7 @@ android {
 
     signingConfigs {
         create("debug") {
-            storeFile = android.getDefaultKeystorePath()
+            storeFile = rootProject.file("${System.getProperty("user.home")}/.android/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -48,7 +48,7 @@ android {
         getByName("debug") {
             signingConfig = signingConfigs.getByName("debug")
             addConfig(this)
-            debuggable = true
+            isDebuggable = true
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName("linkoDev")
