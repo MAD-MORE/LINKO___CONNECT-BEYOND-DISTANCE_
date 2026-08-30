@@ -71,7 +71,10 @@ fun DiagnosticCenterScreen(results: List<DiagnosticResult>, onRunDiagnostics: ()
     val passed = displayedResults.count { it.status == DiagnosticStatus.PASS }
     val failed = displayedResults.count { it.status == DiagnosticStatus.FAIL }
     val networkColor = MaterialTheme.colorScheme.primary
-    val showUpdateSection = updateState.status != LinkoUpdateManager.UpdateStatus.UpToDate && updateState.status != LinkoUpdateManager.UpdateStatus.Installed
+    val latestIsNewer = (updateState.latestVersionCode ?: updateState.installedVersionCode) > updateState.installedVersionCode
+    val updateActive = updateState.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.UpdateAvailable, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.DownloadComplete, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
+    val updateFailed = updateState.status == LinkoUpdateManager.UpdateStatus.Error
+    val showUpdateSection = latestIsNewer || updateActive || updateFailed
 
     Column(modifier.fillMaxSize().drawBehind {
         val nodes = listOf(0.12f to 0.14f, 0.50f to 0.08f, 0.88f to 0.16f, 0.20f to 0.42f, 0.78f to 0.48f, 0.48f to 0.78f)
