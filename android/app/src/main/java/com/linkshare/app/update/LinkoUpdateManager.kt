@@ -50,26 +50,43 @@ class LinkoUpdateManager(private val context: Context) {
         if (checkJob?.isActive == true) return
         if (_state.value.status in setOf(UpdateStatus.Downloading, UpdateStatus.DownloadComplete, UpdateStatus.Verifying, UpdateStatus.Installing)) return
         checkJob = scope.launch {
-            updateState(status = UpdateStatus.Checking, statusMessage = "CONNECTING TO LINKO UPDATE NETWORK", errorMessage = null, usingCachedData = false)
-            val installed = readInstalledVersion()
-            updateState(installedVersionCode = installed.first, installedVersionName = installed.second)
-            when (val result = withContext(Dispatchers.IO) { discoverLatestRelease() }) {
-                is UpdateDiscoveryResult.Success -> {
-                    latestRelease = result.release
-                    cacheRelease(result.release)
-                    publishReleaseState(result.release, installed, fromCache = false)
-                }
-                else -> {
-                    val cached = readCachedRelease()
-                    if (cached != null) {
-                        latestRelease = cached
-                        publishReleaseState(cached, installed, fromCache = true)
-                        updateState(statusMessage = "LATEST RELEASE TEMPORARILY UNREACHABLE", errorMessage = "${result.userMessage()} Last known build: ${cached.versionName} (${cached.versionCode}).", usingCachedData = true)
-                    } else {
+            try {
+                updateState(status = UpdateStatus.Checking, statusMessage = "CONNECTING TO LINKO UPDATE NETWORK", errorMessage = null, usingCachedData = false)
+                val installed = readInstalledVersion()
+                updateState(installedVersionCode = installed.first, installedVersionName = installed.second)
+                when (val result = withContext(Dispatchers.IO) { discoverLatestRelease() }) {
+                    is UpdateDiscoveryResult.Success -> {
+                        latestRelease = result.release
+                        cacheRelease(result.release)
+                        publishReleaseState(result.release, installed, fromCache = false)
+                    }
+                    else -> {
+                        val cached = readCachedRelease()
                         latestRelease = null
-                        updateState(status = UpdateStatus.Error, statusMessage = "UPDATE CHECK FAILED", errorMessage = result.userMessage(), usingCachedData = false)
+                        if (cached != null) {
+                            val status = if (result.isRateLimited()) UpdateStatus.RateLimited else UpdateStatus.Error
+                            updateState(
+                                status = status,
+                                latestVersionCode = cached.versionCode,
+                                latestVersionName = cached.versionName,
+                                statusMessage = if (status == UpdateStatus.RateLimited) "GITHUB TEMPORARILY RATE LIMITED" else "UPDATE CHECK FAILED",
+                                errorMessage = if (status == UpdateStatus.RateLimited) "GitHub temporarily rate limited. Last confirmed build: ${cached.versionName} (${cached.versionCode})." else "${result.userMessage()} Last confirmed build: ${cached.versionName} (${cached.versionCode}).",
+                                usingCachedData = true
+                            )
+                        } else {
+                            updateState(
+                                status = if (result.isRateLimited()) UpdateStatus.RateLimited else UpdateStatus.Error,
+                                latestVersionCode = null,
+                                latestVersionName = null,
+                                statusMessage = if (result.isRateLimited()) "GITHUB TEMPORARILY RATE LIMITED" else "UPDATE CHECK FAILED",
+                                errorMessage = result.userMessage(),
+                                usingCachedData = false
+                            )
+                        }
                     }
                 }
+            } finally {
+                checkJob = null
             }
         }
     }
@@ -81,7 +98,7 @@ class LinkoUpdateManager(private val context: Context) {
     }
 
     fun retry() {
-        if (_state.value.status == UpdateStatus.Error || _state.value.errorMessage != null) checkAndOfferUpdate()
+        if (_state.value.status == UpdateStatus.Error || _state.value.status == UpdateStatus.RateLimited || _state.value.errorMessage != null) checkAndOfferUpdate()
     }
 
     fun cancelUpdate() {
@@ -368,7 +385,7 @@ class LinkoUpdateManager(private val context: Context) {
 
     data class UpdateState(val installedVersionCode: Int, val installedVersionName: String, val latestVersionCode: Int? = null, val latestVersionName: String? = null, val downloadedBytes: Long = 0, val totalBytes: Long = 0, val progressPercent: Int = 0, val statusMessage: String = "", val errorMessage: String? = null, val downloadId: Long = -1L, val usingCachedData: Boolean = false, val status: UpdateStatus = UpdateStatus.Idle)
 
-    enum class UpdateStatus { Idle, Checking, UpToDate, UpdateAvailable, Downloading, DownloadComplete, Verifying, Installing, Installed, Error }
+    enum class UpdateStatus { Idle, Checking, UpToDate, UpdateAvailable, RateLimited, Downloading, DownloadComplete, Verifying, Installing, Installed, Error }
 
     private data class ReleaseInfo(val versionCode: Int, val versionName: String, val apkUrl: String, val commit: String?)
     private data class AssetInfo(val browserUrl: String?, val apiUrl: String?)
@@ -389,6 +406,8 @@ class LinkoUpdateManager(private val context: Context) {
         data class NetworkError(val stage: String, val message: String) : UpdateDiscoveryResult
         data class ParseError(val stage: String, val message: String) : UpdateDiscoveryResult
         data class ValidationError(val stage: String, val message: String) : UpdateDiscoveryResult
+
+        fun isRateLimited(): Boolean = this is HttpError && (code == 403 || code == 429)
 
         fun userMessage(): String = when (this) {
             is HttpError -> when (code) {
