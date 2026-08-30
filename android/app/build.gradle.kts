@@ -20,7 +20,9 @@ android {
     }
 
     signingConfigs {
-        create("debug") {
+        // Android Gradle Plugin creates the standard debug signing config automatically.
+        // Reconfigure it instead of creating a duplicate named "debug".
+        getByName("debug") {
             storeFile = rootProject.file("${System.getProperty("user.home")}/.android/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
