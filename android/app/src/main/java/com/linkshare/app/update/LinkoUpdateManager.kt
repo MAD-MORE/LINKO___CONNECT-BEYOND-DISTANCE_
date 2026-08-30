@@ -260,7 +260,21 @@ class LinkoUpdateManager(private val context: Context) {
         statusMessage: String = _state.value.statusMessage,
         errorMessage: String? = _state.value.errorMessage,
         downloadId: Long = _state.value.downloadId
-    ) { _state.value = UpdateState(status, installedVersionCode, installedVersionName, latestVersionCode, latestVersionName, downloadedBytes, totalBytes, progressPercent, statusMessage, errorMessage, downloadId) }
+    ) {
+        _state.value = UpdateState(
+            installedVersionCode = installedVersionCode,
+            installedVersionName = installedVersionName,
+            latestVersionCode = latestVersionCode,
+            latestVersionName = latestVersionName,
+            downloadedBytes = downloadedBytes,
+            totalBytes = totalBytes,
+            progressPercent = progressPercent,
+            statusMessage = statusMessage,
+            errorMessage = errorMessage,
+            downloadId = downloadId,
+            status = status
+        )
+    }
 
     data class UpdateState(
         val installedVersionCode: Int,
