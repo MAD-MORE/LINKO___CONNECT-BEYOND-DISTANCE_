@@ -74,33 +74,119 @@ jobs:
           KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
           test -n "$KEYSTORE_B64" || { echo "LINKO_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
           test -n "$KEYSTORE_PASSWORD" || { echo "LINKO_KEYSTORE_PASSWORD is required for in-place updates"; exit 1; }
           test -n "$KEY_PASSWORD" || { echo "LINKO_KEY_PASSWORD is required for in-place updates"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "LINKO_KEY_ALIAS is required for in-place updates"; exit 1; }
 
-          raw_keystore="$RUNNER_TEMP/linko-keystore.raw"
-          normalized_keystore="$RUNNER_TEMP/linko-keystore.jks"
-          printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 --decode > "$raw_keystore"
+          work_dir="$RUNNER_TEMP/linko-signing"
+          mkdir -p "$work_dir"
+          rm -f "$work_dir"/*
 
-          if keytool -list -storetype JKS -keystore "$raw_keystore" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-            cp "$raw_keystore" "$normalized_keystore"
-            echo "LINKO signing key validated as JKS."
-          elif keytool -list -storetype PKCS12 -keystore "$raw_keystore" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-            echo "LINKO signing secret is PKCS12; normalizing it to JKS without changing the signing identity."
-            keytool -importkeystore \
-              -noprompt \
-              -srckeystore "$raw_keystore" \
-              -srcstoretype PKCS12 \
-              -srcstorepass "$KEYSTORE_PASSWORD" \
-              -srcalias "$KEY_ALIAS" \
-              -srckeypass "$KEY_PASSWORD" \
-              -destkeystore "$normalized_keystore" \
-              -deststoretype JKS \
-              -deststorepass "$KEYSTORE_PASSWORD" \
-              -destalias "$KEY_ALIAS" \
-              -destkeypass "$KEY_PASSWORD"
-          else
-            echo "LINKO_KEYSTORE_BASE64 is not a readable JKS or PKCS12 keystore with the configured password."
+          # Recover the keystore without changing its signing identity.
+          # The resolver intentionally tries only reversible encodings:
+          #   1) plain Base64
+          #   2) Base64 wrapped in quotes/data-URI text
+          #   3) URL-safe Base64 normalization
+          #   4) one additional Base64 decode for accidental double-encoding
+          python - "$KEYSTORE_B64" "$work_dir" <<'PY'
+          import base64
+          import binascii
+          import os
+          import re
+          import sys
+
+          value = sys.argv[1].strip()
+          out = sys.argv[2]
+
+          candidates = []
+
+          def add(label, text):
+              if text is None:
+                  return
+              text = text.strip()
+              if text.startswith('data:') and ';base64,' in text:
+                  text = text.split(';base64,', 1)[1]
+              if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+                  text = text[1:-1].strip()
+              text = re.sub(r'\s+', '', text)
+              if text:
+                  candidates.append((label, text))
+
+          add('original', value)
+
+          # URL-safe -> standard Base64 representation.
+          normalized = value.strip().replace('-', '+').replace('_', '/')
+          add('urlsafe-normalized', normalized)
+
+          # Generate one level of decoded text to catch accidental double Base64 encoding.
+          for label, text in list(candidates):
+              padded = text + ('=' * ((4 - len(text) % 4) % 4))
+              try:
+                  decoded = base64.b64decode(padded, validate=True)
+                  try:
+                      decoded_text = decoded.decode('ascii')
+                  except UnicodeDecodeError:
+                      continue
+                  add(label + '-decoded-text', decoded_text)
+              except (binascii.Error, ValueError):
+                  continue
+
+          seen = set()
+          for index, (label, text) in enumerate(candidates):
+              if text in seen:
+                  continue
+              seen.add(text)
+              padded = text + ('=' * ((4 - len(text) % 4) % 4))
+              try:
+                  raw = base64.b64decode(padded, validate=True)
+              except (binascii.Error, ValueError):
+                  continue
+              path = os.path.join(out, f'candidate-{index}-{label}.bin')
+              with open(path, 'wb') as handle:
+                  handle.write(raw)
+          PY
+
+          raw_keystore="$work_dir/raw-keystore"
+          normalized_keystore="$work_dir/linko-keystore.jks"
+          found=""
+
+          # Validate every candidate against the supplied password. This avoids
+          # guessing the keystore format from the filename or extension.
+          for candidate in "$work_dir"/candidate-*.bin; do
+            [ -f "$candidate" ] || continue
+
+            if keytool -list -storetype JKS -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+              cp "$candidate" "$normalized_keystore"
+              found="jks"
+              echo "LINKO signing key validated as JKS using encoding recovery."
+              break
+            fi
+
+            if keytool -list -storetype PKCS12 -keystore "$candidate" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+              cp "$candidate" "$raw_keystore"
+              echo "LINKO signing secret is PKCS12; normalizing it to JKS without changing the signing identity."
+              keytool -importkeystore \
+                -noprompt \
+                -srckeystore "$raw_keystore" \
+                -srcstoretype PKCS12 \
+                -srcstorepass "$KEYSTORE_PASSWORD" \
+                -srcalias "$KEY_ALIAS" \
+                -srckeypass "$KEY_PASSWORD" \
+                -destkeystore "$normalized_keystore" \
+                -deststoretype JKS \
+                -deststorepass "$KEYSTORE_PASSWORD" \
+                -destalias "$KEY_ALIAS" \
+                -destkeypass "$KEY_PASSWORD"
+              found="pkcs12"
+              break
+            fi
+          done
+
+          if [ -z "$found" ]; then
+            echo "LINKO signing key recovery failed: no supplied Base64 candidate matches JKS or PKCS12 with the configured password."
+            echo "The CI cannot safely invent a replacement signing key because that could break in-place updates."
             exit 1
           fi
 
