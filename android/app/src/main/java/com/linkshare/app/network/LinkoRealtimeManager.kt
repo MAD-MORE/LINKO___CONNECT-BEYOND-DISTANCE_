@@ -39,6 +39,7 @@ object LinkoRealtimeManager {
     private const val NOTIFICATION_CHANNEL = "linko_realtime"
     private const val NOTIFICATION_ID = 9201
     private val started = AtomicBoolean(false)
+    private val connected = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
@@ -51,11 +52,14 @@ object LinkoRealtimeManager {
     private var auth: LinkoAuth? = null
     private var appContext: Context? = null
 
+    fun isStarted(): Boolean = started.get()
+    fun isConnected(): Boolean = started.get() && connected.get()
     fun currentPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
     fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
 
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
+        connected.set(false)
         appContext = context.applicationContext
         auth = LinkoAuth(appContext!!)
         runCatching { ensureNotificationChannel() }
@@ -74,7 +78,10 @@ object LinkoRealtimeManager {
                 subscribeFriendEvents(supabase)
                 subscribeSessionEvents(supabase)
                 subscribePresence(supabase)
+                connected.set(true)
+                _events.tryEmit(LinkoRealtimeEvent.TransportReady)
             }.onFailure {
+                connected.set(false)
                 _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "realtime_start_failed"))
                 started.set(false)
             }
@@ -85,6 +92,7 @@ object LinkoRealtimeManager {
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
+        connected.set(false)
         scope.launch {
             runCatching {
                 val realtime = client?.pluginManager?.getPlugin(Realtime)
@@ -107,7 +115,7 @@ object LinkoRealtimeManager {
         val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") { table = "friend_requests" }
         scope.launch {
             runCatching { flow.collect { action -> handleFriendChange(action) } }
-                .onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error")) }
+                .onFailure { connected.set(false); _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error")) }
         }
         channel.subscribe(blockUntilSubscribed = true)
     }
@@ -123,11 +131,9 @@ object LinkoRealtimeManager {
                     val sessionId = record?.optString("id")?.takeIf { it.isNotBlank() }
                     val state = record?.optString("state")?.takeIf { it.isNotBlank() }
                     _events.tryEmit(LinkoRealtimeEvent.SessionStateChanged(sessionId, state))
-                    if (state == "requested" && sessionId != null) {
-                        notify(LinkoRealtimeEvent.IncomingConnectionRequest(sessionId))
-                    }
+                    if (state == "requested" && sessionId != null) notify(LinkoRealtimeEvent.IncomingConnectionRequest(sessionId))
                 }
-            }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
+            }.onFailure { connected.set(false); _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
         }
         channel.subscribe(blockUntilSubscribed = true)
     }
@@ -144,7 +150,7 @@ object LinkoRealtimeManager {
                         _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(presence))
                     }
                 }
-            }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
+            }.onFailure { connected.set(false); _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
         }
         channel.subscribe(blockUntilSubscribed = true)
         val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
@@ -153,7 +159,7 @@ object LinkoRealtimeManager {
             val ownPresence = LinkoPresence(currentUserId, deviceId, "online", true)
             presenceSnapshot[currentUserId] = ownPresence
             runCatching { channel.track(ownPresence) }
-                .onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_track_failed")) }
+                .onFailure { connected.set(false); _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_track_failed")) }
             _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(ownPresence))
         }
     }
@@ -243,6 +249,7 @@ object LinkoRealtimeManager {
 data class LinkoPresence(val userId: String, val deviceId: String, val state: String, val online: Boolean)
 
 sealed interface LinkoRealtimeEvent {
+    data object TransportReady : LinkoRealtimeEvent
     data class IncomingConnectionRequest(val sessionId: String, val peerName: String? = null) : LinkoRealtimeEvent
     data class FriendRequestReceived(val requestId: String) : LinkoRealtimeEvent
     data class FriendRequestSent(val requestId: String) : LinkoRealtimeEvent
