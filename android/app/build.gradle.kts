@@ -45,8 +45,17 @@ android {
             buildType.buildConfigField("String", "LINKO_SUPABASE_URL", "\"${configuredSupabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
             buildType.buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
-        getByName("debug") { signingConfig = signingConfigs.getByName("debug"); addConfig(this) }
-        getByName("release") { signingConfig = signingConfigs.getByName("linkoDev"); addConfig(this) }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+            addConfig(this)
+            debuggable = true
+        }
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("linkoDev")
+            addConfig(this)
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
 
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
