@@ -10,11 +10,7 @@ import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 
-/**
- * Bridges one authorized LINKO provider session to a full-IP userspace engine.
- * A loopback SOCKS5 server is created and destroyed with the session so the
- * tun2socks engine always has a concrete provider-network egress path.
- */
+/** Bridges one authorized provider session to the userspace full-IP engine. */
 class ProviderFullIpSession(
     private val socket: DatagramSocket,
     endpoint: InetSocketAddress,
@@ -76,14 +72,10 @@ class ProviderFullIpSession(
     }
 
     override fun close() {
-        inboundJob?.cancel()
-        outboundJob?.cancel()
-        inboundJob = null
-        outboundJob = null
+        inboundJob?.cancel(); outboundJob?.cancel()
+        inboundJob = null; outboundJob = null
         runCatching { engine.close() }
-        socks.close()
-        tunnel.close()
-        tun.close()
+        socks.close(); tunnel.close(); tun.close()
     }
 
     companion object {

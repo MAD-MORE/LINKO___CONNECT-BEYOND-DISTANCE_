@@ -1,66 +1,42 @@
 package com.linkshare.app.tunnel
 
-import android.net.ParcelFileDescriptor
+import android.content.Context
+import android.content.Intent
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import com.linkshare.app.vpn.LinkShareVpnService
 
-/**
- * TunnelCoordinator
- *
- * Coordinates between the Android VPN Service and the tunnel engine.
- * - Manages VPN interface lifecycle
- * - Orchestrates packet flow
- * - Handles tunnel setup and teardown
- */
-class TunnelCoordinator(
-    private val vpnInterface: ParcelFileDescriptor
-) : AutoCloseable {
-
-    private val TAG = "LINKO-Coordinator"
-    private val coordinatorScope = CoroutineScope(Dispatchers.Default + Job())
-
-    private var tunnelEngine: FullIpTunnelEngine? = null
-    private var running = false
-
-    fun start() {
-        Log.d(TAG, "TunnelCoordinator starting")
-        running = true
-        // Tunnel engine will be started separately after receiving session keys
-    }
-
-    fun startTunnelEngine(
-        providerAddress: java.net.InetSocketAddress,
+class TunnelCoordinator(private val context: Context) {
+    /** Starts the receiver VPN only after signaling supplies authenticated tunnel credentials. */
+    fun startVpnTunnel(
+        peerHost: String,
+        peerPort: Int,
         sessionId: String,
-        sessionKey: ByteArray,
-        relayUrl: String? = null
+        sessionKey: ByteArray
     ) {
-        Log.d(TAG, "Starting tunnel engine to ${providerAddress.hostName}:${providerAddress.port}")
+        require(peerHost.isNotBlank()) { "peerHost is required" }
+        require(peerPort in 1..65535) { "peerPort is invalid" }
+        require(sessionId.isNotBlank()) { "sessionId is required" }
+        require(sessionKey.size == 32) { "sessionKey must be 32 bytes" }
 
-        coordinatorScope.launch {
-            try {
-                val engine = FullIpTunnelEngine(
-                    vpnInterface = vpnInterface,
-                    providerAddress = providerAddress,
-                    sessionId = sessionId,
-                    sessionKey = sessionKey,
-                    relayUrl = relayUrl
-                )
-                this@TunnelCoordinator.tunnelEngine = engine
-                engine.start()
-                engine.receiveAndForwardResponse()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start tunnel engine: ${e.message}", e)
-            }
-        }
+        val intent = Intent(context, LinkShareVpnService::class.java)
+            .putExtra(LinkShareVpnService.EXTRA_PEER_HOST, peerHost)
+            .putExtra(LinkShareVpnService.EXTRA_PEER_PORT, peerPort)
+            .putExtra(LinkShareVpnService.EXTRA_SESSION_ID, sessionId)
+            .putExtra(LinkShareVpnService.EXTRA_ROLE, LinkShareVpnService.ROLE_RECEIVER)
+            .putExtra(LinkShareVpnService.EXTRA_SESSION_KEY, sessionKey.copyOf())
+        context.startService(intent)
     }
 
-    override fun close() {
-        Log.d(TAG, "TunnelCoordinator closing")
-        running = false
-        tunnelEngine?.close()
-        tunnelEngine = null
+    @Deprecated("Use the credentialed startVpnTunnel overload after signaling completes")
+    fun startVpnTunnel() {
+        Log.w(TAG, "Ignoring legacy VPN start request: session credentials are not available")
+    }
+
+    fun stopVpnTunnel() {
+        context.stopService(Intent(context, LinkShareVpnService::class.java))
+    }
+
+    private companion object {
+        const val TAG = "TunnelCoordinator"
     }
 }

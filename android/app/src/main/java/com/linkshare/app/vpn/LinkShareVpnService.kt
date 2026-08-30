@@ -1,118 +1,130 @@
 package com.linkshare.app.vpn
 
-import android.app.Service
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
-import android.os.Binder
-import android.os.IBinder
-import android.util.Log
-import com.linkshare.app.tunnel.TunnelCoordinator
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import android.os.ParcelFileDescriptor
+import com.linkshare.app.tunnel.EncryptedDatagramTunnel
+import com.linkshare.app.tunnel.IpPacketRouter
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
+import java.net.SocketTimeoutException
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * LINKO Receiver-side VPN Service.
- *
- * Creates a VPN interface that captures all device traffic and routes it through
- * the encrypted tunnel to the Provider's network.
- *
- * Lifecycle:
- * 1. User taps "Connect" → LinkShareViewModel → LinkoEngineBridge.connect()
- * 2. LinkoEngineBridge starts LinkShareVpnService
- * 3. Service requests VPN permission (if not already granted)
- * 4. Service creates VPN builder and prepares interface
- * 5. FullIpTunnelEngine reads packets and forwards through tunnel
- * 6. User taps "Disconnect" → service.stopVpn()
- */
 class LinkShareVpnService : VpnService() {
-
-    private val TAG = "LINKO-VPN"
-    private val binder = VpnServiceBinder()
-    private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
-
-    private var tunnelCoordinator: TunnelCoordinator? = null
-    private var vpnJob: Job? = null
-
-    override fun onBind(intent: Intent?): IBinder = binder
+    private var tunnelInterface: ParcelFileDescriptor? = null
+    private var transport: EncryptedDatagramTunnel? = null
+    private val running = AtomicBoolean(false)
+    private val executor = Executors.newFixedThreadPool(2)
+    private val router = IpPacketRouter()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "LinkShareVpnService starting")
-
-        vpnJob?.cancel()
-        vpnJob = serviceScope.launch {
-            try {
-                startVpn()
-            } catch (e: Exception) {
-                Log.e(TAG, "VPN startup failed: ${e.message}", e)
-                stopSelf()
-            }
+        val host = intent?.getStringExtra(EXTRA_PEER_HOST)
+        val port = intent?.getIntExtra(EXTRA_PEER_PORT, -1) ?: -1
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        val role = intent?.getStringExtra(EXTRA_ROLE)
+        val sessionKey = intent?.getByteArrayExtra(EXTRA_SESSION_KEY)
+        if (host.isNullOrBlank() || port !in 1..65535 || sessionId.isNullOrBlank() || role != ROLE_RECEIVER || sessionKey?.size != 32) {
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
+        if (VpnService.prepare(this) != null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        stopTunnel()
+        tunnelInterface = Builder()
+            .setSession("LINKO tunnel")
+            .setMtu(TUN_MTU)
+            .addAddress("10.48.0.2", 32)
+            .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
+            .addDnsServer("1.1.1.1")
+            .establish()
+            ?: return START_NOT_STICKY
 
+        val socket = DatagramSocket()
+        if (!protect(socket)) {
+            socket.close()
+            stopTunnel()
+            return START_NOT_STICKY
+        }
+        transport = EncryptedDatagramTunnel(
+            socket = socket,
+            peer = InetSocketAddress(host, port),
+            sessionId = sessionId,
+            role = EncryptedDatagramTunnel.Role.RECEIVER,
+            sessionKey = sessionKey
+        )
+        running.set(true)
+        executor.execute { outboundLoop() }
+        executor.execute { inboundLoop() }
         return START_STICKY
     }
 
-    private suspend fun startVpn() {
-        Log.d(TAG, "Configuring VPN interface")
-
-        val builder = Builder().apply {
-            setSession("LINKO-Receiver")
-            // Route all IPv4 traffic through the VPN
-            addRoute("0.0.0.0", 0)
-            // Route all IPv6 traffic through the VPN
-            addRoute("::", 0)
-            // Set DNS to a non-routable address; we'll handle DNS internally
-            addDnsServer("8.8.8.8")
-            addDnsServer("8.8.4.4")
-            // Exclude LINKO control plane from VPN to avoid loops
-            addDisallowedApplication(packageName)
+    private fun outboundLoop() {
+        val descriptor = tunnelInterface ?: return
+        try {
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                val packet = ByteArray(MAX_IP_PACKET)
+                while (running.get()) {
+                    val count = input.read(packet)
+                    if (count <= 0) break
+                    val raw = packet.copyOf(count)
+                    if (router.parse(raw) == null || raw.size > MAX_TUN_PAYLOAD) continue
+                    transport?.send(raw)
+                }
+            }
+        } catch (_: Exception) {
+            stopTunnel()
         }
-
-        val vpnInterface = try {
-            builder.establish() ?: throw Exception("VPN interface failed to establish")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to establish VPN interface: ${e.message}")
-            throw e
-        }
-
-        Log.d(TAG, "VPN interface established")
-
-        val coordinator = TunnelCoordinator(vpnInterface)
-        this.tunnelCoordinator = coordinator
-        binder.setVpnService(this)
-
-        // Start the tunnel read/write loop
-        coordinator.start()
     }
 
-    fun stopVpn() {
-        Log.d(TAG, "Stopping VPN service")
-        vpnJob?.cancel()
-        tunnelCoordinator?.close()
-        stopSelf()
+    private fun inboundLoop() {
+        val descriptor = tunnelInterface ?: return
+        try {
+            ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+                while (running.get()) {
+                    try {
+                        val packet = transport?.receive(RECEIVE_TIMEOUT_MS) ?: continue
+                        if (packet.size <= MAX_IP_PACKET && router.parse(packet) != null) {
+                            output.write(packet)
+                            output.flush()
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // Keep polling while the VPN remains active.
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            stopTunnel()
+        }
+    }
+
+    private fun stopTunnel() {
+        running.set(false)
+        transport?.close()
+        transport = null
+        tunnelInterface?.close()
+        tunnelInterface = null
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "LinkShareVpnService destroyed")
-        vpnJob?.cancel()
-        tunnelCoordinator?.close()
+        stopTunnel()
+        executor.shutdownNow()
         super.onDestroy()
     }
 
-    inner class VpnServiceBinder : Binder() {
-        private var vpnService: LinkShareVpnService? = null
-
-        fun setVpnService(service: LinkShareVpnService) {
-            vpnService = service
-        }
-
-        fun getVpnService(): LinkShareVpnService? = vpnService
-    }
-
     companion object {
-        const val ACTION_START_VPN = "com.linkshare.app.vpn.START_VPN"
-        const val ACTION_STOP_VPN = "com.linkshare.app.vpn.STOP_VPN"
+        const val EXTRA_PEER_HOST = "linko.peer.host"
+        const val EXTRA_PEER_PORT = "linko.peer.port"
+        const val EXTRA_SESSION_ID = "linko.session.id"
+        const val EXTRA_ROLE = "linko.role"
+        const val EXTRA_SESSION_KEY = "linko.session.key"
+        const val ROLE_RECEIVER = "receiver"
+        private const val RECEIVE_TIMEOUT_MS = 1000
+        private const val MAX_IP_PACKET = 64 * 1024
+        private const val MAX_TUN_PAYLOAD = 16 * 1024
+        private const val TUN_MTU = 1500
     }
 }

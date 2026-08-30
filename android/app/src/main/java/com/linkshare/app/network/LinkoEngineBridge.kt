@@ -83,7 +83,7 @@ object LinkoEngineBridge {
                 val host = remoteCandidate?.host ?: config.host
                 val port = remoteCandidate?.port ?: config.port
                 val path = if (remoteCandidate != null) "direct" else "relay"
-                publishAndNotify("establishing", "Selecting $path UDP path…")
+                publish("establishing", "Selecting $path UDP path…"); onState("establishing")
                 tunnel.startVpnTunnel(host, port, config.sessionId, config.key)
                 publishAndNotify("securing", onState); publishAndNotify("routing", onState)
                 runCatching { control.transition(sessionId, "connected") }; publishAndNotify("connected", onState); return
