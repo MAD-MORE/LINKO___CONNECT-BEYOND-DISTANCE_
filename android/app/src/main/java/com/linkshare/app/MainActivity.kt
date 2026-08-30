@@ -23,6 +23,7 @@ import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
 import com.linkshare.app.ui.theme.LinkoTheme
 import com.linkshare.app.ui.screens.LinkoApp
+import com.linkshare.app.update.LinkoUpdateManager
 
 class MainActivity : ComponentActivity() {
     private lateinit var linkoRuntime: LinkoRuntime
@@ -56,6 +57,13 @@ class MainActivity : ComponentActivity() {
         // permission/activity transition cannot race Compose initialization.
         window.decorView.post { runCatching { requestEnginePermissions() }
             .onFailure { Log.e(TAG, "Permission setup failed", it) } }
+
+        // Check for a newer GitHub release after the UI has settled. The updater
+        // is optional and isolated so update failures can never block LINKO.
+        window.decorView.postDelayed({
+            runCatching { LinkoUpdateManager(this).checkAndOfferUpdate() }
+                .onFailure { Log.e(TAG, "Update check failed", it) }
+        }, 2500L)
 
         // Realtime is auxiliary. It may fail independently without making LINKO crash.
         runCatching { LinkoRealtimeManager.start(this) }
