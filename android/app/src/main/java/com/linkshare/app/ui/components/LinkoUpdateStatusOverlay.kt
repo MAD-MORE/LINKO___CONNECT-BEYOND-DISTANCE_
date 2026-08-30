@@ -18,7 +18,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -37,10 +41,30 @@ import com.linkshare.app.ui.theme.TextSub
 fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
     val state by updateManager.state.collectAsStateWithLifecycle()
     val status = state.status
+    var visible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(status) {
+        when (status) {
+            LinkoUpdateManager.UpdateStatus.Idle -> visible = false
+            LinkoUpdateManager.UpdateStatus.UpToDate,
+            LinkoUpdateManager.UpdateStatus.Installed -> {
+                visible = true
+                kotlinx.coroutines.delay(2200L)
+                visible = false
+            }
+            else -> visible = true
+        }
+    }
+
+    if (!visible) return
+
     val active = status == LinkoUpdateManager.UpdateStatus.Checking || status == LinkoUpdateManager.UpdateStatus.UpdateAvailable || status == LinkoUpdateManager.UpdateStatus.Downloading || status == LinkoUpdateManager.UpdateStatus.DownloadComplete || status == LinkoUpdateManager.UpdateStatus.Verifying || status == LinkoUpdateManager.UpdateStatus.Installing
+    val success = status == LinkoUpdateManager.UpdateStatus.Installed || status == LinkoUpdateManager.UpdateStatus.UpToDate
+    val failure = status == LinkoUpdateManager.UpdateStatus.Error || status == LinkoUpdateManager.UpdateStatus.RateLimited
+
     LinkoCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NetworkTransferAnimation(active, state.progressPercent / 100f, status == LinkoUpdateManager.UpdateStatus.Installed || status == LinkoUpdateManager.UpdateStatus.UpToDate, status == LinkoUpdateManager.UpdateStatus.Error, Modifier.size(72.dp))
+            NetworkTransferAnimation(active, state.progressPercent / 100f, success, failure, Modifier.size(72.dp))
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("LINKO UPDATE NETWORK", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono)
@@ -54,12 +78,13 @@ fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
                         LinkoUpdateManager.UpdateStatus.Installing -> "INSTALLING LINKO"
                         LinkoUpdateManager.UpdateStatus.Installed -> "LINKO UPDATED"
                         LinkoUpdateManager.UpdateStatus.Error -> "UPDATE CHECK FAILED"
+                        LinkoUpdateManager.UpdateStatus.RateLimited -> "GITHUB TEMPORARILY RATE LIMITED"
                         LinkoUpdateManager.UpdateStatus.UpToDate -> "LINKO IS UP TO DATE"
                         LinkoUpdateManager.UpdateStatus.Idle -> "AUTOMATIC UPDATE DETECTION READY"
                     }, color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono
                 )
                 Text("Current: ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
-                state.latestVersionCode?.let { Text("Latest: ${state.latestVersionName ?: "unknown"} ($it)", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono) }
+                state.latestVersionCode?.let { Text("Last confirmed: ${state.latestVersionName ?: "unknown"} ($it)", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono) }
             }
         }
         if (status == LinkoUpdateManager.UpdateStatus.Downloading) {
@@ -74,7 +99,8 @@ fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
             when (status) {
                 LinkoUpdateManager.UpdateStatus.UpdateAvailable -> PrimaryButton("UPDATE NOW", { updateManager.startUpdate() }, color = Blue, modifier = Modifier.fillMaxWidth())
                 LinkoUpdateManager.UpdateStatus.Downloading -> PrimaryButton("CANCEL", { updateManager.cancelUpdate() }, color = Blue, modifier = Modifier.fillMaxWidth())
-                LinkoUpdateManager.UpdateStatus.Error -> PrimaryButton("RETRY", { updateManager.retry() }, color = Blue, modifier = Modifier.fillMaxWidth())
+                LinkoUpdateManager.UpdateStatus.Error,
+                LinkoUpdateManager.UpdateStatus.RateLimited -> PrimaryButton("TRY AGAIN", { updateManager.retry() }, color = Blue, modifier = Modifier.fillMaxWidth())
                 LinkoUpdateManager.UpdateStatus.Installing -> Unit
                 else -> PrimaryButton("CHECK FOR UPDATES", { updateManager.checkAndOfferUpdate() }, color = Blue, modifier = Modifier.fillMaxWidth(), enabled = !active)
             }
