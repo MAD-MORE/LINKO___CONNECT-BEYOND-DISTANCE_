@@ -132,7 +132,20 @@ private fun UpdateStatusCard(state: LinkoUpdateManager.UpdateState, onCheck: () 
         Spacer(Modifier.height(10.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Current ${state.installedVersionName} (${state.installedVersionCode})", style = MaterialTheme.typography.bodySmall); Text(if (state.usingCachedData) "Last confirmed ${state.latestVersionName ?: "—"} (${state.latestVersionCode ?: "—"})" else "Latest ${state.latestVersionName ?: "—"} (${state.latestVersionCode ?: "—"})", style = MaterialTheme.typography.bodySmall) }
         AnimatedVisibility(visible = state.status in setOf(LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)) { Column { Spacer(Modifier.height(10.dp)); if (state.status == LinkoUpdateManager.UpdateStatus.Downloading) { LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.fillMaxWidth()); Text("${state.progressPercent}% downloaded", style = MaterialTheme.typography.labelSmall) } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) } }
         AnimatedVisibility(visible = state.errorMessage != null) { Row(Modifier.fillMaxWidth().padding(top = 10.dp)) { Icon(Icons.Default.Error, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.size(6.dp)); Text(state.errorMessage.orEmpty(), style = MaterialTheme.typography.bodySmall) } }
-        if (state.status == LinkoUpdateManager.UpdateStatus.UpdateAvailable) { Spacer(Modifier.height(10.dp)); Button(onClick = onUpdate, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, contentDescription = null); Spacer(Modifier.size(8.dp)); Text("UPDATE LINKO") } }        if (state.status == LinkoUpdateManager.UpdateStatus.Error || state.status == LinkoUpdateManager.UpdateStatus.RateLimited) { Spacer(Modifier.height(6.dp)); Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("TRY AGAIN") } }
+        if (state.status == LinkoUpdateManager.UpdateStatus.UpdateAvailable) {
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onUpdate, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Download, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("UPDATE LINKO")
+            }
+        }
+        if (state.status == LinkoUpdateManager.UpdateStatus.Error || state.status == LinkoUpdateManager.UpdateStatus.RateLimited) {
+            Spacer(Modifier.height(6.dp))
+            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                Text("TRY AGAIN")
+            }
+        }
     } }
 }
 
