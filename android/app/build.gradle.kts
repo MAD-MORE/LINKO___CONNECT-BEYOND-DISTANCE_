@@ -20,14 +20,8 @@ android {
     }
 
     signingConfigs {
-        // Android Gradle Plugin creates the standard debug signing config automatically.
-        // Reconfigure it instead of creating a duplicate named "debug".
-        getByName("debug") {
-            storeFile = rootProject.file("${System.getProperty("user.home")}/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
+        // The debug signing configuration is owned by Android Gradle Plugin.
+        // Do not hard-code CI-local ~/.android/debug.keystore paths.
         create("linkoDev") {
             storeFile = rootProject.file("linko-dev.keystore")
             storePassword = System.getenv("LINKO_KEYSTORE_PASSWORD") ?: ""
@@ -48,7 +42,7 @@ android {
             buildType.buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
         getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
+            // Keep the AGP-created debug signing config untouched.
             addConfig(this)
             isDebuggable = true
         }
