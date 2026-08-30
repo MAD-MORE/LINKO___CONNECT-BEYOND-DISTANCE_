@@ -1,0 +1,2 @@
+// WireGuard session offer endpoint: clients post their public key and candidate and the server will persist/forward
+// This extends the signaling service. The handler is implemented in Go in backend/signaling.

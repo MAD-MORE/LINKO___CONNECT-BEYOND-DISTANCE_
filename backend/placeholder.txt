@@ -1,0 +1,11 @@
+---
+*** Begin Patch
+*** Update File: android/app/build.gradle.kts
+@@
+ dependencies {
+@@
+-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
++    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
++    // For X25519 key generation (WireGuard keys)
++    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+*** End Patch

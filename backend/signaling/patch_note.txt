@@ -1,0 +1,9 @@
+@@
+ http.HandleFunc("/api/register", registerHandler)
+ http.HandleFunc("/api/pair", pairHandler)
+ http.HandleFunc("/api/sessions", sessionsHandler)
+ http.HandleFunc("/ws", wsHandler)
++http.HandleFunc("/api/wg_offer", wgOfferHandler)
+ http.Printf("signaling service listening on %s", *addr)
+ log.Fatal(http.ListenAndServe(*addr, nil))
+ }
