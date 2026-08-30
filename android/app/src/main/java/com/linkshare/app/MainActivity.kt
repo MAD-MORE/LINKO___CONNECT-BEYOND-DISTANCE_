@@ -47,13 +47,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             LinkoTheme {
                 Box(Modifier.fillMaxSize()) {
-                    if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) {
-                        LinkoApp(linkoAuth, linkoRuntime)
-                    }
+                    if (::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) LinkoApp(linkoAuth, linkoRuntime)
                     if (::updateManager.isInitialized) {
-                        Column(Modifier.fillMaxWidth()) {
-                            LinkoUpdateStatusOverlay(onCheckForUpdates = { checkForUpdates() })
-                        }
+                        Column(Modifier.fillMaxWidth()) { LinkoUpdateStatusOverlay(updateManager) }
                     }
                     LinkoRealtimeOverlay()
                 }
@@ -68,7 +64,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         runCatching { LinkoRealtimeManager.setForeground(true) }
-        if (::updateManager.isInitialized) window.decorView.post { checkForUpdates() }
+        if (::updateManager.isInitialized) {
+            updateManager.onInstallerReturned()
+            window.decorView.post { checkForUpdates() }
+        }
     }
 
     override fun onPause() {
@@ -82,14 +81,10 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun checkForUpdates() {
-        runCatching { updateManager.checkAndOfferUpdate() }.onFailure { Log.e(TAG, "Update check failed", it) }
-    }
+    private fun checkForUpdates() { runCatching { updateManager.checkAndOfferUpdate() }.onFailure { Log.e(TAG, "Update check failed", it) } }
 
     private fun requestEnginePermissions() {
-        if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
-        }
+        if (android.os.Build.VERSION.SDK_INT >= 33 && ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
         requestVpnConsentIfNeeded()
         requestBatteryOptimizationExemptionIfNeeded()
     }
@@ -97,9 +92,7 @@ class MainActivity : ComponentActivity() {
     private fun requestBatteryOptimizationExemptionIfNeeded() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             val pm = getSystemService(android.os.PowerManager::class.java)
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName) && !isFinishing && !isDestroyed) runCatching {
-                startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") })
-            }
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName) && !isFinishing && !isDestroyed) runCatching { startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") }) }
         }
     }
 
