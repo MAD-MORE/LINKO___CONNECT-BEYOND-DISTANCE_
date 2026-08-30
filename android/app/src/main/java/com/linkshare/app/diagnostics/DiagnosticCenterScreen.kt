@@ -187,7 +187,18 @@ private fun UpdateStatusCard(
                     Spacer(Modifier.size(8.dp))
                     Column {
                         Text("UPDATE STATUS", style = MaterialTheme.typography.titleMedium)
-                        Text(state.statusMessage.ifBlank { "UPDATE CHECK READY" }, style = MaterialTheme.typography.labelSmall)
+                        AnimatedContent(targetState = state.status, label = "update-stage") { status ->
+                            Text(
+                                when (status) {
+                                    LinkoUpdateManager.UpdateStatus.Downloading -> "DOWNLOADING"
+                                    LinkoUpdateManager.UpdateStatus.Verifying -> "VERIFYING"
+                                    LinkoUpdateManager.UpdateStatus.Installing -> "INSTALLING"
+                                    LinkoUpdateManager.UpdateStatus.Installed -> "UPDATED"
+                                    else -> state.statusMessage.ifBlank { "UPDATE CHECK READY" }
+                                },
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
                     }
                 }
                 IconButton(onClick = onCheck, enabled = !active) { Icon(Icons.Default.Refresh, contentDescription = "Check for updates") }
