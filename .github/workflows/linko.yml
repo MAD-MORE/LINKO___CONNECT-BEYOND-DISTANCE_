@@ -69,15 +69,50 @@ jobs:
         working-directory: .
         env:
           KEYSTORE_B64: ${{ secrets.LINKO_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LINKO_KEY_ALIAS || 'linko' }}
+          KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           test -n "$KEYSTORE_B64" || { echo "LINKO_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > android/linko-dev.keystore
+          test -n "$KEYSTORE_PASSWORD" || { echo "LINKO_KEYSTORE_PASSWORD is required for in-place updates"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "LINKO_KEY_PASSWORD is required for in-place updates"; exit 1; }
+
+          raw_keystore="$RUNNER_TEMP/linko-keystore.raw"
+          normalized_keystore="$RUNNER_TEMP/linko-keystore.jks"
+          printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 --decode > "$raw_keystore"
+
+          if keytool -list -storetype JKS -keystore "$raw_keystore" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+            cp "$raw_keystore" "$normalized_keystore"
+            echo "LINKO signing key validated as JKS."
+          elif keytool -list -storetype PKCS12 -keystore "$raw_keystore" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+            echo "LINKO signing secret is PKCS12; normalizing it to JKS without changing the signing identity."
+            keytool -importkeystore \
+              -noprompt \
+              -srckeystore "$raw_keystore" \
+              -srcstoretype PKCS12 \
+              -srcstorepass "$KEYSTORE_PASSWORD" \
+              -srcalias "$KEY_ALIAS" \
+              -srckeypass "$KEY_PASSWORD" \
+              -destkeystore "$normalized_keystore" \
+              -deststoretype JKS \
+              -deststorepass "$KEYSTORE_PASSWORD" \
+              -destalias "$KEY_ALIAS" \
+              -destkeypass "$KEY_PASSWORD"
+          else
+            echo "LINKO_KEYSTORE_BASE64 is not a readable JKS or PKCS12 keystore with the configured password."
+            exit 1
+          fi
+
+          keytool -list -storetype JKS -keystore "$normalized_keystore" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          cp "$normalized_keystore" android/linko-dev.keystore
+          echo "Stable LINKO signing identity validated: alias=$KEY_ALIAS, type=JKS."
       - name: Build signed update APK
         if: github.event_name != 'pull_request'
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon -PLINKO_VERSION_CODE=${{ steps.build_number.outputs.version_code }} -PLINKO_VERSION_NAME=${{ steps.build_number.outputs.version_name }}
         env:
           LINKO_KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
-          LINKO_KEY_ALIAS: linko
+          LINKO_KEY_ALIAS: ${{ secrets.LINKO_KEY_ALIAS || 'linko' }}
           LINKO_KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
