@@ -70,15 +70,15 @@ jobs:
         shell: bash
         working-directory: .
         run: |
-          test -n "${{ secrets.LINKO_DEV_KEYSTORE_BASE64 }}" || { echo "LINKO_DEV_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
-          echo "${{ secrets.LINKO_DEV_KEYSTORE_BASE64 }}" | base64 --decode > android/linko-dev.keystore
+          test -n "${{ secrets.LINKO_KEYSTORE_BASE64 }}" || { echo "LINKO_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
+          echo "${{ secrets.LINKO_KEYSTORE_BASE64 }}" | base64 --decode > android/linko-dev.keystore
 
       - name: Build signed update APK
         if: github.event_name != 'pull_request'
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
         env:
           LINKO_KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
-          LINKO_KEY_ALIAS: ${{ secrets.LINKO_KEY_ALIAS }}
+          LINKO_KEY_ALIAS: linko
           LINKO_KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
