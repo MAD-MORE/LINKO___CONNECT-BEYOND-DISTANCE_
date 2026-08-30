@@ -38,6 +38,7 @@ class LinkoUpdateManager(private val context: Context) {
     private var progressJob: Job? = null
     private var receiver: BroadcastReceiver? = null
     private var activeDownloadId = -1L
+    private var completionHandledDownloadId = -1L
     private var expectedInstallVersionCode: Int? = null
     private var latestRelease: ReleaseInfo? = null
     private val cache = appContext.getSharedPreferences(CACHE_NAME, Context.MODE_PRIVATE)
@@ -234,7 +235,8 @@ class LinkoUpdateManager(private val context: Context) {
                 if (id == expectedIdHolder[0] && id >= 0L) handleDownloadComplete(manager, id, release)
             }
         }
-        ContextCompat.registerReceiver(appContext, receiver!!, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(appContext, receiver!!, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
+        completionHandledDownloadId = -1L
         activeDownloadId = runCatching { manager.enqueue(request) }.getOrElse {
             unregisterReceiver()
             updateState(status = UpdateStatus.Error, statusMessage = "UPDATE DOWNLOAD FAILED", errorMessage = "Could not start the update download.")
@@ -262,8 +264,8 @@ class LinkoUpdateManager(private val context: Context) {
     }
 
     private fun handleDownloadComplete(manager: DownloadManager, id: Long, release: ReleaseInfo) {
-        if (id != activeDownloadId) return
-        progressJob?.cancel()
+        if (id != activeDownloadId || id == completionHandledDownloadId) return
+        completionHandledDownloadId = id
         val result = queryDownload(manager, id)
         if (result == null || result.status != DownloadManager.STATUS_SUCCESSFUL) {
             activeDownloadId = -1L
@@ -280,7 +282,6 @@ class LinkoUpdateManager(private val context: Context) {
         }
         updateState(status = UpdateStatus.DownloadComplete, downloadedBytes = result.downloaded, totalBytes = result.total, progressPercent = 100, statusMessage = "UPDATE RECEIVED")
         scope.launch {
-            delay(200L)
             updateState(status = UpdateStatus.Verifying, statusMessage = "VERIFYING LINKO PACKAGE")
             val error = withContext(Dispatchers.IO) { validateApk(uri, release) }
             if (error != null) {
