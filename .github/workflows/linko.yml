@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: linko-${{ github.ref }}
@@ -53,6 +53,8 @@ jobs:
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
+          LINKO_VERSION_CODE: ${{ 1000 + github.run_number }}
+          LINKO_VERSION_NAME: 0.1.${{ github.run_number }}
 
       - name: Upload debug APK
         if: success()
@@ -62,3 +64,38 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Prepare stable development signing key
+        if: github.event_name != 'pull_request'
+        shell: bash
+        working-directory: .
+        run: |
+          test -n "${{ secrets.LINKO_DEV_KEYSTORE_BASE64 }}" || { echo "LINKO_DEV_KEYSTORE_BASE64 is required for in-place updates"; exit 1; }
+          echo "${{ secrets.LINKO_DEV_KEYSTORE_BASE64 }}" | base64 --decode > android/linko-dev.keystore
+
+      - name: Build signed update APK
+        if: github.event_name != 'pull_request'
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
+        env:
+          LINKO_KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
+          LINKO_KEY_ALIAS: ${{ secrets.LINKO_KEY_ALIAS }}
+          LINKO_KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
+          LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
+          LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
+          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
+          LINKO_VERSION_CODE: ${{ 1000 + github.run_number }}
+          LINKO_VERSION_NAME: 0.1.${{ github.run_number }}
+
+      - name: Publish latest LINKO development release
+        if: github.event_name != 'pull_request'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ 1000 + github.run_number }}
+          VERSION_NAME: 0.1.${{ github.run_number }}
+        run: |
+          gh release create "dev-build-${VERSION_CODE}" \
+            android/app/build/outputs/apk/release/app-release.apk \
+            --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" \
+            --notes "Automatic development build from commit ${GITHUB_SHA}. This release is consumed by the LINKO in-app updater." \
+            --latest
