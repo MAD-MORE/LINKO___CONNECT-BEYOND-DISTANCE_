@@ -86,9 +86,11 @@ class LinkShareVpnService : VpnService() {
             ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
                 while (running.get()) {
                     try {
-                        val packet = transport?.receive(RECEIVE_TIMEOUT_MS) ?: continue
-                        if (packet.size <= MAX_IP_PACKET && router.parse(packet) != null) {
-                            output.write(packet)
+                        val received = transport?.receive(RECEIVE_TIMEOUT_MS) ?: continue
+                        if (received.type != EncryptedDatagramTunnel.PacketType.DATA) continue
+                        val payload = received.payload
+                        if (payload.isNotEmpty() && payload.size <= MAX_IP_PACKET && router.parse(payload) != null) {
+                            output.write(payload)
                             output.flush()
                         }
                     } catch (_: SocketTimeoutException) {
