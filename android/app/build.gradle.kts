@@ -15,8 +15,8 @@ android {
         applicationId = "com.linkshare.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = providers.gradleProperty("LINKO_VERSION_CODE").map(String::toInt).orElse(1).get()
+        versionName = providers.gradleProperty("LINKO_VERSION_NAME").orElse("1.0.0").get()
     }
 
     buildFeatures {
