@@ -19,6 +19,15 @@ android {
         versionName = providers.gradleProperty("LINKO_VERSION_NAME").orElse("1.0.0").get()
     }
 
+    signingConfigs {
+        create("linkoDev") {
+            storeFile = rootProject.file("linko-dev.keystore")
+            storePassword = System.getenv("LINKO_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("LINKO_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("LINKO_KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -34,6 +43,7 @@ android {
             buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
         getByName("release") {
+            signingConfig = signingConfigs.getByName("linkoDev")
             buildConfigField("String", "LINKO_CONTROL_PLANE_URL", "\"${configuredControlPlane.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
             buildConfigField("String", "LINKO_SUPABASE_URL", "\"${configuredSupabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
             buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
