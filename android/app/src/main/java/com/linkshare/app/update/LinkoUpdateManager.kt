@@ -227,25 +227,33 @@ class LinkoUpdateManager(private val context: Context) {
         progressJob?.cancel()
         val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val request = DownloadManager.Request(Uri.parse(release.apkUrl)).setTitle("LINKO ${release.versionName}").setDescription("Downloading LINKO update…").setMimeType(APK_MIME).setAllowedOverMetered(true).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE).setDestinationInExternalFilesDir(appContext, Environment.DIRECTORY_DOWNLOADS, "LINKO-${release.versionCode}.apk")
-        activeDownloadId = runCatching { manager.enqueue(request) }.getOrElse {
-            updateState(status = UpdateStatus.Error, statusMessage = "UPDATE DOWNLOAD FAILED", errorMessage = "Could not start the update download.")
-            return
-        }
-        updateState(status = UpdateStatus.Downloading, latestVersionCode = release.versionCode, latestVersionName = release.versionName, downloadedBytes = 0, totalBytes = 0, progressPercent = 0, statusMessage = "DOWNLOADING LINKO UPDATE", errorMessage = null, downloadId = activeDownloadId, usingCachedData = false)
-        val expectedId = activeDownloadId
+        val expectedIdHolder = longArrayOf(-1L)
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
-                if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) == expectedId) handleDownloadComplete(manager, expectedId, release)
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == expectedIdHolder[0] && id >= 0L) handleDownloadComplete(manager, id, release)
             }
         }
         ContextCompat.registerReceiver(appContext, receiver!!, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_NOT_EXPORTED)
+        activeDownloadId = runCatching { manager.enqueue(request) }.getOrElse {
+            unregisterReceiver()
+            updateState(status = UpdateStatus.Error, statusMessage = "UPDATE DOWNLOAD FAILED", errorMessage = "Could not start the update download.")
+            return
+        }
+        expectedIdHolder[0] = activeDownloadId
+        updateState(status = UpdateStatus.Downloading, latestVersionCode = release.versionCode, latestVersionName = release.versionName, downloadedBytes = 0, totalBytes = 0, progressPercent = 0, statusMessage = "DOWNLOADING LINKO UPDATE", errorMessage = null, downloadId = activeDownloadId, usingCachedData = false)
+        val expectedId = activeDownloadId
         progressJob = scope.launch(Dispatchers.IO) {
             while (isActive && activeDownloadId == expectedId) {
                 val snapshot = queryDownload(manager, expectedId)
-                withContext(Dispatchers.Main) {
-                    if (snapshot != null && activeDownloadId == expectedId && _state.value.status == UpdateStatus.Downloading) {
-                        updateState(downloadedBytes = snapshot.downloaded, totalBytes = snapshot.total, progressPercent = snapshot.percent)
-                        if (snapshot.status == DownloadManager.STATUS_FAILED) handleDownloadComplete(manager, expectedId, release)
+                if (snapshot != null) {
+                    withContext(Dispatchers.Main) {
+                        if (activeDownloadId == expectedId && _state.value.status == UpdateStatus.Downloading) {
+                            updateState(downloadedBytes = snapshot.downloaded, totalBytes = snapshot.total, progressPercent = snapshot.percent)
+                            when (snapshot.status) {
+                                DownloadManager.STATUS_FAILED, DownloadManager.STATUS_SUCCESSFUL -> handleDownloadComplete(manager, expectedId, release)
+                            }
+                        }
                     }
                 }
                 delay(250L)
@@ -314,9 +322,7 @@ class LinkoUpdateManager(private val context: Context) {
         val installerFile = File(appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "LINKO-${expectedInstallVersionCode ?: BuildConfig.VERSION_CODE}-installer.apk")
         val installerUri = runCatching {
             installerFile.parentFile?.mkdirs()
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                installerFile.outputStream().use { output -> input.copyTo(output) }
-            } ?: throw IllegalStateException("The downloaded LINKO APK could not be read for installation.")
+            appContext.contentResolver.openInputStream(uri)?.use { input -> installerFile.outputStream().use { output -> input.copyTo(output) } } ?: throw IllegalStateException("The downloaded LINKO APK could not be read for installation.")
             FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", installerFile)
         }.getOrElse { error ->
             updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION PREPARATION FAILED", errorMessage = error.message ?: "The verified LINKO APK could not be prepared for Android's installer.")
