@@ -12,20 +12,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
- * Standalone diagnostics UI. It intentionally does not modify existing LINKO
- * connection screens or networking behavior; production adapters can feed
- * DiagnosticResult values into this screen incrementally.
+ * Diagnostic center UI backed by the real diagnostic controller.
+ * The existing callback is retained for compatibility, while the ViewModel
+ * now executes the real device probes when the button is pressed.
  */
 @Composable
 fun DiagnosticCenterScreen(
@@ -33,7 +33,11 @@ fun DiagnosticCenterScreen(
     onRunDiagnostics: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val overall = LinkoDiagnosticCenter.reduce(results)
+    val viewModel: DiagnosticCenterViewModel = viewModel()
+    val liveResults by viewModel.results.collectAsStateWithLifecycle()
+    val running by viewModel.running.collectAsStateWithLifecycle()
+    val displayedResults = liveResults.ifEmpty { results }
+    val overall = LinkoDiagnosticCenter.reduce(displayedResults)
 
     Column(
         modifier = modifier.fillMaxSize().padding(20.dp),
@@ -46,7 +50,7 @@ fun DiagnosticCenterScreen(
         Spacer(Modifier.height(20.dp))
 
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(results, key = { it.name }) { result ->
+            items(displayedResults, key = { it.name }) { result ->
                 DiagnosticRow(result)
             }
         }
@@ -61,8 +65,19 @@ fun DiagnosticCenterScreen(
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(Modifier.height(10.dp))
-        Button(onClick = onRunDiagnostics, modifier = Modifier.fillMaxWidth()) {
-            Text("RUN DIAGNOSTICS")
+        Button(
+            onClick = {
+                onRunDiagnostics()
+                viewModel.runDiagnostics()
+            },
+            enabled = !running,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (running) {
+                CircularProgressIndicator(strokeWidth = 2.dp)
+            } else {
+                Text("RUN DIAGNOSTICS")
+            }
         }
     }
 }
