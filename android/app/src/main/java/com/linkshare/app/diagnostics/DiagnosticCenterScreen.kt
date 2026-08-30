@@ -1,5 +1,10 @@
 package com.linkshare.app.diagnostics
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,11 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-/** LINKO Diagnostic Center with an explicit build marker for update testing. */
+/** LINKO Diagnostic Center with a live diagnostic network backdrop for update testing. */
 @Composable
 fun DiagnosticCenterScreen(
     results: List<DiagnosticResult>,
@@ -38,16 +45,57 @@ fun DiagnosticCenterScreen(
     val completedChecks by viewModel.completedChecks.collectAsStateWithLifecycle()
     val currentCheck by viewModel.currentCheck.collectAsStateWithLifecycle()
     val complete by viewModel.complete.collectAsStateWithLifecycle()
+    val pulseTransition = rememberInfiniteTransition(label = "diagnostic-network")
+    val pulse by pulseTransition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1800), RepeatMode.Reverse),
+        label = "network-pulse"
+    )
 
     val displayedResults = liveResults.ifEmpty { results }
     val overall = LinkoDiagnosticCenter.reduce(displayedResults)
     val progress = (completedChecks.toFloat() / DiagnosticCenterViewModel.TOTAL_CHECKS).coerceIn(0f, 1f)
     val passed = displayedResults.count { it.status == DiagnosticStatus.PASS }
     val failed = displayedResults.count { it.status == DiagnosticStatus.FAIL }
+    val networkColor = MaterialTheme.colorScheme.primary
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .drawBehind {
+                val nodes = listOf(
+                    0.12f to 0.14f,
+                    0.50f to 0.08f,
+                    0.88f to 0.16f,
+                    0.20f to 0.42f,
+                    0.78f to 0.48f,
+                    0.48f to 0.78f
+                )
+                val points = nodes.map { (x, y) -> androidx.compose.ui.geometry.Offset(size.width * x, size.height * y) }
+                val links = listOf(0 to 1, 1 to 2, 0 to 3, 1 to 4, 2 to 4, 3 to 5, 4 to 5)
+                links.forEach { (a, b) ->
+                    drawLine(
+                        color = networkColor.copy(alpha = 0.08f * pulse),
+                        start = points[a],
+                        end = points[b],
+                        strokeWidth = 2f
+                    )
+                }
+                points.forEachIndexed { index, point ->
+                    drawCircle(
+                        color = networkColor.copy(alpha = 0.08f + 0.07f * pulse),
+                        radius = if (index == 5) 14f else 9f,
+                        center = point
+                    )
+                    drawCircle(
+                        color = networkColor.copy(alpha = 0.20f * pulse),
+                        radius = if (index == 5) 22f else 15f,
+                        center = point,
+                        style = Stroke(width = 2f)
+                    )
+                }
+            }
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.Top
@@ -56,7 +104,7 @@ fun DiagnosticCenterScreen(
         Spacer(Modifier.height(6.dp))
         Text("LINKO DIAGNOSTIC CENTER", style = MaterialTheme.typography.headlineSmall)
         Text("REAL SYSTEM VERIFICATION", style = MaterialTheme.typography.labelMedium)
-        Text("UPDATE TEST • BUILD 1261", style = MaterialTheme.typography.labelSmall)
+        Text("UPDATE TEST • NETWORK VISUAL", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(16.dp))
 
         Card(modifier = Modifier.fillMaxWidth()) {
