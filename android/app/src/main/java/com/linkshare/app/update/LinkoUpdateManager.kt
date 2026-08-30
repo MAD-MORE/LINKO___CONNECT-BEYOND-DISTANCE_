@@ -123,7 +123,7 @@ class LinkoUpdateManager(private val context: Context) {
     }
 
     private suspend fun discoverLatestRelease(): UpdateDiscoveryResult = try {
-        val releaseResponse = getText(RELEASES_API, "latest release")
+        val releaseResponse = getText(RELEASES_API, "latest release", GITHUB_JSON_ACCEPT)
         if (releaseResponse.code !in 200..299) {
             return UpdateDiscoveryResult.HttpError("latest release", releaseResponse.code, releaseResponse.errorMessage())
         }
@@ -139,7 +139,8 @@ class LinkoUpdateManager(private val context: Context) {
         if (!manifestUrl.startsWith("https://")) {
             return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
         }
-        val manifestResponse = getText(manifestUrl, "update manifest")
+        val manifestAccept = if (manifestAsset.apiUrl != null && manifestUrl == manifestAsset.apiUrl) GITHUB_ASSET_ACCEPT else GITHUB_JSON_ACCEPT
+        val manifestResponse = getText(manifestUrl, "update manifest", manifestAccept)
         if (manifestResponse.code !in 200..299) {
             return UpdateDiscoveryResult.HttpError("update manifest", manifestResponse.code, manifestResponse.errorMessage())
         }
@@ -174,11 +175,11 @@ class LinkoUpdateManager(private val context: Context) {
         UpdateDiscoveryResult.NetworkError("latest release", t.safeMessage())
     }
 
-    private fun getText(url: String, stage: String): HttpResponse {
+    private fun getText(url: String, stage: String, accept: String): HttpResponse {
         if (!url.startsWith("https://")) return HttpResponse(400, "", "HTTPS is required for $stage.")
         var current = url
         repeat(MAX_REDIRECTS + 1) { hop ->
-            val connection = runCatching { openConnection(current) }.getOrElse {
+            val connection = runCatching { openConnection(current, accept) }.getOrElse {
                 throw UpdateNetworkException(stage, it.safeMessage())
             }
             try {
@@ -199,13 +200,13 @@ class LinkoUpdateManager(private val context: Context) {
         return HttpResponse(599, "", "Unable to resolve $stage.")
     }
 
-    private fun openConnection(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun openConnection(url: String, accept: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
         connectTimeout = CONNECT_TIMEOUT_MS
         readTimeout = READ_TIMEOUT_MS
         useCaches = false
         instanceFollowRedirects = false
-        setRequestProperty("Accept", "application/vnd.github+json")
+        setRequestProperty("Accept", accept)
         setRequestProperty("User-Agent", "LINKO-Updater")
         setRequestProperty("Cache-Control", "no-cache")
         setRequestProperty("Pragma", "no-cache")
@@ -509,6 +510,8 @@ class LinkoUpdateManager(private val context: Context) {
         private const val APK_MIME = "application/vnd.android.package-archive"
         private const val UPDATE_MANIFEST_NAME = "linko-update.json"
         private const val RELEASES_API = "https://api.github.com/repos/MAD-MORE/LINKO___CONNECT-BEYOND-DISTANCE_/releases/latest"
+        private const val GITHUB_JSON_ACCEPT = "application/vnd.github+json"
+        private const val GITHUB_ASSET_ACCEPT = "application/octet-stream"
         private const val SUPPORTED_SCHEMA = 1
         private const val CONNECT_TIMEOUT_MS = 8_000
         private const val READ_TIMEOUT_MS = 8_000
