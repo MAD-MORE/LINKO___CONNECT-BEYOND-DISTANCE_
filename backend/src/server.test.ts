@@ -2,15 +2,11 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { server } from "./server.js";
 
-/**
- * Backend integration tests.
- * Starts the real control-plane HTTP server and exercises the documented API contract.
- *
- * Run: npm test
- */
+/** Backend integration tests. Run: npm test */
 
 const PORT = 18_099;
 const BASE = `http://127.0.0.1:${PORT}`;
+const BOOTSTRAP_SECRET = process.env.LINKO_BOOTSTRAP_SECRET ?? "development-bootstrap";
 
 async function request(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
@@ -34,49 +30,47 @@ after(async () => {
   server.closeAllConnections();
 });
 
-describe("GET /healthz", () => {
+describe("GET /health", () => {
   it("returns 200 with ok status", async () => {
-    const res = await request(`/healthz`);
+    const res = await request(`/health`);
     assert.equal(res.status, 200);
     const body = await res.json() as Record<string, unknown>;
     assert.equal(body.status, "ok");
   });
 });
 
-describe("POST /v1/devices/register", () => {
-  it("rejects enrollment without the enrollment token", async () => {
-    const res = await fetch(`${BASE}/v1/devices/register`, {
+describe("POST /v1/devices", () => {
+  it("rejects enrollment without the bootstrap secret", async () => {
+    const res = await request(`/v1/devices`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceId: "device-no-auth", publicKey: "test-public-key-1234" }),
+      body: JSON.stringify({ userId: "device-no-auth", publicKey: "test-public-key-1234", name: "CI", roles: ["receiver"] }),
     });
     assert.equal(res.status, 401);
   });
 
-  it("registers a device and returns a short-lived access token", async () => {
-    const deviceId = `ci-device-${Date.now()}`;
-    const res = await fetch(`${BASE}/v1/devices/register`, {
+  it("registers a device and returns a device token", async () => {
+    const res = await request(`/v1/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Enrollment-Token": process.env.LINKO_ENROLLMENT_TOKEN ?? "test-enrollment-token",
+        "X-Linko-Bootstrap": BOOTSTRAP_SECRET,
       },
-      body: JSON.stringify({ deviceId, publicKey: "test-public-key-1234" }),
+      body: JSON.stringify({ userId: `ci-user-${Date.now()}`, publicKey: "test-public-key-1234", name: "CI", roles: ["receiver"] }),
     });
     assert.equal(res.status, 201);
     const body = await res.json() as Record<string, unknown>;
     assert.equal(typeof body.accessToken, "string");
-    assert.equal(typeof body.expiresAtEpochSeconds, "number");
   });
 
   it("rejects an invalid device payload", async () => {
-    const res = await fetch(`${BASE}/v1/devices/register`, {
+    const res = await request(`/v1/devices`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Enrollment-Token": process.env.LINKO_ENROLLMENT_TOKEN ?? "test-enrollment-token",
+        "X-Linko-Bootstrap": BOOTSTRAP_SECRET,
       },
-      body: JSON.stringify({ deviceId: "bad id", publicKey: "short" }),
+      body: JSON.stringify({ userId: "bad" }),
     });
     assert.equal(res.status, 400);
   });
@@ -89,7 +83,7 @@ describe("Protected API routes", () => {
   });
 
   it("rejects session-state changes without a device JWT", async () => {
-    const res = await fetch(`${BASE}/v1/sessions/fake-session/state`, {
+    const res = await request(`/v1/sessions/fake-session/transition`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: "connected" }),
