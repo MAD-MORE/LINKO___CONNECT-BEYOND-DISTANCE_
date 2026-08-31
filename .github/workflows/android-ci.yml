@@ -202,7 +202,6 @@ jobs:
   backend:
     name: Backend Build, Test & Audit
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -231,7 +230,6 @@ jobs:
   relay:
     name: Relay Build, Test & Container
     needs: changes
-    if: needs.changes.outputs.relay == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
