@@ -254,24 +254,28 @@ describe("LINKO Zero-Knowledge Data-Plane Relay Test Suite", () => {
     clientSock2.close();
   });
 
-  test("6. Session removal on Type 4 (Close) packet", async () => {
+  test("6. Session removal on Type 5 (Close) packet", async () => {
     const sessionId = "d4e5f6a7-b8c9-0123-def1-234567890123";
     const keyHash = createHash("sha256").update(randomBytes(32)).digest("hex");
 
     const sock = createSocket("udp4");
-    const initPacket = buildEncryptedDatagram({ sessionId, keyHash, role: 1, ciphertextWithTag: randomBytes(24) });
-    await new Promise<void>((res) => sock.send(initPacket, TEST_UDP_PORT, "127.0.0.1", () => res()));
-    await new Promise((r) => setTimeout(r, 50));
 
-    assert.ok(relay.registry.getById(sessionId) !== null, "Session should exist");
+    try {
+      const initPacket = buildEncryptedDatagram({ sessionId, keyHash, role: 1, ciphertextWithTag: randomBytes(24) });
+      await new Promise<void>((res) => sock.send(initPacket, TEST_UDP_PORT, "127.0.0.1", () => res()));
+      await new Promise((r) => setTimeout(r, 50));
 
-    // Send Close datagram
-    const closePacket = buildEncryptedDatagram({ sessionId, keyHash, role: 1, type: 4, ciphertextWithTag: randomBytes(24) });
-    await new Promise<void>((res) => sock.send(closePacket, TEST_UDP_PORT, "127.0.0.1", () => res()));
-    await new Promise((r) => setTimeout(r, 50));
+      assert.ok(relay.registry.getById(sessionId) !== null, "Session should exist");
 
-    assert.equal(relay.registry.getById(sessionId), null, "Session should be purged on Close datagram");
-    sock.close();
+      // Send Close datagram. LINKO protocol defines Type 5 as CLOSE.
+      const closePacket = buildEncryptedDatagram({ sessionId, keyHash, role: 1, type: 5, ciphertextWithTag: randomBytes(24) });
+      await new Promise<void>((res) => sock.send(closePacket, TEST_UDP_PORT, "127.0.0.1", () => res()));
+      await new Promise((r) => setTimeout(r, 50));
+
+      assert.equal(relay.registry.getById(sessionId), null, "Session should be purged on Close datagram");
+    } finally {
+      sock.close();
+    }
   });
 
   test("7. SessionRegistry unit tests: TTL cleanup and key indexing", () => {
