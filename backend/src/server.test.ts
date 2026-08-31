@@ -13,6 +13,12 @@ const PORT = 18_099;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ENROLLMENT_TOKEN = "test-enrollment-token";
 
+async function request(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("connection", "close");
+  return fetch(`${BASE}${path}`, { ...init, headers });
+}
+
 let server: ReturnType<typeof createServer>["server"];
 let controlPlane: ReturnType<typeof createServer>["controlPlane"];
 
@@ -35,7 +41,7 @@ after(async () => {
 
 describe("GET /healthz", () => {
   it("returns 200 with ok status", async () => {
-    const res = await fetch(`${BASE}/healthz`);
+    const res = await request(`/healthz`);
     assert.equal(res.status, 200);
     const body = await res.json() as Record<string, unknown>;
     assert.equal(body.status, "ok");
@@ -83,7 +89,7 @@ describe("POST /v1/devices/register", () => {
 
 describe("Protected API routes", () => {
   it("rejects friends lookup without a device JWT", async () => {
-    const res = await fetch(`${BASE}/v1/friends`);
+    const res = await request(`/v1/friends`);
     assert.equal(res.status, 401);
   });
 
@@ -97,7 +103,7 @@ describe("Protected API routes", () => {
   });
 
   it("rejects unknown API routes without authentication", async () => {
-    const res = await fetch(`${BASE}/v1/unknown-endpoint`);
+    const res = await request(`/v1/unknown-endpoint`);
     assert.equal(res.status, 401);
   });
 });
