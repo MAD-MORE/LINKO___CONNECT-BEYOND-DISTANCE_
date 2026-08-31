@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.diagnostics.LinkoDiagnosticTelemetry
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.realtime.PostgresAction
@@ -43,7 +44,10 @@ object LinkoRealtimeManager {
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LinkoRealtimeEvent> = _events.asSharedFlow()
     private val presenceSnapshot = ConcurrentHashMap<String, LinkoPresence>()
+    private val diagnosticChannels = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var foreground = false
+    @Volatile private var diagnosticConnected = false
+    @Volatile private var diagnosticError: String? = null
     private var client: SupabaseClient? = null
     private var friendChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
     private var sessionChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
@@ -53,11 +57,18 @@ object LinkoRealtimeManager {
 
     fun currentPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
     fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
+    fun diagnosticTransportConnected(): Boolean = diagnosticConnected
+    fun diagnosticTransportError(): String? = diagnosticError
+    fun diagnosticChannelNames(): List<String> = diagnosticChannels.toList().sorted()
 
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
         appContext = context.applicationContext
         auth = LinkoAuth(appContext!!)
+        diagnosticConnected = false
+        diagnosticError = null
+        diagnosticChannels.clear()
+        publishDiagnosticState()
         runCatching { ensureNotificationChannel() }
         val supabase = createSupabaseClient(
             supabaseUrl = com.linkshare.app.BuildConfig.LINKO_SUPABASE_URL,
@@ -74,8 +85,14 @@ object LinkoRealtimeManager {
                 subscribeFriendEvents(supabase)
                 subscribeSessionEvents(supabase)
                 subscribePresence(supabase)
+                diagnosticConnected = true
+                diagnosticError = null
+                publishDiagnosticState()
             }.onFailure {
-                _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "realtime_start_failed"))
+                diagnosticConnected = false
+                diagnosticError = it.message ?: "realtime_start_failed"
+                publishDiagnosticState()
+                _events.tryEmit(LinkoRealtimeEvent.TransportError(diagnosticError ?: "realtime_start_failed"))
                 started.set(false)
             }
         }
@@ -85,6 +102,10 @@ object LinkoRealtimeManager {
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
+        diagnosticConnected = false
+        diagnosticError = null
+        diagnosticChannels.clear()
+        publishDiagnosticState()
         scope.launch {
             runCatching {
                 val realtime = client?.pluginManager?.getPlugin(Realtime)
@@ -101,15 +122,28 @@ object LinkoRealtimeManager {
         }
     }
 
+    private fun publishDiagnosticState() {
+        LinkoDiagnosticTelemetry.recordRealtime(diagnosticConnected, diagnosticError, diagnosticChannels.toList().sorted())
+    }
+
+    private fun recordRealtimeError(message: String) {
+        diagnosticConnected = false
+        diagnosticError = message
+        publishDiagnosticState()
+        _events.tryEmit(LinkoRealtimeEvent.TransportError(message))
+    }
+
     private suspend fun subscribeFriendEvents(supabase: SupabaseClient) {
         val channel = supabase.channel(FRIEND_CHANNEL)
         friendChannel = channel
         val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") { table = "friend_requests" }
         scope.launch {
             runCatching { flow.collect { action -> handleFriendChange(action) } }
-                .onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "friend_realtime_error")) }
+                .onFailure { recordRealtimeError(it.message ?: "friend_realtime_error") }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        diagnosticChannels += FRIEND_CHANNEL
+        publishDiagnosticState()
     }
 
     private suspend fun subscribeSessionEvents(supabase: SupabaseClient) {
@@ -127,9 +161,11 @@ object LinkoRealtimeManager {
                         notify(LinkoRealtimeEvent.IncomingConnectionRequest(sessionId))
                     }
                 }
-            }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error")) }
+            }.onFailure { recordRealtimeError(it.message ?: "session_realtime_error") }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        diagnosticChannels += SESSION_CHANNEL
+        publishDiagnosticState()
     }
 
     private suspend fun subscribePresence(supabase: SupabaseClient) {
@@ -144,16 +180,18 @@ object LinkoRealtimeManager {
                         _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(presence))
                     }
                 }
-            }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
+            }.onFailure { recordRealtimeError(it.message ?: "presence_realtime_error") }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        diagnosticChannels += PRESENCE_CHANNEL
+        publishDiagnosticState()
         val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
         val deviceId = auth?.currentDeviceId().orEmpty()
         if (!currentUserId.isNullOrBlank()) {
             val ownPresence = LinkoPresence(currentUserId, deviceId, "online", true)
             presenceSnapshot[currentUserId] = ownPresence
             runCatching { channel.track(ownPresence) }
-                .onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_track_failed")) }
+                .onFailure { recordRealtimeError(it.message ?: "presence_track_failed") }
             _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(ownPresence))
         }
     }
