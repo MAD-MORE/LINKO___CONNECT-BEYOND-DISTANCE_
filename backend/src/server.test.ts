@@ -32,15 +32,13 @@ before(async () => {
 });
 
 after(async () => {
-  console.log("Backend test active resources before cleanup:", process.getActiveResourcesInfo());
-  const cleanupDiagnostic = setTimeout(() => console.log("Backend test active resources during cleanup:", process.getActiveResourcesInfo()), 1000);
-  cleanupDiagnostic.unref();
+  const closePromise = new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
   server.closeIdleConnections();
   server.closeAllConnections();
   controlPlane.database.db.close();
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
-  });
+  await closePromise;
 });
 
 describe("GET /healthz", () => {
