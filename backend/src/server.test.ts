@@ -25,11 +25,12 @@ before(async () => {
 });
 
 after(async () => {
+  server.closeIdleConnections();
   server.closeAllConnections();
+  controlPlane.database.db.close();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
-  controlPlane.database.db.close();
 });
 
 describe("GET /healthz", () => {
