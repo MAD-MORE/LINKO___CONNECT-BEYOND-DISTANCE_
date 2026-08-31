@@ -1,6 +1,9 @@
+import { createRequire } from "node:module";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "./server.js";
+
+const require = createRequire(import.meta.url);
+const { createServer } = require("./server.js");
 
 /**
  * Backend integration tests.
