@@ -9,7 +9,12 @@ import com.linkshare.app.model.AppMode
 import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.Friend
-import com.linkshare.app.model.UsageStats
+import com.linkshare.app.model.IncomingRequest
+import com.linkshare.app.network.LinkShareApi
+import com.linkshare.app.network.LinkShareNetworkException
+import com.linkshare.app.provider.LinkShareProviderService
+import com.linkshare.app.tunnel.TunnelCoordinator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,43 +34,39 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
         )
     )
     val uiState: StateFlow<ConnectionUiState> = _uiState.asStateFlow()
+    private var connectionJob: Job? = null
+    private var requestPollJob: Job? = null
 
-    private var usageJob: Job? = null
-
-    fun setMode(mode: AppMode) {
-        _uiState.update { it.copy(mode = mode, eventMessage = null) }
-    }
+    fun setMode(mode: AppMode) = _uiState.update { it.copy(mode = mode, eventMessage = null, failureReason = null) }
 
     fun toggleHostSharing() {
-        val next = !_uiState.value.hostSharingEnabled
-        _uiState.update {
-            it.copy(
-                hostSharingEnabled = next,
-                usageStats = if (next) UsageStats(connectedClients = 1) else UsageStats(),
-                eventMessage = if (next) "Your data is available to approved friends." else "Sharing stopped."
-            )
+        val context = engineContext ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
+        if (_uiState.value.hostSharingEnabled) {
+            LinkoProviderService.stop(context)
+            _uiState.update { it.copy(hostSharingEnabled = false, incomingRequest = null, eventMessage = "Sharing stopped.") }
+        } else {
+            LinkoProviderService.start(context)
+            _uiState.update { it.copy(hostSharingEnabled = true, eventMessage = "Sharing is live and waiting for a secure request.") }
         }
-        if (next) startUsageTicker(hostMode = true) else stopUsageTicker()
     }
 
     fun approveIncomingRequest() {
-        _uiState.update {
-            it.copy(
-                incomingRequest = null,
-                hostSharingEnabled = true,
-                usageStats = it.usageStats.copy(connectedClients = 1),
-                eventMessage = "Kwesi is connected through your phone."
-            )
+        val api = controlPlaneApi ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
+        val request = _uiState.value.incomingRequest ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { api.approveRequest(request.id) }
+                .onSuccess { _uiState.update { it.copy(incomingRequest = null, eventMessage = "Request approved. Preparing the secure tunnel…") } }
+                .onFailure { error -> fail("Approval failed", error.message ?: "Unable to approve request") }
         }
-        startUsageTicker(hostMode = true)
     }
 
     fun denyIncomingRequest() {
-        _uiState.update {
-            it.copy(
-                incomingRequest = null,
-                eventMessage = "Request denied. Nothing was shared."
-            )
+        val api = controlPlaneApi ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
+        val request = _uiState.value.incomingRequest ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { api.denyRequest(request.id) }
+                .onSuccess { _uiState.update { it.copy(incomingRequest = null, eventMessage = "Request declined.") } }
+                .onFailure { error -> fail("Decline failed", error.message ?: "Unable to decline request") }
         }
     }
 
@@ -114,8 +115,6 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
                         eventMessage = "Retrying on weak connection..."
                     )
                 }
-                repository.retryHandshakeOnWeakSignal()
-            }
 
             updateConnectionPhase(ConnectionPhase.Connected) {
                 it.copy(
@@ -139,38 +138,37 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun onVpnPermissionResult(granted: Boolean) {
-        _uiState.update {
-            it.copy(
-                hasVpnPermission = granted,
-                eventMessage = if (granted) "VPN permission granted. LinkShare can protect the tunnel." else "VPN permission is required before connecting."
-            )
-        }
+    fun onVpnPermissionResult(granted: Boolean) = _uiState.update { it.copy(hasVpnPermission = granted, eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting.") }
+
+    private fun fail(label: String, reason: String) {
+        _uiState.update { it.copy(connectionPhase = ConnectionPhase.Failed, failureReason = reason, eventMessage = "$label · $reason") }
     }
 
-    private fun startUsageTicker(hostMode: Boolean) {
-        usageJob?.cancel()
-        usageJob = viewModelScope.launch {
+    private fun readable(error: Throwable): String = when (error) {
+        is LinkoNetworkException -> error.message ?: "Network request failed"
+        else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private fun startRequestPolling(api: LinkoControlPlaneApi) {
+        if (requestPollJob?.isActive == true) return
+        requestPollJob = viewModelScope.launch(Dispatchers.IO) {
             while (true) {
-                delay(1_000)
-                _uiState.update {
-                    val sentStep = if (hostMode) 184_320L else 42_240L
-                    val receivedStep = if (hostMode) 51_200L else 208_896L
-                    it.copy(
-                        usageStats = it.usageStats.copy(
-                            sessionSeconds = it.usageStats.sessionSeconds + 1,
-                            bytesSent = it.usageStats.bytesSent + sentStep,
-                            bytesReceived = it.usageStats.bytesReceived + receivedStep
-                        )
-                    )
+                runCatching { api.getPendingProviderRequests().firstOrNull() }.onSuccess { request ->
+                    if (request != null) _uiState.update { it.copy(incomingRequest = IncomingRequest(request.id, "LINKO user", "L", request.receiverDeviceId, "REMOTE", "NOW")) }
                 }
+                delay(3_000L)
             }
         }
     }
 
-    private fun stopUsageTicker() {
-        usageJob?.cancel()
-        usageJob = null
+    override fun onCleared() { requestPollJob?.cancel(); connectionJob?.cancel(); super.onCleared() }
+
+    companion object {
+        private var engineContext: Context? = null
+        private var controlPlaneApi: LinkoControlPlaneApi? = null
+        private var tunnelCoordinator: TunnelCoordinator? = null
+        fun configure(context: Context, api: LinkoControlPlaneApi, coordinator: TunnelCoordinator) { engineContext = context.applicationContext; controlPlaneApi = api; tunnelCoordinator = coordinator }
+        fun startEnginePolling(viewModel: LinkShareViewModel) { controlPlaneApi?.let(viewModel::startRequestPolling) }
     }
 
     private fun updateConnectionPhase(

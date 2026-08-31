@@ -293,6 +293,7 @@ Important architecture/product decisions should be recorded here or in a dedicat
 | LINKO-008 | SDLC phases are the master development roadmap | Accepted |
 | LINKO-009 | Security and privacy are first-class requirements | Accepted |
 | LINKO-010 | Monetization must not compromise the core product or user trust | Accepted |
+| LINKO-011 | Supabase is the official and permanent LINKO backend control plane | Accepted |
 
 ---
 

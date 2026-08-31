@@ -50,3 +50,21 @@ Thumbs.db
 .DS_Store
 *.swp
 *~
+
+# Secrets & credentials — NEVER COMMIT THESE
+*.jks
+*.keystore
+*.p12
+.env
+.env.local
+.env.production
+backend/.env
+relay/.env
+
+# Node modules
+node_modules/
+backend/node_modules/
+relay/node_modules/
+
+# Relay build output
+relay/dist/

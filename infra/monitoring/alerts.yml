@@ -1,0 +1,61 @@
+groups:
+  - name: linko.backend
+    rules:
+      - alert: BackendDown
+        expr: up{job="linko-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Linko backend is down"
+          description: "Backend has been unreachable for more than 1 minute"
+
+      - alert: HighErrorRate
+        expr: |
+          rate(linko_errors_total[5m]) / rate(linko_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: high
+        annotations:
+          summary: "High error rate on Linko backend"
+          description: "Error rate exceeds 5% over last 5 minutes"
+
+      - alert: SlowResponseTime
+        expr: linko_request_duration_p99_ms > 500
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Slow P99 response time"
+          description: "P99 response time > 500ms for 5 minutes"
+
+  - name: linko.relay
+    rules:
+      - alert: RelayDown
+        expr: up{job="linko-relay"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Linko relay node is down"
+          description: "Relay node {{ $labels.instance }} unreachable"
+
+      - alert: RelayHighSessionLoad
+        expr: linko_relay_active_sessions > 800
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Relay approaching session capacity"
+          description: "Relay node has {{ $value }} active sessions (limit: 1000)"
+
+  - name: linko.database
+    rules:
+      - alert: DatabaseUnreachable
+        expr: linko_database_status{status="unreachable"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Linko database unreachable"
+          description: "Backend cannot reach PostgreSQL"

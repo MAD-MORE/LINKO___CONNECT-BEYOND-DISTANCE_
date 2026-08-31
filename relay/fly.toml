@@ -1,0 +1,64 @@
+# fly.toml — LINKO Data-Plane Relay Node
+# Canonical app: linko-relay
+
+app = "linko-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  UDP_PORT = "7000"
+  PORT = "7001"
+  RELAY_REGION = "iad"
+  BANDWIDTH_LIMIT_BYTES_PER_SESSION = "1073741824"
+  RELAY_UDP_BIND_HOST = "fly-global-services"
+
+# UDP service — Encrypted Data-Plane Relay (Port 7000)
+[[services]]
+  protocol = "udp"
+  internal_port = 7000
+
+  [[services.ports]]
+    port = 7000
+
+# HTTP service — Health Checks & Prometheus Metrics (Port 7001)
+[[services]]
+  protocol = "tcp"
+  internal_port = 7001
+
+  [[services.ports]]
+    port = 7001
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 1000
+    soft_limit = 800
+
+[http_service]
+  internal_port = 7001
+  force_https = false
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

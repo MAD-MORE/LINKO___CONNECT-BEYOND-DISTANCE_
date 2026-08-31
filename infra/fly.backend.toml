@@ -1,0 +1,42 @@
+# fly.toml — Linko Backend Control Plane
+# Deploy: fly deploy -c infra/fly.backend.toml
+
+app = "linkoconnect-beyond-distance"
+primary_region = "iad"
+
+[build]
+  dockerfile = "backend.dockerfile"
+  build_target = "runner"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# Secrets to set via: fly secrets set KEY=value
+# LINKO_DATABASE_URL=postgres://...
+# LINKO_JWT_SECRET=<min-32-char-random>
+# SUPABASE_URL=https://<project>.supabase.co
+# SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+# SUPABASE_SECRET_KEY=sb_secret_...
+# TUNNEL_HOST=linko-relay.fly.dev
+# TUNNEL_PORT=7000
+# FCM_SERVER_KEY=<firebase-server-key>
+# LINKO_ADMIN_SECRET=<admin-token>

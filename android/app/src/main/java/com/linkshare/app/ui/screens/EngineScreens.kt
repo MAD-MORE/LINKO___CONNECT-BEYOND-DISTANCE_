@@ -1,0 +1,167 @@
+package com.linkshare.app.ui.screens
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.auth.LinkoDeviceIdentity
+import com.linkshare.app.network.FriendSearchResult
+import com.linkshare.app.network.LinkoEngineBridge
+import com.linkshare.app.network.LinkoFriendsApiHolder
+import com.linkshare.app.ui.components.*
+import com.linkshare.app.ui.theme.*
+
+@Composable private fun Title(text: String, sub: String) { Column(Modifier.fillMaxWidth()) { Text(text, color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Text(sub, color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono) } }
+@Composable fun HomeEngineScreen(onReceiver:()->Unit,onProvider:()->Unit){Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Text("LINKO ENGINE",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(4.dp));Text("Choose how this device participates",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(28.dp));Ring(Blue,190.dp,idle=true,label="READY");Spacer(Modifier.height(30.dp));LinkoCard{InfoRow("RECEIVER","Use a friend's connection","Request permission from a connected LINKO device",Blue);Spacer(Modifier.height(14.dp));PrimaryButton("CONNECT TO A FRIEND",onReceiver)};Spacer(Modifier.height(12.dp));LinkoCard{InfoRow("PROVIDER","Share your connection","Let a friend request access to this device",Green);Spacer(Modifier.height(14.dp));PrimaryButton("SHARE MY CONNECTION",onProvider,color=Green)}}}
+
+@Composable fun RxSelectFriendScreen(onRequest: () -> Unit) {
+    val api = LinkoFriendsApiHolder.api
+    var friends by remember { mutableStateOf<List<FriendSearchResult>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshTrigger) {
+        loading = true
+        runCatching {
+            val json = api.friends()
+            val a = json.optJSONArray("friends") ?: org.json.JSONArray()
+            friends = buildList {
+                for (i in 0 until a.length()) {
+                    val o = a.optJSONObject(i) ?: continue
+                    add(
+                        FriendSearchResult(
+                            userId = o.optString("user_id"),
+                            linkoId = o.optString("linko_id"),
+                            displayName = o.optString("display_name"),
+                            deviceId = null,
+                            deviceName = null,
+                            isSharing = o.optBoolean("is_sharing", false),
+                            relationshipStatus = "friend",
+                            requestId = null,
+                            username = o.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() }
+                        )
+                    )
+                }
+            }
+            message = null
+        }.onFailure {
+            message = it.message ?: "Unable to load friends"
+        }
+        loading = false
+    }
+
+    var connectingUserId by remember { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Title("Choose a Friend", "Tap a friend to connect to their shared network")
+        Spacer(Modifier.height(16.dp))
+        when {
+            loading && friends.isEmpty() -> {
+                LinkoCard {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Blue, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Loading your friends…", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                    }
+                }
+            }
+            friends.isEmpty() -> {
+                LinkoCard {
+                    Text("NO FRIENDS ADDED YET", color = TextMuted, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(message ?: "Add friends using their LINKO ID first in the Friends tab. After they accept, you can connect directly.", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                }
+            }
+            else -> {
+                friends.forEach { friend ->
+                    val isConnectingThis = connectingUserId == friend.userId
+                    LinkoCard {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = connectingUserId == null) {
+                                    connectingUserId = friend.userId
+                                    LinkoEngineBridge.connectToFriend(friend.userId) { state ->
+                                        if (state != "requesting" && state != "connecting" && state != "connected" && state != "resolving_provider" && state != "provider_ready") {
+                                            message = state
+                                            connectingUserId = null
+                                        }
+                                    }
+                                    onRequest()
+                                }
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(friend.displayName, color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                    friend.username?.let { Text("@$it", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(friend.linkoId, color = Blue, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                                }
+                                if (isConnectingThis) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Green, strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("CONNECTING…", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Text("CONNECT ›", color = if (connectingUserId != null) TextMuted else Green, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        PrimaryButton(
+            label = if (loading) "REFRESHING…" else "REFRESH FRIENDS",
+            onClick = { if (!loading) refreshTrigger++ },
+            outline = true,
+            enabled = !loading,
+            loading = loading
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable fun RxRequestScreen(onCancel:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.weight(1f));Ring(Yellow,180.dp,pulse=true,label="REQUEST");Spacer(Modifier.height(24.dp));Text("Connection Requested",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("Your friend will receive a request and decide whether to share their connection",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.weight(1f));PrimaryButton("CANCEL",{LinkoEngineBridge.disconnect();onCancel()},color=Red,outline=true);Spacer(Modifier.height(24.dp))}
+@Composable fun RxWaitingScreen(onCancel:()->Unit)=RxRequestScreen(onCancel)
+@Composable fun RxApprovedScreen(onConnect:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(20.dp));Title("Request Approved","Your friend accepted the connection");Spacer(Modifier.height(28.dp));Ring(Green,180.dp,label="APPROVED");Spacer(Modifier.weight(1f));PrimaryButton("START CONNECTION",onConnect,color=Green);Spacer(Modifier.height(24.dp))}
+@Composable fun RxConnectingScreen(onSkip:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.weight(1f));Ring(Blue,190.dp,pulse=true,label="LINKING");Spacer(Modifier.height(24.dp));Text("Securing connection",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Text("Finding the safest available path",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.weight(1f));PrimaryButton("CONTINUE",onSkip);Spacer(Modifier.height(24.dp))}
+@Composable fun RxDirectPathScreen(onContinue:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Direct Path","A direct peer path is available");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("PATH","DIRECT","Lowest relay overhead",Green);Spacer(Modifier.height(16.dp));InfoRow("STATUS","SECURE","Session ready",Green)};Spacer(Modifier.weight(1f));PrimaryButton("ENTER CONNECTED SESSION",onContinue,color=Green);Spacer(Modifier.height(24.dp))}
+@Composable fun RxRelayFallbackScreen(onContinue:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Relay Fallback","Direct path unavailable; relay is ready");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("PATH","RELAY","Traffic will use the secure relay",Yellow);Spacer(Modifier.height(16.dp));InfoRow("STATUS","PROTECTED","Tunnel remains encrypted",Green)};Spacer(Modifier.weight(1f));PrimaryButton("CONTINUE",onContinue,color=Yellow);Spacer(Modifier.height(24.dp))}
+@Composable fun ConnectedScreen(onDisconnect:()->Unit,onQuality:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Title("Connected","Internet is moving through your LINKO connection");Spacer(Modifier.height(24.dp));Ring(Green,190.dp,label="ONLINE");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("SESSION","ACTIVE","Encrypted connection established",Green,true);Spacer(Modifier.height(12.dp));InfoRow("PATH","ACTIVE","Connection is stable",Blue)};Spacer(Modifier.weight(1f));PrimaryButton("NETWORK QUALITY",onQuality,outline=true);Spacer(Modifier.height(8.dp));PrimaryButton("DISCONNECT",{LinkoEngineBridge.disconnect();onDisconnect()},color=Red);Spacer(Modifier.height(24.dp))}
+@Composable fun NetworkQualityScreen(onDisconnect:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Network Quality","Live connection health");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("QUALITY","LIVE","Waiting for connection metrics",Green,true)};Spacer(Modifier.weight(1f));PrimaryButton("DISCONNECT",{LinkoEngineBridge.disconnect();onDisconnect()},color=Red);Spacer(Modifier.height(24.dp))}
+@Composable fun UsageScreen(onDisconnect:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Usage","Traffic counters for this session");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("DATA USED","—","Live counters appear during an active session",Blue,true);Spacer(Modifier.height(16.dp));InfoRow("DURATION","—","No active session",TextPrimary)};Spacer(Modifier.weight(1f));PrimaryButton("DISCONNECT",{LinkoEngineBridge.disconnect();onDisconnect()},color=Red);Spacer(Modifier.height(24.dp))}
+@Composable fun SessionDetailsScreen(onDisconnect:()->Unit)=UsageScreen(onDisconnect)
+@Composable fun SessionHistoryScreen(){Column(Modifier.fillMaxSize().padding(16.dp)){Title("Session History","Your real LINKO sessions");Spacer(Modifier.height(20.dp));LinkoCard{Text("NO SESSION HISTORY",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("Completed sessions will appear here after a real connection.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)}}}
+@Composable fun ProviderIncomingScreen(onReview:()->Unit,onReject:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Title("Incoming Request","A LINKO friend wants to use your connection");Spacer(Modifier.height(28.dp));Ring(Yellow,150.dp,label="REQUEST");Spacer(Modifier.height(20.dp));LinkoCard{InfoRow("REQUEST","Pending","Review before allowing access",Yellow)};Spacer(Modifier.weight(1f));PrimaryButton("REVIEW REQUEST",onReview);Spacer(Modifier.height(8.dp));PrimaryButton("DECLINE",onReject,color=Red,outline=true);Spacer(Modifier.height(24.dp))}
+@Composable fun ProviderAuthorizationScreen(onAuthorize:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Authorize Access","Approve this friend's connection request");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("PEER","LINKO FRIEND","Identity verified by the control plane",Green);Spacer(Modifier.height(16.dp));InfoRow("SCOPE","Internet access","You can stop sharing anytime",Blue)};Spacer(Modifier.weight(1f));PrimaryButton("AUTHORIZE",onAuthorize,color=Green);Spacer(Modifier.height(24.dp))}
+@Composable fun ProviderSharingSetupScreen(onStart:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Sharing Setup","Prepare this device to share its connection");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("STATUS","AUTHORIZED","Waiting for the friend to connect",Green)};Spacer(Modifier.weight(1f));PrimaryButton("START SHARING",onStart,color=Green);Spacer(Modifier.height(24.dp))}
+@Composable fun ProviderSharingActiveScreen(onLiveUsage:()->Unit,onStop:()->Unit){Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Title("Sharing Active","Your connection is available to your LINKO friends");Spacer(Modifier.height(24.dp));Ring(Green,180.dp,pulse=true,label="SHARING");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("STATUS","WAITING","Friends request access through LINKO",Green);Spacer(Modifier.height(12.dp));InfoRow("ACCESS","FRIENDS ONLY","Each session still requires your approval",Blue)};Spacer(Modifier.weight(1f));PrimaryButton("LIVE USAGE",onLiveUsage,outline=true);Spacer(Modifier.height(8.dp));PrimaryButton("STOP SHARING",onStop,color=Red);Spacer(Modifier.height(24.dp))}}
+@Composable fun ProviderLiveUsageScreen(onKill:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Live Usage","Current provider traffic");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("PEER","—","Active friend connection",Green);Spacer(Modifier.height(14.dp));InfoRow("DATA","—","Live usage appears during a real session",TextPrimary,true)};Spacer(Modifier.weight(1f));PrimaryButton("STOP CONNECTION",onKill,color=Red);Spacer(Modifier.height(24.dp))}
+@Composable fun ConnectionLostScreen(onReconnect:()->Unit,onHome:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.weight(1f));Ring(Red,170.dp,pulse=true,label="LOST");Spacer(Modifier.height(20.dp));Text("Connection Lost",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Text("The connection was interrupted",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.weight(1f));PrimaryButton("RECONNECT",onReconnect,color=Blue);Spacer(Modifier.height(8.dp));PrimaryButton("HOME",onHome,outline=true);Spacer(Modifier.height(24.dp))}
+@Composable fun ReconnectingScreen(onSkip:()->Unit)=RxConnectingScreen(onSkip)
+@Composable fun NetworkSwitchingScreen(onContinue:()->Unit)=RxConnectingScreen(onContinue)
+@Composable fun SessionExpiredScreen(onNewSession:()->Unit,onHome:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Session Expired","This connection request is no longer valid");Spacer(Modifier.weight(1f));PrimaryButton("START NEW SESSION",onNewSession);Spacer(Modifier.height(8.dp));PrimaryButton("HOME",onHome,outline=true);Spacer(Modifier.height(24.dp))}
+@Composable fun KeyRevokedScreen(onHome:()->Unit)=Column(Modifier.fillMaxSize().padding(16.dp)){Title("Device Session Ended","A new session is required");Spacer(Modifier.height(24.dp));LinkoCard{InfoRow("STATUS","ENDED","The previous session cannot continue",Red,true)};Spacer(Modifier.weight(1f));PrimaryButton("RETURN HOME",onHome);Spacer(Modifier.height(24.dp))}

@@ -1,0 +1,26 @@
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --no-cli
+      - --fingerprint
+      - --lt-cred-mech
+      - --realm=${TURN_REALM}
+      - --user=${TURN_USERNAME}:${TURN_PASSWORD}
+      - --listening-port=${TURN_PORT:-3478}
+      - --tls-listening-port=${TURN_TLS_PORT:-5349}
+      - --min-port=${TURN_MIN_PORT:-49152}
+      - --max-port=${TURN_MAX_PORT:-65535}
+      - --external-ip=${TURN_EXTERNAL_IP}
+      - --stale-nonce
+      - --no-multicast-peers
+      - --no-loopback-peers
+    environment:
+      TURN_REALM: ${TURN_REALM:?set TURN_REALM}
+      TURN_USERNAME: ${TURN_USERNAME:?set TURN_USERNAME}
+      TURN_PASSWORD: ${TURN_PASSWORD:?set TURN_PASSWORD}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:?set TURN_EXTERNAL_IP}
