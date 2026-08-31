@@ -302,7 +302,7 @@ jobs:
   deploy-relay:
     name: Deploy LINKO UDP Relay
     needs: [changes, relay]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.relay == 'true' && needs.relay.result == 'success'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.relay.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
