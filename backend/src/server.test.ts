@@ -24,6 +24,7 @@ let controlPlane: ReturnType<typeof createServer>["controlPlane"];
 
 before(async () => {
   ({ server, controlPlane } = createServer({ enrollmentToken: ENROLLMENT_TOKEN }));
+  server.keepAliveTimeout = 0;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(PORT, "127.0.0.1", () => resolve());
