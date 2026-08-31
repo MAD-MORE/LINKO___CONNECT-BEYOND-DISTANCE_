@@ -218,7 +218,7 @@ jobs:
         run: node --check src/server.js
       - name: Test
         working-directory: backend
-        run: npm test
+        run: timeout 30s npm test
         env:
           NODE_ENV: test
           LINKO_JWT_SECRET: test-secret-minimum-32-bytes-long-ok
