@@ -3,6 +3,7 @@ package com.linkshare.app.network
 import android.content.Context
 import android.content.Intent
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.diagnostics.LinkoDiagnosticTelemetry
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.tunnel.TunnelCoordinator
 import kotlinx.coroutines.CoroutineScope
@@ -128,6 +129,7 @@ object LinkoEngineBridge {
         val normalized = when (state) { "connecting", "reconnecting", "waiting_for_provider" -> LinkoConnectionPhase.Connecting; "authenticating" -> LinkoConnectionPhase.Authenticating; "resolving_provider", "provider_ready", "requesting", "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling; "establishing" -> LinkoConnectionPhase.Establishing; "securing" -> LinkoConnectionPhase.Securing; "routing" -> LinkoConnectionPhase.Routing; "connected" -> LinkoConnectionPhase.Connected; "idle" -> LinkoConnectionPhase.Idle; else -> LinkoConnectionPhase.Failed }
         val message = detail ?: when (state) { "connecting" -> "Connecting…"; "reconnecting" -> "Recovering the connection…"; "waiting_for_provider" -> "Waiting for provider approval…"; "authenticating" -> "Authenticating your LINKO session…"; "resolving_provider" -> "Finding your friend's available device…"; "provider_ready" -> "Provider found. Preparing a secure request…"; "requesting" -> "Waiting for provider approval…"; "signaling" -> "Negotiating the secure session…"; "signaling_retry" -> "Negotiating… retrying"; "establishing" -> "Establishing tunnel…"; "securing" -> "Securing encrypted transport…"; "routing" -> "Routing traffic…"; "connected" -> "Connected · provider confirmed the active session"; else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() } }
         _connection.update { it.copy(phase = normalized, detail = message, error = if (normalized == LinkoConnectionPhase.Failed) message else null) }
+        LinkoDiagnosticTelemetry.recordEngine(normalized.name, message, if (normalized == LinkoConnectionPhase.Failed) message else null)
     }
 }
 
