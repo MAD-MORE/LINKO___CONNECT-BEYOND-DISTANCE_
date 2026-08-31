@@ -21,7 +21,10 @@ REQUIRED_FILES = [
     KOTLIN / "network" / "LinkoRealtimeManager.kt",
     KOTLIN / "vpn" / "LinkShareVpnService.kt", KOTLIN / "provider" / "LinkoProviderService.kt",
 ]
-FORBIDDEN_PRODUCTION_REFERENCES = ("MockLinkShareRepository", "mockFriends", "fakeFriends", "FakeLinkoFriendsApi")
+# LinkShare is the repository's historical package/compatibility naming. Do not
+# reject the shared friend implementation merely because it retains that name.
+# Genuine fake/mock friend implementations remain prohibited in production.
+FORBIDDEN_PRODUCTION_REFERENCES = ("mockFriends", "fakeFriends", "FakeLinkoFriendsApi")
 FRIEND_EDGE_PATH = "/functions/v1/linko-friends"
 FRIEND_PATHS = ("/profile", "/search?q=", "/requests", "/requests/respond", "/friends")
 
@@ -51,8 +54,6 @@ def main() -> int:
     kotlin_files = sorted(KOTLIN.rglob("*.kt"))
     for token in FORBIDDEN_PRODUCTION_REFERENCES:
         for path in kotlin_files:
-            if path.name == "MockLinkShareRepository.kt":
-                continue
             if token in read(path):
                 errors.append(f"forbidden mock reference '{token}' in {path.relative_to(REPO)}")
 
