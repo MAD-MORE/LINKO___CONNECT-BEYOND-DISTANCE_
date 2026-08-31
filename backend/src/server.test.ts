@@ -1,9 +1,6 @@
-import { createRequire } from "node:module";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-
-const require = createRequire(import.meta.url);
-const { createServer } = require("./server.js");
+import { server } from "./server.js";
 
 /**
  * Backend integration tests.
@@ -14,7 +11,6 @@ const { createServer } = require("./server.js");
 
 const PORT = 18_099;
 const BASE = `http://127.0.0.1:${PORT}`;
-const ENROLLMENT_TOKEN = "test-enrollment-token";
 
 async function request(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
@@ -22,11 +18,7 @@ async function request(path: string, init: RequestInit = {}) {
   return fetch(`${BASE}${path}`, { ...init, headers });
 }
 
-let server: ReturnType<typeof createServer>["server"];
-let controlPlane: ReturnType<typeof createServer>["controlPlane"];
-
 before(async () => {
-  ({ server, controlPlane } = createServer({ enrollmentToken: ENROLLMENT_TOKEN }));
   server.keepAliveTimeout = 0;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -35,13 +27,11 @@ before(async () => {
 });
 
 after(async () => {
-  const closePromise = new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
   server.closeIdleConnections();
   server.closeAllConnections();
-  controlPlane.database.db.close();
-  await closePromise;
 });
 
 describe("GET /healthz", () => {
@@ -69,7 +59,7 @@ describe("POST /v1/devices/register", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Enrollment-Token": ENROLLMENT_TOKEN,
+        "X-Enrollment-Token": process.env.LINKO_ENROLLMENT_TOKEN ?? "test-enrollment-token",
       },
       body: JSON.stringify({ deviceId, publicKey: "test-public-key-1234" }),
     });
@@ -84,7 +74,7 @@ describe("POST /v1/devices/register", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Enrollment-Token": ENROLLMENT_TOKEN,
+        "X-Enrollment-Token": process.env.LINKO_ENROLLMENT_TOKEN ?? "test-enrollment-token",
       },
       body: JSON.stringify({ deviceId: "bad id", publicKey: "short" }),
     });
