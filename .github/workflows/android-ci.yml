@@ -1,3 +1,4 @@
+# CI verification: exercise the consolidated main pipeline and Relay deployment.
 name: LINKO Android CI
 
 on:
