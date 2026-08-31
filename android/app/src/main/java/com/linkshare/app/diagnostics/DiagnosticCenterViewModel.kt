@@ -8,12 +8,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/**
- * Runs the diagnostic probes and exposes explicit progress state to the UI.
- */
+/** Runs the real diagnostic pipeline and exposes deterministic progress. */
 class DiagnosticCenterViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
-        const val TOTAL_CHECKS = 9
+        const val TOTAL_CHECKS = 16
     }
 
     private val _results = MutableStateFlow(LinkoDiagnosticCenter.initialResults())
@@ -25,7 +23,7 @@ class DiagnosticCenterViewModel(application: Application) : AndroidViewModel(app
     private val _completedChecks = MutableStateFlow(0)
     val completedChecks: StateFlow<Int> = _completedChecks.asStateFlow()
 
-    private val _currentCheck = MutableStateFlow("")
+    private val _currentCheck = MutableStateFlow("Ready to run system verification")
     val currentCheck: StateFlow<String> = _currentCheck.asStateFlow()
 
     private val _complete = MutableStateFlow(false)
@@ -39,7 +37,6 @@ class DiagnosticCenterViewModel(application: Application) : AndroidViewModel(app
             _completedChecks.value = 0
             _currentCheck.value = "Preparing system checks…"
             _results.value = LinkoDiagnosticCenter.initialResults()
-
             try {
                 _results.value = DiagnosticProbe.run(getApplication()) { completed, updated ->
                     _completedChecks.value = completed
