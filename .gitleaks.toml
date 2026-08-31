@@ -1,0 +1,9 @@
+# LINKO secret scanning policy.
+# Supabase publishable keys are intentionally client-visible credentials, not secrets.
+# The repository contains historical test/config placeholders represented by ***.
+[allowlist]
+description = "Allow intentionally public Supabase publishable keys and non-secret placeholders"
+regexes = [
+  '''(?i)sb_publishable_[A-Za-z0-9_-]+''',
+  '''^\*{3}$'''
+]
