@@ -54,3 +54,7 @@ export const server = createServer(async (req, res) => {
     return json(res, 404, { error: "not_found", requestId }, requestId);
   } catch (error) { return json(res, 500, { error: error instanceof Error ? error.message : "internal_error", requestId }, requestId); }
 });
+
+if (process.env.NODE_ENV !== "test") {
+  server.listen(port, () => console.log(`LINKO control plane listening on :${port}`));
+}
