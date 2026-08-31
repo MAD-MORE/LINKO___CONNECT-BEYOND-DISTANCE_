@@ -3,6 +3,7 @@ package com.linkshare.app.vpn
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import com.linkshare.app.diagnostics.LinkoDiagnosticTelemetry
 import com.linkshare.app.tunnel.EncryptedDatagramTunnel
 import com.linkshare.app.tunnel.IpPacketRouter
 import java.net.DatagramSocket
@@ -10,6 +11,8 @@ import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 class LinkShareVpnService : VpnService() {
     private var tunnelInterface: ParcelFileDescriptor? = null
@@ -17,6 +20,11 @@ class LinkShareVpnService : VpnService() {
     private val running = AtomicBoolean(false)
     private val executor = Executors.newFixedThreadPool(2)
     private val router = IpPacketRouter()
+    private val txPackets = AtomicLong(0L)
+    private val rxPackets = AtomicLong(0L)
+    private val txBytes = AtomicLong(0L)
+    private val rxBytes = AtomicLong(0L)
+    private val lastError = AtomicReference<String?>(null)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val host = intent?.getStringExtra(EXTRA_PEER_HOST)
@@ -25,14 +33,19 @@ class LinkShareVpnService : VpnService() {
         val role = intent?.getStringExtra(EXTRA_ROLE)
         val sessionKey = intent?.getByteArrayExtra(EXTRA_SESSION_KEY)
         if (host.isNullOrBlank() || port !in 1..65535 || sessionId.isNullOrBlank() || role != ROLE_RECEIVER || sessionKey?.size != 32) {
+            lastError.set("invalid_tunnel_arguments")
+            publishTelemetry(false)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         if (VpnService.prepare(this) != null) {
+            lastError.set("vpn_permission_missing")
+            publishTelemetry(false)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         stopTunnel()
+        txPackets.set(0L); rxPackets.set(0L); txBytes.set(0L); rxBytes.set(0L); lastError.set(null)
         tunnelInterface = Builder()
             .setSession("LINKO tunnel")
             .setMtu(TUN_MTU)
@@ -41,11 +54,16 @@ class LinkShareVpnService : VpnService() {
             .addRoute("::", 0)
             .addDnsServer("1.1.1.1")
             .establish()
-            ?: return START_NOT_STICKY
+            ?: run {
+                lastError.set("vpn_interface_establish_failed")
+                publishTelemetry(false)
+                return START_NOT_STICKY
+            }
 
         val socket = DatagramSocket()
         if (!protect(socket)) {
             socket.close()
+            lastError.set("udp_socket_protect_failed")
             stopTunnel()
             return START_NOT_STICKY
         }
@@ -57,6 +75,7 @@ class LinkShareVpnService : VpnService() {
             sessionKey = sessionKey
         )
         running.set(true)
+        publishTelemetry(true)
         executor.execute { outboundLoop() }
         executor.execute { inboundLoop() }
         return START_STICKY
@@ -73,9 +92,13 @@ class LinkShareVpnService : VpnService() {
                     val raw = packet.copyOf(count)
                     if (router.parse(raw) == null || raw.size > MAX_TUN_PAYLOAD) continue
                     transport?.send(raw)
+                    txPackets.incrementAndGet()
+                    txBytes.addAndGet(raw.size.toLong())
                 }
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            lastError.set(error.message ?: error::class.java.simpleName)
+            publishTelemetry(false)
             stopTunnel()
         }
     }
@@ -92,13 +115,17 @@ class LinkShareVpnService : VpnService() {
                         if (payload.isNotEmpty() && payload.size <= MAX_IP_PACKET && router.parse(payload) != null) {
                             output.write(payload)
                             output.flush()
+                            rxPackets.incrementAndGet()
+                            rxBytes.addAndGet(payload.size.toLong())
                         }
                     } catch (_: SocketTimeoutException) {
                         // Keep polling while the VPN remains active.
                     }
                 }
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            lastError.set(error.message ?: error::class.java.simpleName)
+            publishTelemetry(false)
             stopTunnel()
         }
     }
@@ -109,6 +136,18 @@ class LinkShareVpnService : VpnService() {
         transport = null
         tunnelInterface?.close()
         tunnelInterface = null
+        publishTelemetry(false)
+    }
+
+    private fun publishTelemetry(isRunning: Boolean) {
+        LinkoDiagnosticTelemetry.recordVpn(
+            running = isRunning,
+            txPackets = txPackets.get(),
+            rxPackets = rxPackets.get(),
+            txBytes = txBytes.get(),
+            rxBytes = rxBytes.get(),
+            error = lastError.get(),
+        )
     }
 
     override fun onDestroy() {
