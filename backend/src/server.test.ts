@@ -32,6 +32,9 @@ before(async () => {
 });
 
 after(async () => {
+  console.log("Backend test active resources before cleanup:", process.getActiveResourcesInfo());
+  const cleanupDiagnostic = setTimeout(() => console.log("Backend test active resources during cleanup:", process.getActiveResourcesInfo()), 1000);
+  cleanupDiagnostic.unref();
   server.closeIdleConnections();
   server.closeAllConnections();
   controlPlane.database.db.close();
