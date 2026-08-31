@@ -1,6 +1,17 @@
 # Local tooling
 .codex/
 
+# LinkShare backend local state
+backend/linkshare.db
+backend/linkshare.db-shm
+backend/linkshare.db-wal
+backend/linkshare.test.db
+backend/linkshare.test.db-shm
+backend/linkshare.test.db-wal
+backend/node_modules/
+backend/.npm-cache/
+relay/.env
+
 # Android SDK / build artifacts
 android/.android-sdk/
 android/commandlinetools-win.zip

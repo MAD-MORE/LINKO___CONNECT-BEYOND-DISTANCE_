@@ -3,7 +3,10 @@ package com.linkshare.app.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -42,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -51,7 +55,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -640,6 +647,10 @@ private fun ThreadMeter(active: Boolean) {
 
 @Composable
 private fun StateGlyph(phase: ConnectionPhase, tint: Color) {
+    if (phase == ConnectionPhase.Handshaking) {
+        HandshakingGlyph(tint)
+        return
+    }
     val transition = rememberInfiniteTransition(label = "state-glyph")
     val pulse by transition.animateFloat(
         initialValue = 0.65f,
@@ -662,10 +673,7 @@ private fun StateGlyph(phase: ConnectionPhase, tint: Color) {
                     drawLine(tint, Offset(4.dp.toPx(), size.height / 2), Offset(size.width - 4.dp.toPx(), size.height / 2), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
                     drawCircle(tint, radius = 4.dp.toPx(), center = Offset(size.width * pulse, size.height / 2))
                 }
-                ConnectionPhase.Handshaking -> {
-                    drawCircle(tint.copy(alpha = pulse), radius = size.minDimension / 2.6f, style = stroke)
-                    drawCircle(Copper, radius = 5.dp.toPx(), center = Offset(size.width / 2, size.height / 2))
-                }
+                ConnectionPhase.Handshaking -> Unit
                 ConnectionPhase.Connected -> {
                     val path = Path().apply {
                         moveTo(6.dp.toPx(), size.height / 2)
@@ -682,6 +690,129 @@ private fun StateGlyph(phase: ConnectionPhase, tint: Color) {
                     drawLine(tint, Offset(8.dp.toPx(), 8.dp.toPx()), Offset(size.width - 8.dp.toPx(), size.height - 8.dp.toPx()), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
                     drawLine(tint, Offset(size.width - 8.dp.toPx(), 8.dp.toPx()), Offset(8.dp.toPx(), size.height - 8.dp.toPx()), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HandshakingGlyph(tint: Color) {
+    val transition = rememberInfiniteTransition(label = "handshake-network")
+    val innerRotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(10_000, easing = LinearEasing)),
+        label = "inner-network-rotation"
+    )
+    val outerRotation by transition.animateFloat(
+        initialValue = 360f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(7_800, easing = LinearEasing)),
+        label = "outer-ring-rotation"
+    )
+    val glowScale by transition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(tween(2_500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "network-glow-scale"
+    )
+    val glowAlpha by transition.animateFloat(
+        initialValue = 0.22f,
+        targetValue = 0.52f,
+        animationSpec = infiniteRepeatable(tween(2_500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "network-glow-alpha"
+    )
+    val nodePulses = List(5) { index ->
+        val pulse by transition.animateFloat(
+            initialValue = 0.72f,
+            targetValue = 1.22f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1_500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = StartOffset(index * 300, StartOffsetType.FastForward)
+            ),
+            label = "node-pulse-$index"
+        )
+        pulse
+    }
+    val loadingPulses = List(3) { index ->
+        val pulse by transition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(620, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = StartOffset(index * 160, StartOffsetType.FastForward)
+            ),
+            label = "loading-dot-$index"
+        )
+        pulse
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(modifier = Modifier.size(132.dp), contentAlignment = Alignment.Center) {
+            Canvas(
+                modifier = Modifier
+                    .size(126.dp)
+                    .graphicsLayer {
+                        scaleX = glowScale
+                        scaleY = glowScale
+                        alpha = glowAlpha
+                    }
+            ) {
+                drawCircle(Brush.radialGradient(listOf(tint.copy(alpha = 0.72f), tint.copy(alpha = 0f))))
+            }
+            Canvas(
+                modifier = Modifier
+                    .size(124.dp)
+                    .graphicsLayer { rotationZ = outerRotation }
+            ) {
+                drawCircle(
+                    color = Parchment.copy(alpha = 0.48f),
+                    radius = size.minDimension / 2.2f,
+                    style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 6.dp.toPx())))
+                )
+            }
+            Canvas(
+                modifier = Modifier
+                    .size(98.dp)
+                    .graphicsLayer { rotationZ = innerRotation }
+            ) {
+                val nodes = listOf(
+                    Offset(0.50f, 0.10f), Offset(0.88f, 0.39f), Offset(0.74f, 0.84f),
+                    Offset(0.26f, 0.84f), Offset(0.12f, 0.39f)
+                ).map { Offset(it.x * size.width, it.y * size.height) }
+                nodes.indices.forEach { index ->
+                    drawLine(tint.copy(alpha = 0.42f), nodes[index], nodes[(index + 1) % nodes.size], strokeWidth = 1.5.dp.toPx())
+                    drawLine(tint.copy(alpha = 0.20f), nodes[index], Offset(size.width / 2f, size.height / 2f), strokeWidth = 1.dp.toPx())
+                }
+                nodes.forEachIndexed { index, node ->
+                    val pulse = nodePulses[index]
+                    drawCircle(tint.copy(alpha = (0.56f + pulse * 0.28f).coerceAtMost(1f)), radius = 5.dp.toPx() * pulse, center = node)
+                    drawCircle(Parchment.copy(alpha = 0.9f), radius = 1.5.dp.toPx() * pulse, center = node)
+                }
+            }
+            Text(
+                text = "LINKO",
+                color = Parchment,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Black,
+                style = TextStyle(shadow = Shadow(Parchment.copy(alpha = 0.62f), Offset.Zero, 10f))
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            loadingPulses.forEachIndexed { index, pulse ->
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .graphicsLayer {
+                            scaleX = pulse
+                            scaleY = pulse
+                            translationY = -4.dp.toPx() * (pulse - 0.5f)
+                        }
+                        .clip(CircleShape)
+                        .background(if (index == 1) Copper.copy(alpha = pulse) else tint.copy(alpha = pulse))
+                )
             }
         }
     }

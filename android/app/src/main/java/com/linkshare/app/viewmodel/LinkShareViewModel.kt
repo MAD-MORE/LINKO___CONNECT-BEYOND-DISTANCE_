@@ -1,7 +1,9 @@
 package com.linkshare.app.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.linkshare.app.audio.ConnectionSoundManager
 import com.linkshare.app.data.MockLinkShareRepository
 import com.linkshare.app.model.AppMode
 import com.linkshare.app.model.ConnectionPhase
@@ -16,8 +18,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class LinkShareViewModel : ViewModel() {
+class LinkShareViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = MockLinkShareRepository()
+    private val connectionSoundManager = ConnectionSoundManager(application)
 
     private val _uiState = MutableStateFlow(
         ConnectionUiState(
@@ -68,9 +71,8 @@ class LinkShareViewModel : ViewModel() {
 
     fun connectToFriend(friend: Friend) {
         if (!friend.isSharing) {
-            _uiState.update {
+            updateConnectionPhase(ConnectionPhase.Failed) {
                 it.copy(
-                    connectionPhase = ConnectionPhase.Failed,
                     activeFriend = friend,
                     eventMessage = "${friend.name} is not sharing right now."
                 )
@@ -80,10 +82,9 @@ class LinkShareViewModel : ViewModel() {
 
         viewModelScope.launch {
             stopUsageTicker()
-            _uiState.update {
+            updateConnectionPhase(ConnectionPhase.Requesting) {
                 it.copy(
                     activeFriend = friend,
-                    connectionPhase = ConnectionPhase.Requesting,
                     retryAttempt = 0,
                     eventMessage = "Asking ${friend.name} for access..."
                 )
@@ -91,27 +92,24 @@ class LinkShareViewModel : ViewModel() {
 
             val accepted = repository.requestHostAccess(friend.id)
             if (!accepted) {
-                _uiState.update {
+                updateConnectionPhase(ConnectionPhase.Failed) {
                     it.copy(
-                        connectionPhase = ConnectionPhase.Failed,
                         eventMessage = "${friend.name} did not approve this request."
                     )
                 }
                 return@launch
             }
 
-            _uiState.update {
+            updateConnectionPhase(ConnectionPhase.Handshaking) {
                 it.copy(
-                    connectionPhase = ConnectionPhase.Handshaking,
                     eventMessage = "Building an encrypted path..."
                 )
             }
 
             val handshakeOk = repository.performWireGuardStyleHandshake()
             if (!handshakeOk) {
-                _uiState.update {
+                updateConnectionPhase(ConnectionPhase.Retrying) {
                     it.copy(
-                        connectionPhase = ConnectionPhase.Retrying,
                         retryAttempt = 1,
                         eventMessage = "Retrying on weak connection..."
                     )
@@ -119,9 +117,8 @@ class LinkShareViewModel : ViewModel() {
                 repository.retryHandshakeOnWeakSignal()
             }
 
-            _uiState.update {
+            updateConnectionPhase(ConnectionPhase.Connected) {
                 it.copy(
-                    connectionPhase = ConnectionPhase.Connected,
                     usageStats = UsageStats(connectedClients = 1),
                     eventMessage = "Connected through ${friend.name}."
                 )
@@ -132,9 +129,8 @@ class LinkShareViewModel : ViewModel() {
 
     fun disconnect() {
         stopUsageTicker()
-        _uiState.update {
+        updateConnectionPhase(ConnectionPhase.Idle) {
             it.copy(
-                connectionPhase = ConnectionPhase.Idle,
                 activeFriend = null,
                 retryAttempt = 0,
                 usageStats = UsageStats(),
@@ -175,5 +171,20 @@ class LinkShareViewModel : ViewModel() {
     private fun stopUsageTicker() {
         usageJob?.cancel()
         usageJob = null
+    }
+
+    private fun updateConnectionPhase(
+        phase: ConnectionPhase,
+        update: (ConnectionUiState) -> ConnectionUiState
+    ) {
+        val previousPhase = _uiState.value.connectionPhase
+        _uiState.update { current -> update(current).copy(connectionPhase = phase) }
+        connectionSoundManager.onConnectionPhaseChanged(previousPhase, phase)
+    }
+
+    override fun onCleared() {
+        stopUsageTicker()
+        connectionSoundManager.release()
+        super.onCleared()
     }
 }

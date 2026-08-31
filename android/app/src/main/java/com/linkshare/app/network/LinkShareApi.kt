@@ -15,11 +15,21 @@ data class SignalingSession(
     val sessionId: String,
     val hostPublicKey: String,
     val relayUrl: String?,
-    val expiresAtEpochSeconds: Long
+    val expiresAtEpochSeconds: Long,
+    val turnCredentials: TurnCredentials? = null
 )
 
 data class HostSession(
     val sessionId: String,
     val clientPublicKey: String,
-    val allowedUntilEpochSeconds: Long
+    val allowedUntilEpochSeconds: Long,
+    val turnCredentials: TurnCredentials? = null
+)
+
+data class TurnCredentials(
+    val urls: List<String>,
+    val username: String,
+    val credential: String,
+    val credentialType: String,
+    val expiresAtEpochSeconds: Long
 )
