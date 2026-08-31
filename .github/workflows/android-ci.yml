@@ -209,10 +209,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: backend/package.json
+          cache-dependency-path: backend/package-lock.json
       - name: Install dependencies
         working-directory: backend
-        run: npm install
+        run: npm ci
       - name: Typecheck
         working-directory: backend
         run: node --check src/server.js
