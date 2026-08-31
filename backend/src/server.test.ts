@@ -1,128 +1,99 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer } from "./server.js";
 
 /**
  * Backend integration tests.
- * Starts a real HTTP server with an in-memory store and tests all routes.
+ * Starts the real control-plane HTTP server and exercises the documented API contract.
  *
  * Run: npm test
  */
 
-// Minimal test server import to avoid circular deps
 const PORT = 18_099;
-const BASE = `http://localhost:${PORT}`;
+const BASE = `http://127.0.0.1:${PORT}`;
+const ENROLLMENT_TOKEN = "test-enrollment-token";
 
-let server: ReturnType<typeof createServer> | null = null;
+let server: ReturnType<typeof createServer>["server"];
 
-// ---------------------------------------------------------------------------
-// Health check tests
-// ---------------------------------------------------------------------------
+before(async () => {
+  ({ server } = createServer({ enrollmentToken: ENROLLMENT_TOKEN }));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(PORT, "127.0.0.1", () => resolve());
+  });
+});
 
-describe("GET /health", () => {
+after(async () => {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+});
+
+describe("GET /healthz", () => {
   it("returns 200 with ok status", async () => {
-    const res = await fetch(`${BASE}/health`);
+    const res = await fetch(`${BASE}/healthz`);
     assert.equal(res.status, 200);
     const body = await res.json() as Record<string, unknown>;
-    assert.equal(body.service, "linko-control-plane");
     assert.equal(body.status, "ok");
-    assert.ok(body.database);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Auth / signup tests (skipped if Supabase not configured)
-// ---------------------------------------------------------------------------
-
-describe("POST /v1/auth/signup", () => {
-  it("returns 400 for missing email", async () => {
-    const res = await fetch(`${BASE}/v1/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: "test123456" }),
-    });
-    // Either 400 (validation) or 503 (Supabase not configured in test) is acceptable
-    assert.ok([400, 503].includes(res.status), `Expected 400 or 503, got ${res.status}`);
-  });
-
-  it("returns 400 for short password", async () => {
-    const res = await fetch(`${BASE}/v1/auth/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "test@linko.app", password: "abc" }),
-    });
-    assert.ok([400, 503].includes(res.status));
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Device registration tests
-// ---------------------------------------------------------------------------
 
 describe("POST /v1/devices/register", () => {
-  it("returns 401 without auth token", async () => {
+  it("rejects enrollment without the enrollment token", async () => {
     const res = await fetch(`${BASE}/v1/devices/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ publicKey: "test-key", name: "Test Device", roles: ["receiver"] }),
-    });
-    assert.equal(res.status, 401);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Bootstrap device registration tests
-// ---------------------------------------------------------------------------
-
-describe("POST /v1/devices (bootstrap)", () => {
-  it("returns 401 without bootstrap secret", async () => {
-    const res = await fetch(`${BASE}/v1/devices`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "user-1", publicKey: "pk", name: "Dev", roles: ["provider"] }),
+      body: JSON.stringify({ deviceId: "device-no-auth", publicKey: "test-public-key-1234" }),
     });
     assert.equal(res.status, 401);
   });
 
-  it("returns 400 for missing fields with valid bootstrap secret", async () => {
-    const secret = process.env.LINKO_BOOTSTRAP_SECRET ?? "test-bootstrap-secret";
-    const res = await fetch(`${BASE}/v1/devices`, {
+  it("registers a device and returns a short-lived access token", async () => {
+    const deviceId = `ci-device-${Date.now()}`;
+    const res = await fetch(`${BASE}/v1/devices/register`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Linko-Bootstrap": secret,
+        "X-Enrollment-Token": ENROLLMENT_TOKEN,
       },
-      body: JSON.stringify({ name: "Dev", roles: ["provider"] }), // missing userId and publicKey
+      body: JSON.stringify({ deviceId, publicKey: "test-public-key-1234" }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json() as Record<string, unknown>;
+    assert.equal(typeof body.accessToken, "string");
+    assert.equal(typeof body.expiresAtEpochSeconds, "number");
+  });
+
+  it("rejects an invalid device payload", async () => {
+    const res = await fetch(`${BASE}/v1/devices/register`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Enrollment-Token": ENROLLMENT_TOKEN,
+      },
+      body: JSON.stringify({ deviceId: "bad id", publicKey: "short" }),
     });
     assert.equal(res.status, 400);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Session creation tests
-// ---------------------------------------------------------------------------
+describe("Protected API routes", () => {
+  it("rejects friends lookup without a device JWT", async () => {
+    const res = await fetch(`${BASE}/v1/friends`);
+    assert.equal(res.status, 401);
+  });
 
-describe("POST /v1/sessions", () => {
-  it("returns 401 without device JWT", async () => {
-    const res = await fetch(`${BASE}/v1/sessions`, {
+  it("rejects session-state changes without a device JWT", async () => {
+    const res = await fetch(`${BASE}/v1/sessions/fake-session/state`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ receiverDeviceId: "r1", providerDeviceId: "p1" }),
+      body: JSON.stringify({ state: "connected" }),
     });
     assert.equal(res.status, 401);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Not found
-// ---------------------------------------------------------------------------
-
-describe("Unknown routes", () => {
-  it("returns 404 for unknown path", async () => {
-    const res = await fetch(`${BASE}/v1/unknown-endpoint`, {
-      headers: { "Authorization": "Bearer fake-token" },
-    });
-    // Either 401 (bad token) or 404 (not found after auth)
-    assert.ok([401, 404].includes(res.status));
+  it("rejects unknown API routes without authentication", async () => {
+    const res = await fetch(`${BASE}/v1/unknown-endpoint`);
+    assert.equal(res.status, 401);
   });
 });
