@@ -332,8 +332,24 @@ jobs:
         run: flyctl status --app linko-relay
       - name: Verify health
         run: |
+          set -euo pipefail
           for i in {1..30}; do
-            if curl --fail --silent https://linko-relay.fly.dev/health >/dev/null; then exit 0; fi
-            sleep 2
+            echo "Health check attempt $i/30..."
+            response_file="$RUNNER_TEMP/linko-health-response"
+            http_code="$(curl               --fail               --silent               --show-error               --connect-timeout 5               --max-time 10               --output "$response_file"               --write-out '%{http_code}'               https://linko-relay.fly.dev/health || true)"
+            if [ "$http_code" = "200" ]; then
+              echo "Relay health check passed."
+              exit 0
+            fi
+            if [ -s "$response_file" ]; then
+              echo "Relay health check returned HTTP $http_code."
+            else
+              echo "Relay health check did not receive a successful HTTP response."
+            fi
+            if [ "$i" -lt 30 ]; then
+              echo "Relay is not healthy yet; waiting 10 seconds..."
+              sleep 10
+            fi
           done
+          echo "::error::LINKO relay failed health verification after 30 attempts."
           exit 1
