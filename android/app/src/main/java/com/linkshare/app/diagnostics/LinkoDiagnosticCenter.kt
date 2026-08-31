@@ -1,86 +1,60 @@
 package com.linkshare.app.diagnostics
 
-/**
- * Observable result for one LINKO subsystem.
- *
- * This model is intentionally independent of the existing networking/UI code.
- * The Diagnostic Center can therefore observe production components without
- * changing how those components establish connections.
- */
-enum class DiagnosticStatus {
-    CHECKING,
-    PASS,
-    FAIL,
-    WAITING,
-    SKIPPED
-}
+/** One observable LINKO subsystem. Results are evidence, not UI guesses. */
+enum class DiagnosticStatus { CHECKING, PASS, FAIL, BLOCKED, WAITING, SKIPPED }
 
 data class DiagnosticResult(
     val name: String,
     val status: DiagnosticStatus = DiagnosticStatus.WAITING,
     val detail: String = "",
     val latencyMs: Long? = null,
-    val measuredAtMs: Long = System.currentTimeMillis()
+    val errorType: String? = null,
+    val errorMessage: String? = null,
+    val blockedBy: String? = null,
+    val measuredAtMs: Long = System.currentTimeMillis(),
 )
 
-/**
- * Deterministic state reducer for the Diagnostic Center.
- *
- * CONNECTED is deliberately derived from evidence, never from a UI event.
- * A missing prerequisite is reported as NOT_READY and later checks may remain
- * WAITING instead of pretending that a downstream subsystem was tested.
- */
 object LinkoDiagnosticCenter {
-    private val required = listOf(
-        "Authentication",
-        "Supabase",
-        "Realtime",
-        "Relay",
-        "VPN",
-        "Encryption",
-        "Tunnel",
-        "Packet flow",
-        "Internet"
+    val checks = listOf(
+        "Application", "Authentication", "Internet", "Supabase", "Device identity",
+        "Device registration", "Realtime", "Presence", "Engine", "Signaling",
+        "VPN permission", "Tunnel", "Packet flow", "Updater"
     )
 
-    fun initialResults(): List<DiagnosticResult> = required.map { DiagnosticResult(it) }
+    fun initialResults(): List<DiagnosticResult> = checks.map { DiagnosticResult(it) }
 
-    fun reduce(results: List<DiagnosticResult>): DiagnosticOverallState {
-        val byName = results.associateBy { it.name }
-        val failed = required.firstOrNull { byName[it]?.status == DiagnosticStatus.FAIL }
-        if (failed != null) {
-            return DiagnosticOverallState.NOT_READY(failed, byName[failed]?.detail.orEmpty())
-        }
-
-        val incomplete = required.any {
-            byName[it]?.status != DiagnosticStatus.PASS
-        }
-        return if (incomplete) DiagnosticOverallState.CHECKING
-        else DiagnosticOverallState.CONNECTED
-    }
+    fun firstFailure(results: List<DiagnosticResult>): DiagnosticResult? =
+        results.firstOrNull { it.status == DiagnosticStatus.FAIL }
 
     fun blockedResults(results: List<DiagnosticResult>): List<DiagnosticResult> {
-        val byName = results.associateBy { it.name }
-        var blocked = false
+        var blocker: String? = null
         return results.map { result ->
-            if (result.status == DiagnosticStatus.PASS || result.status == DiagnosticStatus.FAIL) {
-                result
-            } else if (blocked) {
-                result.copy(status = DiagnosticStatus.WAITING, detail = "Waiting for previous check")
-            } else {
-                val failedBefore = required.takeWhile { it != result.name }
-                    .firstOrNull { byName[it]?.status == DiagnosticStatus.FAIL }
-                if (failedBefore != null) {
-                    blocked = true
-                    result.copy(status = DiagnosticStatus.WAITING, detail = "Blocked by $failedBefore")
-                } else result
+            when {
+                result.status == DiagnosticStatus.FAIL -> { if (blocker == null) blocker = result.name; result }
+                result.status == DiagnosticStatus.PASS || result.status == DiagnosticStatus.SKIPPED -> result
+                blocker != null -> result.copy(status = DiagnosticStatus.BLOCKED, blockedBy = blocker, detail = "Blocked by $blocker")
+                else -> result
             }
         }
+    }
+
+    fun overall(results: List<DiagnosticResult>): DiagnosticOverallState {
+        val failure = firstFailure(results)
+        if (failure != null) return DiagnosticOverallState.FAILED(failure.name, failure.detail)
+        if (results.any { it.status == DiagnosticStatus.CHECKING || it.status == DiagnosticStatus.WAITING }) {
+            return DiagnosticOverallState.CHECKING
+        }
+        return if (results.any { it.status == DiagnosticStatus.BLOCKED }) {
+            DiagnosticOverallState.BLOCKED
+        } else if (results.all { it.status == DiagnosticStatus.PASS || it.status == DiagnosticStatus.SKIPPED }) {
+            DiagnosticOverallState.PASSED
+        } else DiagnosticOverallState.CHECKING
     }
 }
 
 sealed interface DiagnosticOverallState {
     data object CHECKING : DiagnosticOverallState
-    data object CONNECTED : DiagnosticOverallState
-    data class NOT_READY(val failedComponent: String, val reason: String) : DiagnosticOverallState
+    data object PASSED : DiagnosticOverallState
+    data object BLOCKED : DiagnosticOverallState
+    data class FAILED(val component: String, val reason: String) : DiagnosticOverallState
 }
