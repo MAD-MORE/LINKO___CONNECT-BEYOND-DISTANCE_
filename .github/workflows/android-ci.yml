@@ -55,7 +55,7 @@ jobs:
   android:
     name: Android Build, Test, Sign & Publish
     needs: changes
-    if: needs.changes.outputs.android == 'true'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -254,10 +254,15 @@ jobs:
         run: docker build -t linko-relay:${{ github.sha }} .
       - name: Verify container health
         run: |
-          docker run --rm -d --name test-relay -e RELAY_NODE_ID=ci-test -e RELAY_REGION=ci -p 7001:7001 linko-relay:${{ github.sha }}
+          set -euo pipefail
+          docker run --rm -d --name test-relay -e RELAY_NODE_ID=ci-test -e RELAY_REGION=ci -p 7001:7001 linko-relay:${{ github.sha }} node dist/relay-server.js
           trap 'docker stop test-relay >/dev/null 2>&1 || true' EXIT
-          sleep 4
-          curl --fail http://localhost:7001/health
+          for i in {1..10}; do
+            if curl --fail --silent http://localhost:7001/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs test-relay || true
+          exit 1
 
   security:
     name: CodeQL & Secret/Dependency Scan
