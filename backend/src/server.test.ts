@@ -14,9 +14,10 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ENROLLMENT_TOKEN = "test-enrollment-token";
 
 let server: ReturnType<typeof createServer>["server"];
+let controlPlane: ReturnType<typeof createServer>["controlPlane"];
 
 before(async () => {
-  ({ server } = createServer({ enrollmentToken: ENROLLMENT_TOKEN }));
+  ({ server, controlPlane } = createServer({ enrollmentToken: ENROLLMENT_TOKEN }));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(PORT, "127.0.0.1", () => resolve());
@@ -28,6 +29,7 @@ after(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
+  controlPlane.database.db.close();
 });
 
 describe("GET /healthz", () => {
