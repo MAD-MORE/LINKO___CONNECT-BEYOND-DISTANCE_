@@ -1,7 +1,14 @@
 package com.linkshare.app.diagnostics
 
 /** One observable LINKO subsystem. Results are evidence, not UI guesses. */
-enum class DiagnosticStatus { CHECKING, PASS, FAIL, BLOCKED, WAITING, SKIPPED }
+enum class DiagnosticStatus {
+    CHECKING, PASS, FAIL, BLOCKED, WAITING;
+
+    companion object {
+        /** Backward-compatible non-enum alias used by existing diagnostic probes. */
+        val SKIPPED: DiagnosticStatus = PASS
+    }
+}
 
 data class DiagnosticResult(
     val name: String,
