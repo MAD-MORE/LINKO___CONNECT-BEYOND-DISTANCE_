@@ -11,8 +11,12 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,25 +24,38 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,20 +65,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.PrimaryButton
+import com.linkshare.app.ui.theme.BG
 import com.linkshare.app.ui.theme.Blue
+import com.linkshare.app.ui.theme.Card2
 import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
+import com.linkshare.app.ui.theme.Red
+import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.update.LinkoUpdateManager
 
-/** Real LINKO system diagnostics: evidence, dependency blocking, and live runtime telemetry. */
+/** Responsive, animated LINKO diagnostics dashboard. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticCenterScreen(
     results: List<DiagnosticResult>,
@@ -78,8 +102,9 @@ fun DiagnosticCenterScreen(
     val updateState by updateManager.state.collectAsStateWithLifecycle()
     val telemetry by LinkoDiagnosticTelemetry.snapshot.collectAsStateWithLifecycle()
     val expanded = remember { mutableStateOf<Set<String>>(emptySet()) }
-    val pulseTransition = rememberInfiniteTransition(label = "diagnostic-network")
-    val pulse by pulseTransition.animateFloat(0.45f, 1f, infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "network-pulse")
+    var showLogs by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
 
     val displayedResults = LinkoDiagnosticCenter.blockedResults(liveResults.ifEmpty { results })
     val overall = LinkoDiagnosticCenter.overall(displayedResults)
@@ -89,150 +114,269 @@ fun DiagnosticCenterScreen(
     val failed = displayedResults.count { it.status == DiagnosticStatus.FAIL }
     val blocked = displayedResults.count { it.status == DiagnosticStatus.BLOCKED }
     val pending = displayedResults.count { it.status == DiagnosticStatus.WAITING || it.status == DiagnosticStatus.CHECKING }
-    val networkColor = MaterialTheme.colorScheme.primary
+    val logText = buildDiagnosticLog(displayedResults, telemetry)
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .drawBehind {
-                val nodes = listOf(0.08f to 0.12f, 0.50f to 0.07f, 0.92f to 0.13f, 0.16f to 0.44f, 0.84f to 0.47f, 0.50f to 0.82f)
-                val points = nodes.map { (x, y) -> androidx.compose.ui.geometry.Offset(size.width * x, size.height * y) }
-                listOf(0 to 1, 1 to 2, 0 to 3, 1 to 4, 2 to 4, 3 to 5, 4 to 5).forEach { (a, b) -> drawLine(networkColor.copy(alpha = 0.07f * pulse), points[a], points[b], strokeWidth = 2f) }
-                points.forEachIndexed { index, point ->
-                    drawCircle(networkColor.copy(alpha = 0.07f + 0.06f * pulse), if (index == 5) 14f else 8f, point)
-                    drawCircle(networkColor.copy(alpha = 0.18f * pulse), if (index == 5) 23f else 14f, point, style = Stroke(width = 2f))
-                }
-            }
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.Top,
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("LINKO", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 12.sp)
-                Text("Diagnostic Center", color = TextPrimary, style = MaterialTheme.typography.headlineSmall)
-                Text("LIVE SYSTEM TRACE", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-            }
-            Crossfade(targetState = running, label = "header-state") { active ->
-                Surface(shape = MaterialTheme.shapes.large, color = if (active) Blue.copy(alpha = 0.12f) else Green.copy(alpha = 0.12f)) {
-                    Icon(if (active) Icons.Default.Refresh else Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.padding(10.dp).size(26.dp))
-                }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        DiagnosticOverviewCard(
-            running = running,
-            complete = complete,
-            currentCheck = currentCheck,
-            completedChecks = completedChecks,
-            progress = progress,
-            passed = passed,
-            failed = failed,
-            blocked = blocked,
-            pending = pending,
-            overall = overall,
+    BoxWithConstraints(Modifier.fillMaxSize().background(BG)) {
+        val tablet = maxWidth >= 600.dp
+        val pulseTransition = rememberInfiniteTransition(label = "diagnostic-network")
+        val pulse by pulseTransition.animateFloat(
+            0.35f, 1f,
+            infiniteRepeatable(tween(1600), RepeatMode.Reverse),
+            label = "network-pulse"
         )
 
-        Spacer(Modifier.height(10.dp))
-        LiveTelemetryCard(telemetry)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val nodes = listOf(
+                        0.04f to 0.10f, 0.52f to 0.05f, 0.96f to 0.12f,
+                        0.10f to 0.46f, 0.86f to 0.44f, 0.50f to 0.88f
+                    ).map { (x, y) ->
+                        androidx.compose.ui.geometry.Offset(size.width * x, size.height * y)
+                    }
+                    listOf(0 to 1, 1 to 2, 0 to 3, 1 to 4, 2 to 4, 3 to 5, 4 to 5)
+                        .forEach { (a, b) -> drawLine(Blue.copy(alpha = 0.055f * pulse), nodes[a], nodes[b], 2f) }
+                    nodes.forEachIndexed { index, point ->
+                        drawCircle(Blue.copy(alpha = 0.035f + 0.045f * pulse), if (index == 5) 15f else 7f, point)
+                        drawCircle(Blue.copy(alpha = 0.10f * pulse), if (index == 5) 24f else 13f, point, style = Stroke(2f))
+                    }
+                }
+        ) {
+            DiagnosticsHeader(running, overall, tablet)
 
-        AnimatedVisibility(visible = firstFailure != null) {
-            firstFailure?.let {
-                Spacer(Modifier.height(10.dp))
-                FailureFocusCard(it)
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            items(displayedResults, key = { it.name }) { result ->
-                DiagnosticResultRow(
-                    result = result,
-                    expanded = expanded.value.contains(result.name),
-                    onToggle = {
-                        expanded.value = expanded.value.toMutableSet().apply {
-                            if (!add(result.name)) remove(result.name)
-                        }
-                    },
-                )
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        StartupStyledUpdateCard(updateState, updateManager)
-        Spacer(Modifier.height(8.dp))
-        PrimaryButton(
-            if (running) "SCANNING LINKO" else if (complete) "RUN DIAGNOSTICS AGAIN" else "RUN FULL DIAGNOSTICS",
-            onClick = { onRunDiagnostics(); viewModel.runDiagnostics() },
-            color = Blue,
-            enabled = !running,
-            loading = running,
-        )
-    }
-}
-
-@Composable
-private fun DiagnosticOverviewCard(
-    running: Boolean,
-    complete: Boolean,
-    currentCheck: String,
-    completedChecks: Int,
-    progress: Float,
-    passed: Int,
-    failed: Int,
-    blocked: Int,
-    pending: Int,
-    overall: DiagnosticOverallState,
-) {
-    val headline = when (overall) {
-        DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
-        DiagnosticOverallState.BLOCKED -> "SYSTEM CHECK BLOCKED"
-        is DiagnosticOverallState.FAILED -> "FAILURE AT ${overall.component.uppercase()}"
-        DiagnosticOverallState.CHECKING -> if (running) "SYSTEM SCAN IN PROGRESS" else "READY TO SCAN"
-    }
-    Card(Modifier.fillMaxWidth().animateContentSize()) {
-        Column(Modifier.fillMaxWidth().padding(15.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    AnimatedContent(targetState = headline, label = "diagnostic-headline") { Text(it, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp) }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        when {
-                            running -> currentCheck.ifBlank { "Preparing diagnostic probes…" }
-                            complete -> "$passed passed · $failed failed · $blocked blocked · $pending pending"
-                            else -> "The scan follows LINKO's real runtime dependency chain."
-                        },
-                        color = TextSub,
-                        fontFamily = JetBrainsMono,
-                        fontSize = 9.sp,
+            LazyColumn(
+                Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = if (tablet) 28.dp else 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    DiagnosticHealthCard(
+                        running, complete, currentCheck, completedChecks, progress,
+                        passed, failed, blocked, pending, overall
                     )
                 }
-                Text("${(progress * 100).toInt()}%", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 15.sp)
+                item { ConnectionJourney(telemetry, tablet) }
+                item { TelemetryGrid(telemetry, tablet) }
+                firstFailure?.let { item { FailureFocusCard(it) } }
+                item { SectionHeader("LIVE EVENTS", "Tap an event to inspect evidence") }
+                items(displayedResults, key = { it.name }) { result ->
+                    DiagnosticResultRow(
+                        result,
+                        expanded.value.contains(result.name),
+                        {
+                            expanded.value = expanded.value.toMutableSet().apply {
+                                if (!add(result.name)) remove(result.name)
+                            }
+                        }
+                    )
+                }
+                item { StartupStyledUpdateCard(updateState, updateManager) }
             }
-            Spacer(Modifier.height(10.dp))
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(7.dp))
-            Spacer(Modifier.height(6.dp))
-            Text("$completedChecks / ${DiagnosticCenterViewModel.TOTAL_CHECKS} probes", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
+
+            DiagnosticsActionBar(
+                running = running,
+                complete = complete,
+                copied = copied,
+                onScan = { onRunDiagnostics(); viewModel.runDiagnostics() },
+                onLogs = { showLogs = true },
+                onCopy = {
+                    clipboard.setText(AnnotatedString(logText))
+                    copied = true
+                }
+            )
+        }
+    }
+
+    if (showLogs) {
+        DiagnosticsLogsSheet(displayedResults, telemetry) { showLogs = false }
+    }
+}
+
+@Composable
+private fun DiagnosticsHeader(running: Boolean, overall: DiagnosticOverallState, tablet: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = if (tablet) 28.dp else 16.dp, vertical = 12.dp),
+        Arrangement.SpaceBetween,
+        Alignment.CenterVertically
+    ) {
+        Column {
+            Text("LINKO", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 11.sp)
+            Text("Diagnostics", color = TextPrimary, style = MaterialTheme.typography.headlineSmall)
+            Text("LIVE SYSTEM TRACE", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
+        }
+        Crossfade(running, label = "header-state") { active ->
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = if (active) Blue.copy(alpha = 0.14f) else Green.copy(alpha = 0.12f)
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (active) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue)
+                    else Icon(Icons.Default.CheckCircle, null, Modifier.size(17.dp), tint = if (overall == DiagnosticOverallState.PASSED) Green else TextSub)
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (active) "SCANNING" else "LIVE", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun LiveTelemetryCard(snapshot: DiagnosticTelemetrySnapshot) {
-    LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
-        Text("LIVE RUNTIME TELEMETRY", color = Green, fontFamily = JetBrainsMono, fontSize = 10.sp)
-        Spacer(Modifier.height(7.dp))
-        Text("ENGINE  ${snapshot.enginePhase} · ${snapshot.engineDetail}", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
-        Text("REALTIME ${if (snapshot.realtimeConnected) "CONNECTED" else "DISCONNECTED"}${snapshot.realtimeError?.let { " · $it" } ?: ""}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-        Text("CHANNELS  ${snapshot.realtimeChannels.ifEmpty { listOf("none") }.joinToString()}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-        Text("VPN       ${if (snapshot.vpnRunning) "RUNNING" else "STOPPED"} · TX ${snapshot.vpnTxPackets}/${snapshot.vpnTxBytes}B · RX ${snapshot.vpnRxPackets}/${snapshot.vpnRxBytes}B", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-        snapshot.vpnError?.let { Text("VPN ERROR $it", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp) }
-        if (snapshot.engineTrace.isNotEmpty()) {
-            Spacer(Modifier.height(5.dp))
-            Text("TRACE", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-            snapshot.engineTrace.takeLast(6).forEach { Text("› $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+private fun DiagnosticHealthCard(
+    running: Boolean, complete: Boolean, currentCheck: String, completedChecks: Int, progress: Float,
+    passed: Int, failed: Int, blocked: Int, pending: Int, overall: DiagnosticOverallState
+) {
+    val ring by rememberInfiniteTransition(label = "health-ring").animateFloat(
+        0.92f, 1.04f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "health-pulse"
+    )
+    val healthy = overall == DiagnosticOverallState.PASSED
+    Card(Modifier.fillMaxWidth().animateContentSize()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size((72 * ring).dp).drawBehind {
+                        val tint = if (healthy) Green else Blue
+                        drawCircle(tint.copy(alpha = 0.09f), size.minDimension / 2f)
+                        drawCircle(tint.copy(alpha = 0.55f), size.minDimension / 2f, style = Stroke(3f))
+                    },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("\${(progress * 100).toInt()}", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 19.sp)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    AnimatedContent(
+                        targetState = when (overall) {
+                            DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
+                            DiagnosticOverallState.BLOCKED -> "CHECK BLOCKED"
+                            is DiagnosticOverallState.FAILED -> "FAILURE AT \${overall.component.uppercase()}"
+                            DiagnosticOverallState.CHECKING -> if (running) "SYSTEM SCAN IN PROGRESS" else "READY TO SCAN"
+                        },
+                        label = "health-headline"
+                    ) { headline -> Text(headline, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp) }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (running) currentCheck.ifBlank { "Tracing LINKO's runtime chain…" }
+                        else if (complete) "\${passed} passed · \${failed} failed · \${blocked} blocked · \${pending} pending"
+                        else "Live runtime evidence, dependency state and connection path.",
+                        color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp
+                    )
+                }
+            }
+            Spacer(Modifier.height(13.dp))
+            LinearProgressIndicator(progress = { progress }, Modifier.fillMaxWidth().height(6.dp))
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
+                Metric("PASS", passed, Green)
+                Metric("FAIL", failed, Red)
+                Metric("BLOCK", blocked, TextSub)
+                Metric("PENDING", pending, TextSub)
+            }
         }
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: Int, tint: androidx.compose.ui.graphics.Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value.toString(), color = tint, fontFamily = JetBrainsMono, fontSize = 15.sp)
+        Text(label, color = TextMuted, fontFamily = JetBrainsMono, fontSize = 7.sp)
+    }
+}
+
+@Composable
+private fun ConnectionJourney(snapshot: DiagnosticTelemetrySnapshot, tablet: Boolean) {
+    val stages = listOf("READY", "PROVIDER", "RELAY", "SIGNAL", "TUNNEL", "VPN", "CONNECTED")
+    val current = journeyIndex(snapshot)
+    LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
+        SectionHeader("CONNECTION JOURNEY", "Live path · stage \${current + 1}/\${stages.size}")
+        Spacer(Modifier.height(10.dp))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (tablet) 18.dp else 10.dp)
+        ) {
+            items(stages.size) { index ->
+                JourneyStage(stages[index], index, index == current, index < current)
+            }
+        }
+        Spacer(Modifier.height(9.dp))
+        Text(
+            when {
+                snapshot.vpnRunning -> "Secure path active · packet routing enabled"
+                snapshot.enginePhase.contains("Connected", true) -> "Tunnel connected · waiting for VPN routing"
+                snapshot.enginePhase.contains("Signaling", true) -> "Finding and preparing a secure relay path…"
+                else -> snapshot.engineDetail
+            },
+            color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp
+        )
+    }
+}
+
+@Composable
+private fun JourneyStage(label: String, index: Int, active: Boolean, done: Boolean) {
+    val pulse by rememberInfiniteTransition(label = "stage-\${index}").animateFloat(
+        0.70f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "stage-pulse"
+    )
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp)) {
+        Box(
+            Modifier.size(34.dp).drawBehind {
+                val tint = when {
+                    done -> Green
+                    active -> Blue
+                    else -> TextMuted
+                }
+                drawCircle(tint.copy(alpha = if (active) 0.20f * pulse else 0.10f), size.minDimension / 2f)
+                drawCircle(tint.copy(alpha = if (active) 0.75f else 0.45f), size.minDimension / 2f, style = Stroke(2f))
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            if (done) Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = Green)
+            else Text("\${index + 1}", color = if (active) TextPrimary else TextSub, fontFamily = JetBrainsMono, fontSize = 10.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(label, color = if (active) TextPrimary else TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
+    }
+}
+
+private fun journeyIndex(snapshot: DiagnosticTelemetrySnapshot): Int {
+    if (snapshot.vpnRunning) return 6
+    if (snapshot.enginePhase.contains("Connected", true)) return 5
+    if (snapshot.enginePhase.contains("Tunnel", true) || snapshot.engineDetail.contains("tunnel", true)) return 4
+    if (snapshot.enginePhase.contains("Signaling", true)) return 3
+    if (snapshot.enginePhase.contains("Relay", true) || snapshot.engineDetail.contains("relay", true)) return 2
+    if (snapshot.enginePhase.contains("Provider", true) || snapshot.engineDetail.contains("provider", true)) return 1
+    return 0
+}
+
+@Composable
+private fun TelemetryGrid(snapshot: DiagnosticTelemetrySnapshot, tablet: Boolean) {
+    val cards = listOf(
+        Triple("ENGINE", if (snapshot.enginePhase.isBlank()) "IDLE" else snapshot.enginePhase.uppercase(), snapshot.engineDetail),
+        Triple("REALTIME", if (snapshot.realtimeConnected) "CONNECTED" else "DISCONNECTED", snapshot.realtimeChannels.ifEmpty { listOf("no channels") }.joinToString()),
+        Triple("TUNNEL", if (snapshot.engineDetail.contains("tunnel", true)) "ACTIVE" else "CLOSED", snapshot.engineError ?: "Secure transport state"),
+        Triple("VPN", if (snapshot.vpnRunning) "RUNNING" else "STOPPED", "TX \${snapshot.vpnTxPackets}/\${snapshot.vpnTxBytes}B · RX \${snapshot.vpnRxPackets}/\${snapshot.vpnRxBytes}B")
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        cards.chunked(2).forEach { pair ->
+            Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(10.dp)) {
+                pair.forEach { TelemetryCard(it.first, it.second, it.third, Modifier.weight(1f)) }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TelemetryCard(title: String, value: String, detail: String, modifier: Modifier) {
+    LinkoCard(modifier.animateContentSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Wifi, null, Modifier.size(18.dp), tint = Blue)
+            Spacer(Modifier.width(7.dp))
+            Text(title, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(value, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp)
+        Text(detail, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, maxLines = 2)
     }
 }
 
@@ -240,18 +384,25 @@ private fun LiveTelemetryCard(snapshot: DiagnosticTelemetrySnapshot) {
 private fun FailureFocusCard(result: DiagnosticResult) {
     LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(25.dp))
-            Spacer(Modifier.size(10.dp))
+            Icon(Icons.Default.Close, null, Modifier.size(23.dp), tint = Red)
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
-                Text("FIRST FAILURE", color = MaterialTheme.colorScheme.error, fontFamily = JetBrainsMono, fontSize = 10.sp)
-                Text(result.name, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono)
+                Text("FIRST FAILURE", color = Red, fontFamily = JetBrainsMono, fontSize = 9.sp)
+                Text(result.name, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp)
             }
         }
         Spacer(Modifier.height(7.dp))
         Text(result.detail, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
         result.errorType?.let { Text("TYPE  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-        result.errorMessage?.let { Text("ERROR $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-        result.latencyMs?.let { Text("TIME  ${it} ms", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+        result.errorMessage?.let { Text("ERROR  \${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp)
+        Text(subtitle, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
     }
 }
 
@@ -260,25 +411,25 @@ private fun DiagnosticResultRow(result: DiagnosticResult, expanded: Boolean, onT
     Card(Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onToggle)) {
         Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusIcon(result.status)
-            Spacer(Modifier.size(10.dp))
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(result.name, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp)
-                    result.latencyMs?.let { Text("  ${it}ms", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+                    result.latencyMs?.let { Text("  \${it}ms", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
                 }
                 Text(result.detail.ifBlank { "No diagnostic evidence yet" }, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
                 result.blockedBy?.let { Text("BLOCKED BY  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
             }
             IconButton(onClick = onToggle) {
-                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = if (expanded) "Collapse" else "Expand")
+                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (expanded) "Collapse" else "Expand")
             }
         }
-        AnimatedVisibility(visible = expanded) {
+        AnimatedVisibility(expanded) {
             Column(Modifier.fillMaxWidth().padding(start = 46.dp, end = 15.dp, bottom = 12.dp)) {
                 result.errorType?.let { Text("ERROR TYPE  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-                result.errorMessage?.let { Text("ERROR MSG   $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+                result.errorMessage?.let { Text("ERROR MSG   \${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
                 result.blockedBy?.let { Text("BLOCKER     $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-                Text("MEASURED    ${result.measuredAtMs}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                Text("MEASURED    \${result.measuredAtMs}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
             }
         }
     }
@@ -293,27 +444,39 @@ private fun StatusIcon(status: DiagnosticStatus) {
         DiagnosticStatus.CHECKING, DiagnosticStatus.WAITING -> Icons.Default.Refresh
         DiagnosticStatus.SKIPPED -> Icons.Default.Warning
     }
-    Icon(icon, contentDescription = status.name, modifier = Modifier.size(20.dp))
+    val tint = when (status) {
+        DiagnosticStatus.PASS -> Green
+        DiagnosticStatus.FAIL -> Red
+        DiagnosticStatus.BLOCKED -> TextSub
+        DiagnosticStatus.CHECKING, DiagnosticStatus.WAITING -> Blue
+        DiagnosticStatus.SKIPPED -> TextSub
+    }
+    Icon(icon, status.name, Modifier.size(20.dp), tint = tint)
 }
 
 @Composable
 private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState, manager: LinkoUpdateManager) {
-    val active = state.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
+    val active = state.status in setOf(
+        LinkoUpdateManager.UpdateStatus.Checking,
+        LinkoUpdateManager.UpdateStatus.Downloading,
+        LinkoUpdateManager.UpdateStatus.Verifying,
+        LinkoUpdateManager.UpdateStatus.Installing
+    )
     LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(24.dp))
-            Spacer(Modifier.size(9.dp))
+            Icon(Icons.Default.SystemUpdate, null, Modifier.size(22.dp), tint = Blue)
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text("UPDATE NETWORK", color = Green, fontFamily = JetBrainsMono, fontSize = 9.sp)
                 Text(state.statusMessage.ifBlank { "Automatic update detection ready" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
-                Text("Current ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                Text("Current \${state.installedVersionName} (\${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
             }
         }
         if (active) {
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(7.dp))
+            LinearProgressIndicator(progress = { state.progressPercent / 100f }, Modifier.fillMaxWidth())
         }
-        state.errorMessage?.let { Text(it, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+        state.errorMessage?.let { Text(sanitizeDiagnosticText(it), color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
         Spacer(Modifier.height(6.dp))
         when (state.status) {
             LinkoUpdateManager.UpdateStatus.UpdateAvailable -> PrimaryButton("UPDATE NOW", manager::startUpdate, color = Blue)
@@ -321,4 +484,134 @@ private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState, manag
             else -> PrimaryButton("CHECK FOR UPDATES", manager::checkAndOfferUpdate, color = Blue, enabled = !active, loading = state.status == LinkoUpdateManager.UpdateStatus.Checking)
         }
     }
+}
+
+@Composable
+private fun DiagnosticsActionBar(
+    running: Boolean,
+    complete: Boolean,
+    copied: Boolean,
+    onScan: () -> Unit,
+    onLogs: () -> Unit,
+    onCopy: () -> Unit
+) {
+    Surface(color = Card2.copy(alpha = 0.97f), tonalElevation = 8.dp) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            Arrangement.spacedBy(8.dp)
+        ) {
+            PrimaryButton(
+                if (running) "SCANNING" else if (complete) "SCAN AGAIN" else "SCAN",
+                onScan, color = Blue, enabled = !running, loading = running, modifier = Modifier.weight(1f)
+            )
+            ActionButton("LOGS", Icons.Default.FilterList, onLogs, Modifier.weight(1f))
+            ActionButton(if (copied) "COPIED" else "COPY", Icons.Default.ContentCopy, onCopy, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun ActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier
+) {
+    OutlinedButton(onClick = onClick, modifier = modifier.height(48.dp)) {
+        Icon(icon, null, Modifier.size(16.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(label, fontFamily = JetBrainsMono, fontSize = 8.sp)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DiagnosticsLogsSheet(
+    results: List<DiagnosticResult>,
+    telemetry: DiagnosticTelemetrySnapshot,
+    onDismiss: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    var query by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf("ALL") }
+    val logText = buildDiagnosticLog(results, telemetry)
+    val lines = logText.lines().filter { query.isBlank() || it.contains(query, true) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("LIVE LOGS", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 14.sp)
+                    Text("Privacy-safe · searchable · copyable", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                }
+                TextButton(onClick = { clipboard.setText(AnnotatedString(logText)) }) {
+                    Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("COPY ALL", fontFamily = JetBrainsMono, fontSize = 8.sp)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                placeholder = { Text("Search logs", fontSize = 11.sp) }
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), Arrangement.spacedBy(7.dp)) {
+                listOf("ALL", "PASS", "FAIL", "INFO").forEach { filter ->
+                    FilterChip(
+                        selected = selected == filter,
+                        onClick = { selected = filter },
+                        label = { Text(filter, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(
+                Modifier.fillMaxWidth().height(360.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                items(lines.filter { selected == "ALL" || it.contains(selected, true) }) { line ->
+                    Text(
+                        line,
+                        color = if (line.contains("FAIL", true)) Red else TextSub,
+                        fontFamily = JetBrainsMono,
+                        fontSize = 8.sp,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+private fun buildDiagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot): String {
+    val builder = StringBuilder()
+    builder.appendLine("LINKO DIAGNOSTIC REPORT")
+    builder.appendLine("Generated: \${System.currentTimeMillis()}")
+    builder.appendLine()
+    results.forEach { result ->
+        builder.appendLine(
+            "[\${result.status.name}] \${result.name} | \${sanitizeDiagnosticText(result.detail)}" +
+                (result.errorType?.let { " | type=$it" } ?: "") +
+                (result.latencyMs?.let { " | latency_ms=$it" } ?: "")
+        )
+    }
+    builder.appendLine()
+    builder.appendLine("RUNTIME")
+    builder.appendLine("engine=\${sanitizeDiagnosticText(telemetry.enginePhase)} detail=\${sanitizeDiagnosticText(telemetry.engineDetail)}")
+    builder.appendLine("realtime=\${telemetry.realtimeConnected} channels=\${telemetry.realtimeChannels.joinToString(",")}")
+    builder.appendLine("vpn=\${telemetry.vpnRunning} tx_packets=\${telemetry.vpnTxPackets} tx_bytes=\${telemetry.vpnTxBytes} rx_packets=\${telemetry.vpnRxPackets} rx_bytes=\${telemetry.vpnRxBytes}")
+    telemetry.engineTrace.takeLast(20).forEach { builder.appendLine("TRACE \${sanitizeDiagnosticText(it)}") }
+    return builder.toString()
+}
+
+private fun sanitizeDiagnosticText(value: String): String {
+    return value
+        .replace(Regex("(?i)(token|authorization|secret|password)\\\\s*[:=]\\\\s*\\\\S+"), "$1=<redacted>")
+        .replace(Regex("(?i)bearer\\\\s+\\\\S+"), "Bearer <redacted>")
 }
