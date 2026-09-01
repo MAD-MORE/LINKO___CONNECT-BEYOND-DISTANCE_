@@ -94,8 +94,8 @@ export class RelayHeartbeat {
 }
 
 export function createRelayHeartbeatFromEnv(currentSessions?: () => number): RelayHeartbeat | null {
-  const registrationToken = process.env.LINKO_RELAY_REGISTRATION_TOKEN;
-  const heartbeatUrl = process.env.LINKO_RELAY_HEARTBEAT_URL;
+  const registrationToken = process.env.LINKO_RELAY_REGISTRATION_TOKEN?.trim();
+  const heartbeatUrl = process.env.LINKO_RELAY_HEARTBEAT_URL?.trim();
   if (!registrationToken || !heartbeatUrl) return null;
 
   return new RelayHeartbeat({
