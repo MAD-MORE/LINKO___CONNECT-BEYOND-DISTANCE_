@@ -57,3 +57,5 @@ jobs:
           git add android/app/src/main/java/com/linkshare/app/diagnostics/DiagnosticCenterScreen.kt
           git commit -m 'fix(android): repair diagnostic status mappings and alpha import'
           git push origin HEAD:main
+
+# retrigger
