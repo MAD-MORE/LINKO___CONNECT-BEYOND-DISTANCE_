@@ -303,7 +303,7 @@ jobs:
   deploy-relay:
     name: Deploy LINKO UDP Relay
     needs: [changes, relay]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.relay.result == 'success'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -353,7 +353,7 @@ jobs:
           for i in {1..30}; do
             echo "Health check attempt $i/30..."
             response_file="$RUNNER_TEMP/linko-health-response"
-            http_code="$(curl               --fail               --silent               --show-error               --connect-timeout 5               --max-time 10               --output "$response_file"               --write-out '%{http_code}'               https://linko-relay.fly.dev/health || true)"
+            http_code="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 --output "$response_file" --write-out '%{http_code}' https://linko-relay.fly.dev/health || true)"
             if [ "$http_code" = "200" ]; then
               echo "Relay health check passed."
               exit 0
