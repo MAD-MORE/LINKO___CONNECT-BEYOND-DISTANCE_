@@ -7,8 +7,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -99,16 +99,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: LinkoUpdateM
 
     LaunchedEffect(Unit) {
         val start = System.currentTimeMillis()
-        val ok = withContext(Dispatchers.IO) {
-            runCatching { runtime.initialize() }.getOrDefault(true)
-        }
+        val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
         val elapsed = System.currentTimeMillis() - start
-        if (elapsed < 2200) {
-            kotlinx.coroutines.delay(2200 - elapsed)
-        }
-        if (!ok && signedIn && !auth.isSignedIn()) {
-            bootstrapFailed = true
-        }
+        if (elapsed < 2200) kotlinx.coroutines.delay(2200 - elapsed)
+        if (!ok && signedIn && !auth.isSignedIn()) bootstrapFailed = true
         splashShowing = false
     }
 
@@ -146,18 +140,16 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: LinkoUpdateM
             NavHost(navController = nav, startDestination = if (signedIn) Screen.HomeEngine.route else Screen.Welcome.route) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
-                composable(Screen.SignIn.route) {
-                    SignInScreen(auth, onSignedIn = {
-                        splashShowing = true
-                        bootstrapFailed = false
-                        scope.launch {
-                            val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
-                            bootstrapFailed = !initialized && !auth.isSignedIn()
-                            splashShowing = false
-                            nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
-                        }
-                    }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) })
-                }
+                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = {
+                    splashShowing = true
+                    bootstrapFailed = false
+                    scope.launch {
+                        val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }
+                        bootstrapFailed = !initialized && !auth.isSignedIn()
+                        splashShowing = false
+                        nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
+                    }
+                }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }) }
                 composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
                 composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) { popUpTo(Screen.RecoveryOtp.route) { inclusive = true } } }, onBack = { nav.popBackStack() }) }
                 composable(Screen.PasswordReset.route) { PasswordResetScreen(auth) { auth.signOut(); nav.navigate(Screen.SignIn.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
@@ -200,13 +192,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: LinkoUpdateM
                 composable(Screen.Privacy.route) { PrivacyScreen { nav.navigate(Screen.DataRetention.route) } }
                 composable(Screen.DataRetention.route) { DataRetentionScreen { nav.popBackStack() } }
                 composable(Screen.DeleteAccount.route) { DeleteAccountScreen(onDeleteAccount) { nav.popBackStack() } }
-                composable(Screen.DiagnosticCenter.route) {
-                    DiagnosticCenterScreen(
-                        results = com.linkshare.app.diagnostics.LinkoDiagnosticCenter.initialResults(),
-                        onRunDiagnostics = { /* Real adapters will update the diagnostic state without altering LINKO networking. */ },
-                        updateManager = updateManager
-                    )
-                }
+                composable(Screen.DiagnosticCenter.route) { DiagnosticCenterScreen(results = com.linkshare.app.diagnostics.LinkoDiagnosticCenter.initialResults(), onRunDiagnostics = { }, updateManager = updateManager) }
             }
         }
         if (!onboarding) BottomNav(route, nav)
@@ -248,33 +234,19 @@ private fun LinkoStartupScreen(failed: Boolean, onRetry: () -> Unit = {}, onCont
 private fun appBarTitle(route: String): String? = titles[route]
 
 private val titles = mapOf(
-    "sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password",
-    "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile",
-    "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends",
-    "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent",
-    "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries",
-    "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting",
-    "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path",
-    "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality",
-    "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History",
-    "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request",
-    "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup",
-    "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage",
-    "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch",
-    "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended",
-    "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy",
-    "data_retention" to "Data Retention", "delete_account" to "Delete Account", "diagnostic_center" to "Diagnostic Center"
+    "sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account", "diagnostic_center" to "Diagnostic Center"
 )
 
 private sealed class BottomNavItem(val label: String, val route: String, val iconFilled: ImageVector, val iconOutlined: ImageVector) {
     object Home : BottomNavItem("HOME", Screen.HomeEngine.route, Icons.Filled.Home, Icons.Outlined.Home)
     object Friends : BottomNavItem("FRIENDS", Screen.Friends.route, Icons.Filled.People, Icons.Outlined.People)
-    object History : BottomNavItem("HISTORY", Screen.SessionHistory.route, Icons.Filled.History, Icons.Outlined.History)
     object Diagnostics : BottomNavItem("DIAGNOSTICS", Screen.DiagnosticCenter.route, Icons.Filled.Info, Icons.Outlined.Info)
+    object History : BottomNavItem("HISTORY", Screen.SessionHistory.route, Icons.Filled.History, Icons.Outlined.History)
     object Settings : BottomNavItem("SETTINGS", Screen.Settings.route, Icons.Filled.Settings, Icons.Outlined.Settings)
 }
 
-private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, BottomNavItem.History, BottomNavItem.Diagnostics, BottomNavItem.Settings)
+// Diagnostics is intentionally adjacent to Home and Friends so it is a first-class primary destination.
+private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, BottomNavItem.Diagnostics, BottomNavItem.History, BottomNavItem.Settings)
 
 @Composable
 private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
@@ -286,12 +258,7 @@ private fun BottomNav(route: String, nav: androidx.navigation.NavHostController)
                 val activeColor = if (item == BottomNavItem.Friends) Green else Blue
                 val bgModifier = if (selected) Modifier.clip(RoundedCornerShape(12.dp)).background(activeColor.copy(alpha = 0.12f)) else Modifier.clip(RoundedCornerShape(12.dp))
                 Box(modifier = Modifier.weight(1f).then(bgModifier).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    if (!selected) {
-                        nav.navigate(item.route) {
-                            popUpTo(Screen.HomeEngine.route)
-                            launchSingleTop = true
-                        }
-                    }
+                    if (!selected) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route); launchSingleTop = true }
                 }.padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(imageVector = if (selected) item.iconFilled else item.iconOutlined, contentDescription = item.label, tint = if (selected) activeColor else TextSub, modifier = Modifier.size(20.dp))
