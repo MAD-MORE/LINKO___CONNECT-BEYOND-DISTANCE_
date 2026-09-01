@@ -1,9 +1,14 @@
 import { createRelayServer } from "./relay-server.js";
-import { createRelayHeartbeatFromEnv } from "./relay-heartbeat.js";
+import { createRelayHeartbeatFromEnv, type RelayHeartbeat } from "./relay-heartbeat.js";
 
 let registrationHealthy = false;
+let heartbeat: RelayHeartbeat | null = null;
 
-const heartbeat = createRelayHeartbeatFromEnv();
+const relay = await createRelayServer({
+  isRegistrationHealthy: () => registrationHealthy,
+});
+
+heartbeat = createRelayHeartbeatFromEnv(() => relay.registry.count());
 if (!heartbeat) {
   console.error(JSON.stringify({
     ts: new Date().toISOString(),
@@ -11,24 +16,14 @@ if (!heartbeat) {
     event: "relay_registration_not_configured",
     message: "Production relay requires LINKO_RELAY_REGISTRATION_TOKEN and LINKO_RELAY_HEARTBEAT_URL",
   }));
-  process.exit(1);
-}
-
-const relay = await createRelayServer({
-  isRegistrationHealthy: () => registrationHealthy,
-});
-
-// The relay must bind UDP before its first heartbeat, so the advertised endpoint
-// is real. The health endpoint remains 503 until authenticated registration succeeds.
-const configuredHeartbeat = createRelayHeartbeatFromEnv(() => relay.registry.count());
-if (!configuredHeartbeat) {
   await relay.close();
   process.exit(1);
 }
 
 try {
-  await configuredHeartbeat.start();
-  registrationHealthy = true;
+  await heartbeat.start();
+  registrationHealthy = heartbeat.isHealthy();
+
   console.log(JSON.stringify({
     ts: new Date().toISOString(),
     level: "info",
@@ -36,17 +31,17 @@ try {
     nodeId: process.env.RELAY_NODE_ID ?? "relay-1",
   }));
 
-  // Keep health registration state tied to the heartbeat object. If heartbeats
-  // become stale, /health becomes 503 and Fly can restart the machine.
+  // If control-plane heartbeats become stale, /health changes to 503.
+  // Fly's health monitor can then restart the process and force a fresh registration.
   const healthWatchdog = setInterval(() => {
-    registrationHealthy = configuredHeartbeat.isHealthy();
+    registrationHealthy = heartbeat?.isHealthy() ?? false;
   }, 1_000);
   healthWatchdog.unref();
 
   const shutdown = async () => {
     registrationHealthy = false;
     clearInterval(healthWatchdog);
-    configuredHeartbeat.stop();
+    heartbeat?.stop();
     await relay.close();
   };
 
