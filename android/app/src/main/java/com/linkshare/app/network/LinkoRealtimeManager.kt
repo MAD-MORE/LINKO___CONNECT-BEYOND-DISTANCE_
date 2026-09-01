@@ -39,6 +39,7 @@ object LinkoRealtimeManager {
     private const val SESSION_CHANNEL = "linko-session-events"
     private const val NOTIFICATION_CHANNEL = "linko_realtime"
     private const val NOTIFICATION_ID = 9201
+    private const val RETRY_DELAY_MS = 5_000L
     private val started = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<LinkoRealtimeEvent>(extraBufferCapacity = 64)
@@ -75,25 +76,28 @@ object LinkoRealtimeManager {
             supabaseKey = com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY
         ) { install(Realtime) }
         client = supabase
-        val rt = supabase.pluginManager.getPlugin(Realtime)
+
+        // Keep the manager alive across transient startup/network failures. The previous
+        // implementation set started=false after one failed attempt, so a temporary
+        // Realtime/WebSocket failure permanently disabled Realtime until the process died.
         scope.launch {
-            while (started.get() && auth?.currentAccessToken().isNullOrBlank()) delay(1_000L)
-            if (!started.get()) return@launch
-            runCatching {
-                rt.setAuth(auth?.currentAccessToken())
-                rt.connect()
-                subscribeFriendEvents(supabase)
-                subscribeSessionEvents(supabase)
-                subscribePresence(supabase)
-                diagnosticConnected = true
-                diagnosticError = null
-                publishDiagnosticState()
-            }.onFailure {
-                diagnosticConnected = false
-                diagnosticError = it.message ?: "realtime_start_failed"
-                publishDiagnosticState()
-                _events.tryEmit(LinkoRealtimeEvent.TransportError(diagnosticError ?: "realtime_start_failed"))
-                started.set(false)
+            while (started.get()) {
+                try {
+                    if (auth?.currentAccessToken().isNullOrBlank()) {
+                        delay(1_000L)
+                        continue
+                    }
+                    connectAndSubscribe(supabase)
+                    while (started.get() && diagnosticConnected) delay(5_000L)
+                } catch (error: Throwable) {
+                    diagnosticConnected = false
+                    diagnosticChannels.clear()
+                    diagnosticError = error.message ?: "realtime_connect_failed"
+                    publishDiagnosticState()
+                    _events.tryEmit(LinkoRealtimeEvent.TransportError(diagnosticError ?: "realtime_connect_failed"))
+                    cleanupRealtimeChannels()
+                    if (started.get()) delay(RETRY_DELAY_MS)
+                }
             }
         }
     }
@@ -107,19 +111,51 @@ object LinkoRealtimeManager {
         diagnosticChannels.clear()
         publishDiagnosticState()
         scope.launch {
-            runCatching {
-                val realtime = client?.pluginManager?.getPlugin(Realtime)
-                presenceChannel?.let { realtime?.removeChannel(it) }
-                friendChannel?.let { realtime?.removeChannel(it) }
-                sessionChannel?.let { realtime?.removeChannel(it) }
-                realtime?.disconnect()
-            }
-            presenceChannel = null
-            friendChannel = null
-            sessionChannel = null
-            client = null
+            cleanupRealtimeChannels()
             presenceSnapshot.clear()
         }
+    }
+
+    private suspend fun connectAndSubscribe(supabase: SupabaseClient) {
+        cleanupRealtimeChannels()
+        diagnosticConnected = false
+        diagnosticError = null
+        diagnosticChannels.clear()
+        publishDiagnosticState()
+
+        val realtime = supabase.pluginManager.getPlugin(Realtime)
+        // Refresh the session first when a refresh token is available, then authenticate
+        // the WebSocket with the newest access token.
+        runCatching { auth?.ensureSession() }
+        val token = auth?.currentAccessToken()
+            ?: throw IllegalStateException("Realtime requires an authenticated access token")
+        realtime.setAuth(token)
+        realtime.connect()
+
+        subscribeFriendEvents(supabase)
+        subscribeSessionEvents(supabase)
+        subscribePresence(supabase)
+
+        // All channels subscribed successfully. Only now report a connected transport.
+        diagnosticConnected = true
+        diagnosticError = null
+        publishDiagnosticState()
+    }
+
+    private suspend fun cleanupRealtimeChannels() {
+        runCatching {
+            val realtime = client?.pluginManager?.getPlugin(Realtime)
+            presenceChannel?.let { realtime?.removeChannel(it) }
+            friendChannel?.let { realtime?.removeChannel(it) }
+            sessionChannel?.let { realtime?.removeChannel(it) }
+            realtime?.disconnect()
+        }
+        presenceChannel = null
+        friendChannel = null
+        sessionChannel = null
+        diagnosticChannels.clear()
+        diagnosticConnected = false
+        publishDiagnosticState()
     }
 
     private fun publishDiagnosticState() {
