@@ -64,7 +64,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.alpha
-import androidx.compose.ui.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -342,121 +341,103 @@ private fun DiagnosticLogCard(logText: String, copied: Boolean, onCopy: () -> Un
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Terminal, contentDescription = null, tint = Blue, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(7.dp))
+                    Spacer(Modifier.size(8.dp))
                     Column {
-                        Text("DIAGNOSTIC LOG", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
-                        Text("Evidence captured from the current run", color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
+                        Text("DIAGNOSTIC LOG", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Runtime evidence", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
                     }
                 }
                 IconButton(onClick = onCopy) {
-                    Icon(if (copied) Icons.Filled.CheckCircle else Icons.Filled.ContentCopy, contentDescription = "Copy diagnostic log", tint = if (copied) Green else TextSub)
+                    Icon(if (copied) Icons.Filled.CheckCircle else Icons.Filled.ContentCopy, contentDescription = if (copied) "Copied" else "Copy diagnostic log", tint = if (copied) Green else TextSub)
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Surface(shape = MaterialTheme.shapes.medium, color = BG.copy(alpha = 0.65f)) {
-                Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                    logText.lines().takeLast(12).forEach { line -> Text(line, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(vertical = 1.dp)) }
-                }
+            Surface(shape = MaterialTheme.shapes.medium, color = BG) {
+                Text(logText, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp, modifier = Modifier.fillMaxWidth().padding(10.dp))
             }
-            Spacer(Modifier.height(6.dp))
-            Crossfade(copied, label = "copy-state") { done -> Text(if (done) "COPIED TO CLIPBOARD" else "Tap copy to export the full diagnostic report", color = if (done) Green else TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp) }
         }
     }
 }
 
 @Composable
 private fun DiagnosticFailureCard(result: DiagnosticResult) {
-    LinkoCard(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(21.dp))
-            Spacer(Modifier.size(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text("FIRST FAILURE", color = MaterialTheme.colorScheme.error, fontFamily = JetBrainsMono, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = LinkoCardColor)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.Top) {
+            Icon(Icons.Filled.Warning, contentDescription = "Diagnostic attention", tint = com.linkshare.app.ui.theme.Red, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.size(10.dp))
+            Column {
+                Text("ATTENTION REQUIRED", color = com.linkshare.app.ui.theme.Red, fontFamily = JetBrainsMono, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 Text(result.name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(result.errorMessage ?: result.detail, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
             }
         }
-        Spacer(Modifier.height(7.dp))
-        Text(result.detail, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 8.sp)
-        result.errorMessage?.let { Text(it, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp, modifier = Modifier.padding(top = 4.dp)) }
     }
 }
 
 @Composable
-private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState) {
-    val active = state.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
-    LinkoCard(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Refresh, contentDescription = "Update status", tint = Blue, modifier = Modifier.size(21.dp))
-            Spacer(Modifier.size(9.dp))
+private fun StartupStyledUpdateCard(updateState: Any) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = LinkoCardColor)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Smartphone, contentDescription = "App update", tint = Blue, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.size(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("UPDATE NETWORK", color = Green, fontFamily = JetBrainsMono, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                Text(state.statusMessage.ifBlank { "Automatic update detection ready" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 8.sp)
-                Text("Current ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
+                Text("APP VERSION", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                Text("Update status available in startup", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
-            if (active) LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.size(width = 48.dp, height = 5.dp))
         }
-        state.errorMessage?.let { Text(it, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(top = 5.dp)) }
     }
 }
 
 private fun statusTint(overall: DiagnosticOverallState): Color = when (overall) {
     DiagnosticOverallState.PASSED -> Green
-    DiagnosticOverallState.BLOCKED -> Color(0xFFFFB84D)
-    is DiagnosticOverallState.FAILED -> Color(0xFFFF5D5D)
+    DiagnosticOverallState.BLOCKED -> Blue
+    is DiagnosticOverallState.FAILED -> com.linkshare.app.ui.theme.Red
     DiagnosticOverallState.CHECKING -> Blue
 }
 
 private fun statusTint(status: DiagnosticStatus): Color = when (status) {
     DiagnosticStatus.PASS -> Green
-    DiagnosticStatus.FAIL -> Color(0xFFFF5D5D)
-    DiagnosticStatus.BLOCKED -> Color(0xFFFFB84D)
+    DiagnosticStatus.FAIL -> com.linkshare.app.ui.theme.Red
+    DiagnosticStatus.BLOCKED -> Blue
     DiagnosticStatus.CHECKING -> Blue
-    DiagnosticStatus.WAITING, DiagnosticStatus.SKIPPED -> TextSub
+    DiagnosticStatus.WAITING -> TextSub
 }
 
 private fun statusLabel(status: DiagnosticStatus): String = when (status) {
     DiagnosticStatus.PASS -> "PASS"
-    DiagnosticStatus.FAIL -> "FAILED"
+    DiagnosticStatus.FAIL -> "FAIL"
     DiagnosticStatus.BLOCKED -> "BLOCKED"
     DiagnosticStatus.CHECKING -> "CHECKING"
     DiagnosticStatus.WAITING -> "WAITING"
-    DiagnosticStatus.SKIPPED -> "SKIPPED"
 }
 
-private fun subsystemIcon(name: String): ImageVector = when (name.lowercase()) {
-    in listOf("network", "connectivity", "internet") -> Icons.Outlined.NetworkCheck
-    in listOf("device", "device identity", "registration", "registered device") -> Icons.Outlined.Smartphone
-    in listOf("presence", "heartbeat", "online status") -> Icons.Outlined.Person
-    in listOf("relay", "udp relay") -> Icons.Outlined.Hub
-    in listOf("backend", "control plane", "api") -> Icons.Outlined.Cloud
-    in listOf("security", "authentication", "auth") -> Icons.Outlined.Security
-    else -> Icons.Filled.Info
+private fun subsystemIcon(name: String): ImageVector = when (name.uppercase()) {
+    "NETWORK" -> Icons.Outlined.NetworkCheck
+    "DEVICE", "DEVICE IDENTITY", "IDENTITY" -> Icons.Outlined.Smartphone
+    "PRESENCE" -> Icons.Outlined.Person
+    "RELAY" -> Icons.Outlined.Hub
+    "BACKEND" -> Icons.Outlined.Cloud
+    "SECURITY" -> Icons.Outlined.Security
+    else -> Icons.Outlined.Terminal
 }
 
-private fun diagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot, overall: DiagnosticOverallState): String = buildString {
-    appendLine("LINKO DIAGNOSTIC REPORT")
-    appendLine("=======================")
-    appendLine("OVERALL   ${overallLabel(overall)}")
-    appendLine("ENGINE    ${telemetry.enginePhase} · ${telemetry.engineDetail}")
-    appendLine("REALTIME  ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}")
-    appendLine("VPN       ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}")
-    appendLine()
-    results.forEach { appendLine("${statusLabel(it.status).padEnd(8)} ${it.name} — ${it.detail}") }
-    if (telemetry.engineTrace.isNotEmpty()) {
-        appendLine()
-        appendLine("TRACE")
-        telemetry.engineTrace.takeLast(10).forEach { appendLine("› $it") }
+private fun diagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot, overall: DiagnosticOverallState): String {
+    val header = "LINKO DIAGNOSTIC LOG\nSTATUS: ${overallLabel(overall)}\n"
+    val checks = results.joinToString("\n") { result ->
+        "${result.name.padEnd(18)} ${statusLabel(result.status).padEnd(8)} ${result.latencyMs?.let { "${it}ms" } ?: result.detail}"
     }
-}.trimEnd()
+    val runtime = "\nENGINE: ${telemetry.enginePhase}\nREALTIME: ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}\nVPN: ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}"
+    return header + checks + runtime
+}
 
 private fun overallLabel(overall: DiagnosticOverallState): String = when (overall) {
-    DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
-    DiagnosticOverallState.BLOCKED -> "SYSTEM CHECK BLOCKED"
-    is DiagnosticOverallState.FAILED -> "FAILURE AT ${overall.component}"
+    DiagnosticOverallState.PASSED -> "HEALTHY"
+    DiagnosticOverallState.BLOCKED -> "BLOCKED"
+    is DiagnosticOverallState.FAILED -> "FAILED: ${overall.component}"
     DiagnosticOverallState.CHECKING -> "CHECKING"
 }
 
 private fun copyDiagnosticLog(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("LINKO Diagnostic Report", text))
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("LINKO diagnostic log", text))
 }
