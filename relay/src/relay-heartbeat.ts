@@ -94,9 +94,17 @@ export class RelayHeartbeat {
 }
 
 export function createRelayHeartbeatFromEnv(currentSessions?: () => number): RelayHeartbeat | null {
-  const registrationToken = process.env.LINKO_RELAY_REGISTRATION_TOKEN?.trim();
+  const rawRegistrationToken = process.env.LINKO_RELAY_REGISTRATION_TOKEN;
   const heartbeatUrl = process.env.LINKO_RELAY_HEARTBEAT_URL?.trim();
-  if (!registrationToken || !heartbeatUrl) return null;
+  if (!rawRegistrationToken || !heartbeatUrl) return null;
+
+  // GitHub/Fly secret values can accidentally contain formatting whitespace.
+  // The registration token is a hexadecimal shared secret, so remove whitespace
+  // anywhere in the value before using it as an HTTP header.
+  const registrationToken = rawRegistrationToken.replace(/\s/g, "");
+  if (!/^[0-9A-Fa-f]+$/.test(registrationToken)) {
+    throw new Error("relay_registration_token_invalid_format");
+  }
 
   return new RelayHeartbeat({
     nodeId: process.env.RELAY_NODE_ID ?? "relay-1",
