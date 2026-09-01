@@ -42,11 +42,9 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.NetworkCheck
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Terminal
@@ -65,8 +63,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.alpha
+import androidx.compose.ui.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -118,22 +116,18 @@ fun DiagnosticCenterScreen(
     val logText = diagnosticLog(displayedResults, telemetry, overall)
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
-    val pulse = rememberInfiniteTransition(label = "diagnostic-pulse")
-        .animateFloat(
-            initialValue = 0.55f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(1300), RepeatMode.Reverse),
-            label = "diagnostic-pulse-alpha",
-        ).value
+    val pulse by rememberInfiniteTransition(label = "diagnostic-pulse").animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1300), RepeatMode.Reverse),
+        label = "diagnostic-pulse-alpha",
+    )
 
     Column(
         modifier = modifier.fillMaxSize().background(BG).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.Top,
     ) {
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
                 DiagnosticHeaderCard(
                     running = running,
@@ -150,48 +144,29 @@ fun DiagnosticCenterScreen(
                     pulse = pulse,
                 )
             }
-            item { LiveActivityCard(telemetry = telemetry, running = running, pulse = pulse) }
-            item {
-                DiagnosticSectionTitle(
-                    title = "SYSTEM CHECKS",
-                    detail = "Live subsystem evidence",
-                    icon = Icons.Outlined.NetworkCheck,
-                )
-            }
+            item { LiveActivityCard(telemetry, running, pulse) }
+            item { DiagnosticSectionTitle("SYSTEM CHECKS", "Live subsystem evidence", Icons.Outlined.NetworkCheck) }
             items(displayedResults, key = { it.name }) { result ->
                 DiagnosticSubsystemCard(
                     result = result,
                     expanded = expanded.contains(result.name),
-                    onToggle = {
-                        expanded = expanded.toMutableSet().apply {
-                            if (!add(result.name)) remove(result.name)
-                        }
-                    },
+                    onToggle = { expanded = expanded.toMutableSet().apply { if (!add(result.name)) remove(result.name) } },
                     pulse = pulse,
                 )
             }
+            item { DiagnosticLogCard(logText, copied) {
+                clipboard.setText(AnnotatedString(logText))
+                copyDiagnosticLog(context, logText)
+                copied = true
+            } }
             item {
-                DiagnosticLogCard(
-                    logText = logText,
-                    copied = copied,
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(logText))
-                        copyDiagnosticLog(context, logText)
-                        copied = true
-                    },
-                )
-            }
-            item {
-                AnimatedVisibility(firstFailure != null) {
-                    firstFailure?.let { DiagnosticFailureCard(it) }
-                }
+                AnimatedVisibility(firstFailure != null) { firstFailure?.let { DiagnosticFailureCard(it) } }
             }
             item { StartupStyledUpdateCard(updateState) }
         }
-
         Spacer(Modifier.height(8.dp))
         PrimaryButton(
-            text = when {
+            label = when {
                 running -> "RUNNING DIAGNOSTICS…"
                 complete -> "RUN DIAGNOSTICS AGAIN"
                 else -> "RUN FULL DIAGNOSTICS"
@@ -235,10 +210,7 @@ private fun DiagnosticHeaderCard(
         is DiagnosticOverallState.FAILED -> Icons.Filled.Error
         DiagnosticOverallState.CHECKING -> Icons.Filled.Refresh
     }
-    Card(
-        Modifier.fillMaxWidth().animateContentSize(),
-        colors = CardDefaults.cardColors(containerColor = LinkoCardColor),
-    ) {
+    Card(Modifier.fillMaxWidth().animateContentSize(), colors = CardDefaults.cardColors(containerColor = LinkoCardColor)) {
         Column(Modifier.fillMaxWidth().padding(18.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
@@ -253,9 +225,7 @@ private fun DiagnosticHeaderCard(
             }
             Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(10.dp).clip(MaterialTheme.shapes.small).background(statusTint(overall).copy(alpha = if (running) pulse else 1f))
-                )
+                Box(Modifier.size(10.dp).background(statusTint(overall).copy(alpha = if (running) pulse else 1f)))
                 Spacer(Modifier.size(8.dp))
                 Text(statusText, color = statusTint(overall), fontFamily = JetBrainsMono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
@@ -271,7 +241,7 @@ private fun DiagnosticHeaderCard(
                 fontSize = 9.sp,
             )
             Spacer(Modifier.height(12.dp))
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(7.dp))
+            LinearProgressIndicator(progress = { progress }, Modifier.fillMaxWidth().height(7.dp))
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("$completedChecks / $totalChecks probes", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
@@ -298,9 +268,7 @@ private fun LiveActivityCard(telemetry: DiagnosticTelemetrySnapshot, running: Bo
         if (telemetry.engineTrace.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text("TRACE", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
-            telemetry.engineTrace.takeLast(4).forEach { line ->
-                Text("› $line", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp, modifier = Modifier.padding(top = 3.dp))
-            }
+            telemetry.engineTrace.takeLast(4).forEach { Text("› $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp, modifier = Modifier.padding(top = 3.dp)) }
         }
     }
 }
@@ -327,18 +295,10 @@ private fun DiagnosticSectionTitle(title: String, detail: String, icon: ImageVec
 }
 
 @Composable
-private fun DiagnosticSubsystemCard(
-    result: DiagnosticResult,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    pulse: Float,
-) {
+private fun DiagnosticSubsystemCard(result: DiagnosticResult, expanded: Boolean, onToggle: () -> Unit, pulse: Float) {
     val accent = statusTint(result.status)
     val icon = subsystemIcon(result.name)
-    Card(
-        Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onToggle),
-        colors = CardDefaults.cardColors(containerColor = LinkoCardColor),
-    ) {
+    Card(Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onToggle), colors = CardDefaults.cardColors(containerColor = LinkoCardColor)) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = MaterialTheme.shapes.medium, color = accent.copy(alpha = 0.12f)) {
@@ -360,7 +320,7 @@ private fun DiagnosticSubsystemCard(
                     result.errorType?.let { DetailLine("ERROR TYPE", it) }
                     result.errorMessage?.let { DetailLine("ERROR", it) }
                     result.blockedBy?.let { DetailLine("BLOCKED BY", it) }
-                    result.measuredAtMs.let { DetailLine("MEASURED", it.toString()) }
+                    DetailLine("MEASURED", result.measuredAtMs.toString())
                 }
             }
         }
@@ -377,10 +337,7 @@ private fun DetailLine(label: String, value: String) {
 
 @Composable
 private fun DiagnosticLogCard(logText: String, copied: Boolean, onCopy: () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth().animateContentSize(),
-        colors = CardDefaults.cardColors(containerColor = LinkoCardColor),
-    ) {
+    Card(Modifier.fillMaxWidth().animateContentSize(), colors = CardDefaults.cardColors(containerColor = LinkoCardColor)) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -392,21 +349,17 @@ private fun DiagnosticLogCard(logText: String, copied: Boolean, onCopy: () -> Un
                     }
                 }
                 IconButton(onClick = onCopy) {
-                    Icon(if (copied) Icons.Filled.CheckCircle else Icons.Outlined.ContentCopy, contentDescription = "Copy diagnostic log", tint = if (copied) Green else TextSub)
+                    Icon(if (copied) Icons.Filled.CheckCircle else Icons.Filled.ContentCopy, contentDescription = "Copy diagnostic log", tint = if (copied) Green else TextSub)
                 }
             }
             Spacer(Modifier.height(8.dp))
             Surface(shape = MaterialTheme.shapes.medium, color = BG.copy(alpha = 0.65f)) {
                 Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                    logText.lines().takeLast(12).forEach { line ->
-                        Text(line, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(vertical = 1.dp))
-                    }
+                    logText.lines().takeLast(12).forEach { line -> Text(line, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(vertical = 1.dp)) }
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Crossfade(copied, label = "copy-state") { done ->
-                Text(if (done) "COPIED TO CLIPBOARD" else "Tap copy to export the full diagnostic report", color = if (done) Green else TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
-            }
+            Crossfade(copied, label = "copy-state") { done -> Text(if (done) "COPIED TO CLIPBOARD" else "Tap copy to export the full diagnostic report", color = if (done) Green else TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp) }
         }
     }
 }
@@ -430,12 +383,7 @@ private fun DiagnosticFailureCard(result: DiagnosticResult) {
 
 @Composable
 private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState) {
-    val active = state.status in setOf(
-        LinkoUpdateManager.UpdateStatus.Checking,
-        LinkoUpdateManager.UpdateStatus.Downloading,
-        LinkoUpdateManager.UpdateStatus.Verifying,
-        LinkoUpdateManager.UpdateStatus.Installing,
-    )
+    val active = state.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing)
     LinkoCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Refresh, contentDescription = "Update status", tint = Blue, modifier = Modifier.size(21.dp))
@@ -445,12 +393,17 @@ private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState) {
                 Text(state.statusMessage.ifBlank { "Automatic update detection ready" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 8.sp)
                 Text("Current ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
             }
-            if (active) {
-                LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.size(width = 48.dp, height = 5.dp))
-            }
+            if (active) LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.size(width = 48.dp, height = 5.dp))
         }
         state.errorMessage?.let { Text(it, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(top = 5.dp)) }
     }
+}
+
+private fun statusTint(overall: DiagnosticOverallState): Color = when (overall) {
+    DiagnosticOverallState.PASSED -> Green
+    DiagnosticOverallState.BLOCKED -> Color(0xFFFFB84D)
+    is DiagnosticOverallState.FAILED -> Color(0xFFFF5D5D)
+    DiagnosticOverallState.CHECKING -> Blue
 }
 
 private fun statusTint(status: DiagnosticStatus): Color = when (status) {
@@ -458,8 +411,7 @@ private fun statusTint(status: DiagnosticStatus): Color = when (status) {
     DiagnosticStatus.FAIL -> Color(0xFFFF5D5D)
     DiagnosticStatus.BLOCKED -> Color(0xFFFFB84D)
     DiagnosticStatus.CHECKING -> Blue
-    DiagnosticStatus.WAITING -> TextSub
-    DiagnosticStatus.SKIPPED -> TextSub
+    DiagnosticStatus.WAITING, DiagnosticStatus.SKIPPED -> TextSub
 }
 
 private fun statusLabel(status: DiagnosticStatus): String = when (status) {
@@ -478,32 +430,24 @@ private fun subsystemIcon(name: String): ImageVector = when (name.lowercase()) {
     in listOf("relay", "udp relay") -> Icons.Outlined.Hub
     in listOf("backend", "control plane", "api") -> Icons.Outlined.Cloud
     in listOf("security", "authentication", "auth") -> Icons.Outlined.Security
-    else -> Icons.Outlined.Info
+    else -> Icons.Filled.Info
 }
 
-private fun diagnosticLog(
-    results: List<DiagnosticResult>,
-    telemetry: DiagnosticTelemetrySnapshot,
-    overall: DiagnosticOverallState,
-): String {
-    val builder = StringBuilder()
-    builder.appendLine("LINKO DIAGNOSTIC REPORT")
-    builder.appendLine("=======================")
-    builder.appendLine("OVERALL   ${overallLabel(overall)}")
-    builder.appendLine("ENGINE    ${telemetry.enginePhase} · ${telemetry.engineDetail}")
-    builder.appendLine("REALTIME  ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}")
-    builder.appendLine("VPN       ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}")
-    builder.appendLine()
-    results.forEach { result ->
-        builder.appendLine("${statusLabel(result.status).padEnd(8)} ${result.name} — ${result.detail}")
-    }
+private fun diagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot, overall: DiagnosticOverallState): String = buildString {
+    appendLine("LINKO DIAGNOSTIC REPORT")
+    appendLine("=======================")
+    appendLine("OVERALL   ${overallLabel(overall)}")
+    appendLine("ENGINE    ${telemetry.enginePhase} · ${telemetry.engineDetail}")
+    appendLine("REALTIME  ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}")
+    appendLine("VPN       ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}")
+    appendLine()
+    results.forEach { appendLine("${statusLabel(it.status).padEnd(8)} ${it.name} — ${it.detail}") }
     if (telemetry.engineTrace.isNotEmpty()) {
-        builder.appendLine()
-        builder.appendLine("TRACE")
-        telemetry.engineTrace.takeLast(10).forEach { builder.appendLine("› $it") }
+        appendLine()
+        appendLine("TRACE")
+        telemetry.engineTrace.takeLast(10).forEach { appendLine("› $it") }
     }
-    return builder.toString().trimEnd()
-}
+}.trimEnd()
 
 private fun overallLabel(overall: DiagnosticOverallState): String = when (overall) {
     DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
