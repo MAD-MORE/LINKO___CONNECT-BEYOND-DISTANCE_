@@ -27,6 +27,7 @@ const DEFAULT_INTERVAL_MS = 15_000;
 const MIN_RETRY_MS = 2_000;
 const MAX_RETRY_MS = 15_000;
 const FRESHNESS_MS = 45_000;
+const INITIAL_ATTEMPTS = 5;
 
 export class RelayHeartbeat {
   private timer: NodeJS.Timeout | null = null;
@@ -36,12 +37,45 @@ export class RelayHeartbeat {
 
   constructor(private readonly options: RelayHeartbeatOptions) {}
 
-  /** Perform the first registration before production considers the relay ready. */
+  /** Perform authenticated registration with bounded startup retry before readiness. */
   async start(): Promise<void> {
     if (this.timer) return;
 
     this.stopped = false;
-    await this.send();
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < INITIAL_ATTEMPTS; attempt += 1) {
+      if (this.stopped) throw new Error("relay_heartbeat_stopped");
+      try {
+        await this.send();
+        lastError = null;
+        this.consecutiveFailures = 0;
+        break;
+      } catch (error) {
+        lastError = error;
+        this.consecutiveFailures += 1;
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          level: "warn",
+          event: "relay_initial_heartbeat_failed",
+          attempt: attempt + 1,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        if (attempt < INITIAL_ATTEMPTS - 1) {
+          const retryDelay = Math.min(
+            MAX_RETRY_MS,
+            MIN_RETRY_MS * 2 ** attempt,
+          );
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+    }
+
+    if (lastError) {
+      this.stopped = true;
+      throw lastError;
+    }
+
     this.schedule(this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
   }
 
