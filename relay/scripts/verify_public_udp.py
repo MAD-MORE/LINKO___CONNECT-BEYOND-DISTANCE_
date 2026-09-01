@@ -29,7 +29,6 @@ def build_packet(session_id: str, key_hash: str, role: int, packet_type: int, se
     header[74] = packet_type
     struct.pack_into(">Q", header, 75, seq)
     header[83:95] = os.urandom(12)
-    # Match the relay's real encrypted-datagram shape: ciphertext + 16-byte tag.
     return bytes(header) + b"ENCRYPTED_USER_PAYLOAD_CIPHERTEXT_12345" + os.urandom(16)
 
 
@@ -59,7 +58,6 @@ def main() -> int:
         client.bind(("0.0.0.0", 0))
         relay = (RELAY_HOST, RELAY_PORT)
 
-        # Register Provider endpoint, then send Client data through the relay.
         provider.sendto(provider_packet, relay)
         time.sleep(0.10)
         client.sendto(client_packet, relay)
@@ -67,9 +65,7 @@ def main() -> int:
             print("UDP smoke test failed: relay did not forward client -> provider", file=sys.stderr)
             return 1
 
-        # Verify reverse direction as well.
         provider_reply = build_packet(session_id, key_hash, 1, 1, 2)
-        client.sendto(b"", relay)  # no-op is intentionally avoided by the real reply below
         provider.sendto(provider_reply, relay)
         if not recv_exact(client, provider_reply):
             print("UDP smoke test failed: relay did not forward provider -> client", file=sys.stderr)
