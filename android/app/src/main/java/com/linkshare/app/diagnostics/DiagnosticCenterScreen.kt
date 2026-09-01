@@ -10,6 +10,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -64,11 +65,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.linkshare.app.ui.components.LinkoCard
@@ -83,6 +89,8 @@ import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.update.LinkoUpdateManager
+import kotlin.math.sin
+import kotlin.math.cos
 
 /** Responsive, animated LINKO diagnostics dashboard. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -193,29 +201,128 @@ fun DiagnosticCenterScreen(
     }
 }
 
+
 @Composable
 private fun DiagnosticsHeader(running: Boolean, overall: DiagnosticOverallState, tablet: Boolean) {
+    val transition = rememberInfiniteTransition(label = "startup-style-diagnostic")
+    val rotation by transition.animateFloat(
+        0f, 360f,
+        infiniteRepeatable(tween(8000, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart),
+        label = "diagnostic-orbit"
+    )
+    val corePulse by transition.animateFloat(
+        0.94f, 1.06f,
+        infiniteRepeatable(tween(1200, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "diagnostic-core"
+    )
+    val wave by transition.animateFloat(
+        0.2f, 1f,
+        infiniteRepeatable(tween(2400, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart),
+        label = "diagnostic-wave"
+    )
+    val healthy = overall == DiagnosticOverallState.PASSED
+    val tint = if (running) Blue else if (healthy) Green else TextSub
+    val title = when {
+        running -> "LIVE DIAGNOSTICS"
+        healthy -> "SYSTEM HEALTHY"
+        overall == DiagnosticOverallState.BLOCKED -> "CHECK BLOCKED"
+        overall is DiagnosticOverallState.FAILED -> "ATTENTION REQUIRED"
+        else -> "READY TO SCAN"
+    }
+
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = if (tablet) 28.dp else 16.dp, vertical = 12.dp),
-        Arrangement.SpaceBetween,
-        Alignment.CenterVertically
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (tablet) 28.dp else 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
-            Text("LINKO", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 11.sp)
-            Text("Diagnostics", color = TextPrimary, style = MaterialTheme.typography.headlineSmall)
-            Text("LIVE SYSTEM TRACE", color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp)
-        }
-        Crossfade(running, label = "header-state") { active ->
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = if (active) Blue.copy(alpha = 0.14f) else Green.copy(alpha = 0.12f)
-            ) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (active) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue)
-                    else Icon(Icons.Default.CheckCircle, null, Modifier.size(17.dp), tint = if (overall == DiagnosticOverallState.PASSED) Green else TextSub)
-                    Spacer(Modifier.width(7.dp))
-                    Text(if (active) "SCANNING" else "LIVE", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
+        Box(
+            modifier = Modifier
+                .size(if (tablet) 104.dp else 82.dp)
+                .scale(corePulse),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val base = size.minDimension / 2.55f
+                val waveRadius = base * wave
+                drawCircle(tint.copy(alpha = (1f - wave) * 0.35f), waveRadius, center, style = Stroke(width = 1.5.dp.toPx()))
+                drawCircle(tint.copy(alpha = 0.16f), base * 1.05f, center, style = Stroke(width = 1.dp.toPx()))
+                drawCircle(
+                    tint.copy(alpha = 0.24f),
+                    base * 1.55f,
+                    center,
+                    style = Stroke(width = 1.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 9f)))
+                )
+                val positions = (0 until 6).map { i ->
+                    val angle = Math.toRadians(rotation.toDouble()) + i * (2.0 * Math.PI / 6.0)
+                    val radius = if (i % 2 == 0) base * 1.55f else base * 1.18f
+                    Offset(
+                        (center.x + radius * cos(angle)).toFloat(),
+                        (center.y + radius * sin(angle)).toFloat()
+                    )
                 }
+                positions.forEachIndexed { i, point ->
+                    drawLine(tint.copy(alpha = 0.22f), center, point, strokeWidth = 1.dp.toPx())
+                    drawCircle(tint.copy(alpha = 0.16f), 8.dp.toPx(), point)
+                    drawCircle(if (i % 2 == 0) tint else Blue, 3.5.dp.toPx(), point)
+                }
+                drawCircle(tint.copy(alpha = 0.20f), base * 0.72f, center)
+                drawCircle(tint, 5.dp.toPx(), center)
+            }
+        }
+
+        Spacer(Modifier.width(if (tablet) 16.dp else 11.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                "LINKO",
+                color = Color.White,
+                fontFamily = JetBrainsMono,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = if (tablet) 24.sp else 20.sp,
+                letterSpacing = 3.sp
+            )
+            Text(
+                "DIAGNOSTIC CENTER",
+                color = TextSub,
+                fontFamily = JetBrainsMono,
+                fontSize = 8.sp,
+                letterSpacing = 1.7.sp
+            )
+            Spacer(Modifier.height(5.dp))
+            AnimatedContent(targetState = title, label = "diagnostic-title") { value ->
+                Text(value, color = tint, fontFamily = JetBrainsMono, fontSize = 9.sp)
+            }
+            Text(
+                if (running) "Tracing engine → provider → relay → tunnel → VPN"
+                else "LIVE SYSTEM TRACE · evidence only",
+                color = TextMuted,
+                fontFamily = JetBrainsMono,
+                fontSize = 7.sp
+            )
+        }
+
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = tint.copy(alpha = 0.12f)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (running) {
+                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = tint)
+                } else {
+                    Icon(Icons.Default.CheckCircle, null, Modifier.size(16.dp), tint = tint)
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (running) "LIVE" else if (healthy) "OK" else "TRACE",
+                    color = TextPrimary,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 8.sp
+                )
             }
         }
     }
