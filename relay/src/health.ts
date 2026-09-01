@@ -1,14 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { SessionRegistry } from "./session-registry.js";
 
-/**
- * HTTP health and metrics endpoint for the LINKO relay node.
- * Runs on port 7001 (or process.env.PORT).
- *
- * GET /health  → JSON health status (returns 200 if UDP is listening, 503 if not)
- * GET /metrics → Prometheus metrics
- */
-
 let totalPacketsForwarded = 0;
 let totalBytesForwarded = 0;
 let totalSessionsServed = 0;
@@ -32,29 +24,34 @@ export function resetMetrics(): void {
 export function startHealthServer(
   port: number,
   registry: SessionRegistry,
-  isUdpHealthy: () => boolean = () => true
+  isUdpHealthy: () => boolean = () => true,
+  isRegistrationHealthy: () => boolean = () => true,
 ): Server {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    // 1. Health check
     if (req.method === "GET" && (req.url === "/health" || req.url === "/")) {
       const udpHealthy = isUdpHealthy();
+      const registrationHealthy = isRegistrationHealthy();
       const uptime = Math.floor((Date.now() - startTime) / 1000);
 
-      if (!udpHealthy) {
-        res.writeHead(503, { "Content-Type": "application/json" });
+      if (!udpHealthy || !registrationHealthy) {
+        res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({
           service: "linko-relay",
-          status: "error",
-          error: "UDP relay socket is not listening",
+          status: "degraded",
+          udp: udpHealthy ? "healthy" : "unhealthy",
+          registration: registrationHealthy ? "healthy" : "stale",
+          uptimeSeconds: uptime,
           timestamp: new Date().toISOString(),
         }));
         return;
       }
 
-      res.writeHead(200, { "Content-Type": "application/json" });
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({
         service: "linko-relay",
         status: "ok",
+        udp: "healthy",
+        registration: "healthy",
         uptimeSeconds: uptime,
         activeSessions: registry.count(),
         totalPacketsForwarded,
@@ -66,7 +63,6 @@ export function startHealthServer(
       return;
     }
 
-    // 2. Prometheus metrics
     if (req.method === "GET" && req.url === "/metrics") {
       const uptime = Math.floor((Date.now() - startTime) / 1000);
       const metrics = [
@@ -92,7 +88,6 @@ export function startHealthServer(
       return;
     }
 
-    // 3. Control-plane pre-registration endpoint (accepts ONLY session ID & key hash, NEVER private keys)
     if (req.method === "POST" && req.url === "/sessions") {
       let body = "";
       req.on("data", chunk => { body += chunk; });
@@ -110,7 +105,7 @@ export function startHealthServer(
           }
           res.writeHead(201, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, sessionId: parsed.sessionId }));
-        } catch (err) {
+        } catch {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Invalid JSON request body" }));
         }
@@ -118,7 +113,6 @@ export function startHealthServer(
       return;
     }
 
-    // 4. Session deletion
     if (req.method === "DELETE" && req.url?.startsWith("/sessions/")) {
       const sessionId = req.url.slice("/sessions/".length);
       const removed = registry.removeSession(sessionId);
