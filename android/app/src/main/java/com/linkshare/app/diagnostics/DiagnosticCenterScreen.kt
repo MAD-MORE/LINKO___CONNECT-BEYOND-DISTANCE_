@@ -241,7 +241,7 @@ private fun DiagnosticHealthCard(
                     },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("\${(progress * 100).toInt()}", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 19.sp)
+                    Text("${(progress * 100).toInt()}", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 19.sp)
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
@@ -249,7 +249,7 @@ private fun DiagnosticHealthCard(
                         targetState = when (overall) {
                             DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
                             DiagnosticOverallState.BLOCKED -> "CHECK BLOCKED"
-                            is DiagnosticOverallState.FAILED -> "FAILURE AT \${overall.component.uppercase()}"
+                            is DiagnosticOverallState.FAILED -> "FAILURE AT ${overall.component.uppercase()}"
                             DiagnosticOverallState.CHECKING -> if (running) "SYSTEM SCAN IN PROGRESS" else "READY TO SCAN"
                         },
                         label = "health-headline"
@@ -257,7 +257,7 @@ private fun DiagnosticHealthCard(
                     Spacer(Modifier.height(4.dp))
                     Text(
                         if (running) currentCheck.ifBlank { "Tracing LINKO's runtime chain…" }
-                        else if (complete) "\${passed} passed · \${failed} failed · \${blocked} blocked · \${pending} pending"
+                        else if (complete) "${passed} passed · ${failed} failed · ${blocked} blocked · ${pending} pending"
                         else "Live runtime evidence, dependency state and connection path.",
                         color = TextSub, fontFamily = JetBrainsMono, fontSize = 9.sp
                     )
@@ -289,7 +289,7 @@ private fun ConnectionJourney(snapshot: DiagnosticTelemetrySnapshot, tablet: Boo
     val stages = listOf("READY", "PROVIDER", "RELAY", "SIGNAL", "TUNNEL", "VPN", "CONNECTED")
     val current = journeyIndex(snapshot)
     LinkoCard(Modifier.fillMaxWidth().animateContentSize()) {
-        SectionHeader("CONNECTION JOURNEY", "Live path · stage \${current + 1}/\${stages.size}")
+        SectionHeader("CONNECTION JOURNEY", "Live path · stage ${current + 1}/${stages.size}")
         Spacer(Modifier.height(10.dp))
         LazyRow(
             contentPadding = PaddingValues(horizontal = 2.dp),
@@ -314,7 +314,7 @@ private fun ConnectionJourney(snapshot: DiagnosticTelemetrySnapshot, tablet: Boo
 
 @Composable
 private fun JourneyStage(label: String, index: Int, active: Boolean, done: Boolean) {
-    val pulse by rememberInfiniteTransition(label = "stage-\${index}").animateFloat(
+    val pulse by rememberInfiniteTransition(label = "stage-${index}").animateFloat(
         0.70f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "stage-pulse"
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp)) {
@@ -331,7 +331,7 @@ private fun JourneyStage(label: String, index: Int, active: Boolean, done: Boole
             contentAlignment = Alignment.Center
         ) {
             if (done) Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = Green)
-            else Text("\${index + 1}", color = if (active) TextPrimary else TextSub, fontFamily = JetBrainsMono, fontSize = 10.sp)
+            else Text("${index + 1}", color = if (active) TextPrimary else TextSub, fontFamily = JetBrainsMono, fontSize = 10.sp)
         }
         Spacer(Modifier.height(5.dp))
         Text(label, color = if (active) TextPrimary else TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp)
@@ -354,7 +354,7 @@ private fun TelemetryGrid(snapshot: DiagnosticTelemetrySnapshot, tablet: Boolean
         Triple("ENGINE", if (snapshot.enginePhase.isBlank()) "IDLE" else snapshot.enginePhase.uppercase(), snapshot.engineDetail),
         Triple("REALTIME", if (snapshot.realtimeConnected) "CONNECTED" else "DISCONNECTED", snapshot.realtimeChannels.ifEmpty { listOf("no channels") }.joinToString()),
         Triple("TUNNEL", if (snapshot.engineDetail.contains("tunnel", true)) "ACTIVE" else "CLOSED", snapshot.engineError ?: "Secure transport state"),
-        Triple("VPN", if (snapshot.vpnRunning) "RUNNING" else "STOPPED", "TX \${snapshot.vpnTxPackets}/\${snapshot.vpnTxBytes}B · RX \${snapshot.vpnRxPackets}/\${snapshot.vpnRxBytes}B")
+        Triple("VPN", if (snapshot.vpnRunning) "RUNNING" else "STOPPED", "TX ${snapshot.vpnTxPackets}/${snapshot.vpnTxBytes}B · RX ${snapshot.vpnRxPackets}/${snapshot.vpnRxBytes}B")
     )
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         cards.chunked(2).forEach { pair ->
@@ -394,7 +394,7 @@ private fun FailureFocusCard(result: DiagnosticResult) {
         Spacer(Modifier.height(7.dp))
         Text(result.detail, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
         result.errorType?.let { Text("TYPE  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-        result.errorMessage?.let { Text("ERROR  \${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+        result.errorMessage?.let { Text("ERROR  ${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
     }
 }
 
@@ -415,7 +415,7 @@ private fun DiagnosticResultRow(result: DiagnosticResult, expanded: Boolean, onT
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(result.name, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 10.sp)
-                    result.latencyMs?.let { Text("  \${it}ms", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+                    result.latencyMs?.let { Text("  ${it}ms", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
                 }
                 Text(result.detail.ifBlank { "No diagnostic evidence yet" }, color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
                 result.blockedBy?.let { Text("BLOCKED BY  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
@@ -427,9 +427,9 @@ private fun DiagnosticResultRow(result: DiagnosticResult, expanded: Boolean, onT
         AnimatedVisibility(expanded) {
             Column(Modifier.fillMaxWidth().padding(start = 46.dp, end = 15.dp, bottom = 12.dp)) {
                 result.errorType?.let { Text("ERROR TYPE  $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-                result.errorMessage?.let { Text("ERROR MSG   \${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
+                result.errorMessage?.let { Text("ERROR MSG   ${sanitizeDiagnosticText(it)}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
                 result.blockedBy?.let { Text("BLOCKER     $it", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp) }
-                Text("MEASURED    \${result.measuredAtMs}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                Text("MEASURED    ${result.measuredAtMs}", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
             }
         }
     }
@@ -469,7 +469,7 @@ private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState, manag
             Column(Modifier.weight(1f)) {
                 Text("UPDATE NETWORK", color = Green, fontFamily = JetBrainsMono, fontSize = 9.sp)
                 Text(state.statusMessage.ifBlank { "Automatic update detection ready" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 9.sp)
-                Text("Current \${state.installedVersionName} (\${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                Text("Current ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 8.sp)
             }
         }
         if (active) {
@@ -592,21 +592,21 @@ private fun DiagnosticsLogsSheet(
 private fun buildDiagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot): String {
     val builder = StringBuilder()
     builder.appendLine("LINKO DIAGNOSTIC REPORT")
-    builder.appendLine("Generated: \${System.currentTimeMillis()}")
+    builder.appendLine("Generated: ${System.currentTimeMillis()}")
     builder.appendLine()
     results.forEach { result ->
         builder.appendLine(
-            "[\${result.status.name}] \${result.name} | \${sanitizeDiagnosticText(result.detail)}" +
+            "[${result.status.name}] ${result.name} | ${sanitizeDiagnosticText(result.detail)}" +
                 (result.errorType?.let { " | type=$it" } ?: "") +
                 (result.latencyMs?.let { " | latency_ms=$it" } ?: "")
         )
     }
     builder.appendLine()
     builder.appendLine("RUNTIME")
-    builder.appendLine("engine=\${sanitizeDiagnosticText(telemetry.enginePhase)} detail=\${sanitizeDiagnosticText(telemetry.engineDetail)}")
-    builder.appendLine("realtime=\${telemetry.realtimeConnected} channels=\${telemetry.realtimeChannels.joinToString(",")}")
-    builder.appendLine("vpn=\${telemetry.vpnRunning} tx_packets=\${telemetry.vpnTxPackets} tx_bytes=\${telemetry.vpnTxBytes} rx_packets=\${telemetry.vpnRxPackets} rx_bytes=\${telemetry.vpnRxBytes}")
-    telemetry.engineTrace.takeLast(20).forEach { builder.appendLine("TRACE \${sanitizeDiagnosticText(it)}") }
+    builder.appendLine("engine=${sanitizeDiagnosticText(telemetry.enginePhase)} detail=${sanitizeDiagnosticText(telemetry.engineDetail)}")
+    builder.appendLine("realtime=${telemetry.realtimeConnected} channels=${telemetry.realtimeChannels.joinToString(",")}")
+    builder.appendLine("vpn=${telemetry.vpnRunning} tx_packets=${telemetry.vpnTxPackets} tx_bytes=${telemetry.vpnTxBytes} rx_packets=${telemetry.vpnRxPackets} rx_bytes=${telemetry.vpnRxBytes}")
+    telemetry.engineTrace.takeLast(20).forEach { builder.appendLine("TRACE ${sanitizeDiagnosticText(it)}") }
     return builder.toString()
 }
 
