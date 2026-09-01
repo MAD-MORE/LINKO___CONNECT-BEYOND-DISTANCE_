@@ -3,8 +3,13 @@ import { request } from "node:https";
 /**
  * Publishes relay liveness to the Supabase control plane.
  *
- * The relay is considered discoverable only while these heartbeats succeed.
- * Registration uses a dedicated shared secret; the secret is never committed.
+ * A relay is usable only while:
+ * 1. its UDP socket is listening, and
+ * 2. its authenticated heartbeat is fresh.
+ *
+ * The heartbeat loop is deliberately self-healing: transient control-plane
+ * failures are retried with bounded backoff, and the health server can expose
+ * registration loss so Fly can restart a wedged relay process.
  */
 export interface RelayHeartbeatOptions {
   nodeId: string;
@@ -18,36 +23,83 @@ export interface RelayHeartbeatOptions {
   currentSessions?: () => number;
 }
 
+const DEFAULT_INTERVAL_MS = 15_000;
+const MIN_RETRY_MS = 2_000;
+const MAX_RETRY_MS = 15_000;
+const FRESHNESS_MS = 45_000;
+
 export class RelayHeartbeat {
   private timer: NodeJS.Timeout | null = null;
+  private stopped = true;
+  private lastSuccessAt = 0;
+  private consecutiveFailures = 0;
 
   constructor(private readonly options: RelayHeartbeatOptions) {}
 
-  /** Perform the first registration synchronously from the lifecycle's point of view. */
+  /** Perform the first registration before production considers the relay ready. */
   async start(): Promise<void> {
     if (this.timer) return;
 
-    // Do not advertise the node until the first authenticated heartbeat succeeds.
+    this.stopped = false;
     await this.send();
-    this.timer = setInterval(() => {
-      void this.send().catch((error) => {
-        // A transient failure is logged; the database TTL will eventually remove
-        // this node from selection if heartbeats stop succeeding.
-        console.error(JSON.stringify({
-          ts: new Date().toISOString(),
-          level: "warn",
-          event: "relay_heartbeat_failed",
-          error: error instanceof Error ? error.message : String(error),
-        }));
-      });
-    }, this.options.intervalMs ?? 15_000);
-    this.timer.unref();
+    this.schedule(this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
+    }
+  }
+
+  /** True only while an authenticated heartbeat has succeeded recently. */
+  isHealthy(maxAgeMs = FRESHNESS_MS): boolean {
+    return !this.stopped && this.lastSuccessAt > 0 &&
+      Date.now() - this.lastSuccessAt <= maxAgeMs;
+  }
+
+  getLastSuccessAt(): number {
+    return this.lastSuccessAt;
+  }
+
+  getConsecutiveFailures(): number {
+    return this.consecutiveFailures;
+  }
+
+  private schedule(delayMs: number): void {
+    if (this.stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.tick();
+    }, Math.max(0, delayMs));
+    this.timer.unref();
+  }
+
+  private async tick(): Promise<void> {
+    if (this.stopped) return;
+
+    try {
+      await this.send();
+      this.consecutiveFailures = 0;
+      this.schedule(this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
+    } catch (error) {
+      this.consecutiveFailures += 1;
+      console.error(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        event: "relay_heartbeat_failed",
+        consecutiveFailures: this.consecutiveFailures,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+
+      const retryDelay = Math.min(
+        MAX_RETRY_MS,
+        MIN_RETRY_MS * 2 ** Math.min(this.consecutiveFailures - 1, 3),
+      );
+      this.schedule(retryDelay);
     }
   }
 
@@ -79,6 +131,7 @@ export class RelayHeartbeat {
       }, (res) => {
         res.resume();
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          this.lastSuccessAt = Date.now();
           resolve();
         } else {
           reject(new Error(`relay_heartbeat_http_${res.statusCode ?? 0}`));
@@ -98,9 +151,6 @@ export function createRelayHeartbeatFromEnv(currentSessions?: () => number): Rel
   const heartbeatUrl = process.env.LINKO_RELAY_HEARTBEAT_URL?.trim();
   if (!rawRegistrationToken || !heartbeatUrl) return null;
 
-  // GitHub/Fly secret values can accidentally contain formatting whitespace.
-  // The registration token is a hexadecimal shared secret, so remove whitespace
-  // anywhere in the value before using it as an HTTP header.
   const registrationToken = rawRegistrationToken.replace(/\s/g, "");
   if (!/^[0-9A-Fa-f]+$/.test(registrationToken)) {
     throw new Error("relay_registration_token_invalid_format");
@@ -113,7 +163,7 @@ export function createRelayHeartbeatFromEnv(currentSessions?: () => number): Rel
     region: process.env.RELAY_REGION ?? "iad",
     heartbeatUrl,
     registrationToken,
-    intervalMs: Number(process.env.RELAY_HEARTBEAT_INTERVAL_MS ?? 15_000),
+    intervalMs: Number(process.env.RELAY_HEARTBEAT_INTERVAL_MS ?? DEFAULT_INTERVAL_MS),
     maxSessions: Number(process.env.RELAY_MAX_SESSIONS ?? 1000),
     currentSessions,
   });
