@@ -78,7 +78,8 @@ object LinkoEngineBridge {
             val current = control.session(sessionId)
             if (current.state == "denied" || current.state == "expired" || current.state == "revoked") throw LinkoNetworkException("session_${current.state}")
             if (ice != null && remoteCandidate == null) remoteCandidate = runCatching { ice.awaitRemoteCandidate(sessionId, 250L) }.getOrNull()
-            val config = runCatching { control.tunnelConfig(sessionId) }.getOrNull()
+            val configResult = runCatching { control.tunnelConfig(sessionId) }
+            val config = configResult.getOrNull()
             if (config != null) {
                 publishAndNotify("establishing", onState)
                 val host = remoteCandidate?.host ?: config.host
@@ -89,8 +90,19 @@ object LinkoEngineBridge {
                 publishAndNotify("securing", onState); publishAndNotify("routing", onState)
                 runCatching { control.transition(sessionId, "connected") }; publishAndNotify("connected", onState); return
             }
-            if (attempt > 0) publishAndNotify("signaling_retry", onState)
-            delay(1_000L)
+
+            val tunnelError = configResult.exceptionOrNull()
+            val errorMessage = tunnelError?.message.orEmpty()
+            if (errorMessage == "no_healthy_relay") {
+                publish("establishing", "No healthy relay is currently available; retrying…")
+                onState("relay_retry")
+            } else if (tunnelError != null) {
+                publish("establishing", "Tunnel configuration unavailable; retrying…")
+                onState("tunnel_config_retry")
+            } else if (attempt > 0) {
+                publishAndNotify("signaling_retry", onState)
+            }
+            delay(if (errorMessage == "no_healthy_relay") 2_000L else 1_000L)
         }
         throw LinkoNetworkException("tunnel_setup_timeout")
     }
