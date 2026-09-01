@@ -52,12 +52,14 @@ describe("LINKO Zero-Knowledge Data-Plane Relay Test Suite", () => {
   const TEST_UDP_PORT = 7990;
   const TEST_HTTP_PORT = 7991;
   let relay: RelayInstance;
+  let registrationHealthy = true;
 
   before(async () => {
     relay = await createRelayServer({
       udpPort: TEST_UDP_PORT,
       httpPort: TEST_HTTP_PORT,
       maxSessionBytes: 5000, // Small limit for testing quota
+      isRegistrationHealthy: () => registrationHealthy,
     });
   });
 
@@ -65,14 +67,25 @@ describe("LINKO Zero-Knowledge Data-Plane Relay Test Suite", () => {
     await relay.close();
   });
 
-  test("1. Health endpoint returns 200 OK with relay metrics", async () => {
-    const res = await fetch(`http://127.0.0.1:${TEST_HTTP_PORT}/health`);
+  test("1. Health endpoint returns 200 only while UDP and registration are healthy", async () => {
+    let res = await fetch(`http://127.0.0.1:${TEST_HTTP_PORT}/health`);
     assert.equal(res.status, 200);
-    const body = await res.json() as any;
+    let body = await res.json() as any;
     assert.equal(body.service, "linko-relay");
     assert.equal(body.status, "ok");
-    assert.equal(typeof body.uptimeSeconds, "number");
-    assert.equal(typeof body.activeSessions, "number");
+    assert.equal(body.udp, "healthy");
+    assert.equal(body.registration, "healthy");
+
+    registrationHealthy = false;
+    res = await fetch(`http://127.0.0.1:${TEST_HTTP_PORT}/health`);
+    assert.equal(res.status, 503);
+    body = await res.json() as any;
+    assert.equal(body.status, "degraded");
+    assert.equal(body.registration, "stale");
+
+    registrationHealthy = true;
+    res = await fetch(`http://127.0.0.1:${TEST_HTTP_PORT}/health`);
+    assert.equal(res.status, 200);
   });
 
   test("2. Rejects malformed and short datagrams without crashing", async () => {
