@@ -62,14 +62,12 @@ jobs:
       - name: Build relay container
         working-directory: relay
         run: docker build -t linko-relay:validation .
-      - name: Start UDP relay
+      - name: Start UDP relay with host networking
         run: |
           set -euo pipefail
-          docker run --rm -d --name linko-validation-relay \
+          docker run --rm -d --network host --name linko-validation-relay \
             -e RELAY_NODE_ID=validation-relay \
             -e RELAY_REGION=validation \
-            -p 7000:7000/udp \
-            -p 7001:7001 \
             linko-relay:validation node dist/relay-server.js
           trap 'docker logs linko-validation-relay || true; docker stop linko-validation-relay >/dev/null 2>&1 || true' EXIT
           for i in {1..15}; do
