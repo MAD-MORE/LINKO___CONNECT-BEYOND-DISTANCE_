@@ -317,14 +317,31 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Verify credentials
         run: |
+          set -euo pipefail
           test -n "$FLY_API_TOKEN" || { echo '::error::FLY_API_TOKEN is not configured'; exit 1; }
           test -n "$LINKO_RELAY_REGISTRATION_TOKEN" || { echo '::error::LINKO_RELAY_REGISTRATION_TOKEN is not configured'; exit 1; }
           flyctl auth whoami
+      - name: Verify registration secret shape
+        run: |
+          set -euo pipefail
+          token="$LINKO_RELAY_REGISTRATION_TOKEN"
+          printf 'registration_token_present=%s\n' "$([ -n "$token" ] && echo true || echo false)"
+          printf 'registration_token_length=%s\n' "${#token}"
+          if printf '%s' "$token" | grep -qE '[[:space:]]'; then
+            echo 'registration_token_has_whitespace=true'
+          else
+            echo 'registration_token_has_whitespace=false'
+          fi
+          case "$token" in
+            (*[!0-9A-Fa-f]*) echo 'registration_token_hex_format=false' ;;
+            (*) echo 'registration_token_hex_format=true' ;;
+          esac
       - name: Ensure dedicated IPv4
         run: |
           if ! flyctl ips list --app linko-relay | grep -q 'v4'; then flyctl ips allocate-v4 --app linko-relay; fi
       - name: Configure relay credentials
         run: |
+          set -euo pipefail
           flyctl secrets set LINKO_RELAY_HEARTBEAT_URL="$LINKO_RELAY_HEARTBEAT_URL" LINKO_RELAY_REGISTRATION_TOKEN="$LINKO_RELAY_REGISTRATION_TOKEN" RELAY_NODE_ID=relay-1 RELAY_PUBLIC_HOST=linko-relay.fly.dev --app linko-relay
       - name: Deploy
         run: flyctl deploy ./relay --app linko-relay --remote-only
