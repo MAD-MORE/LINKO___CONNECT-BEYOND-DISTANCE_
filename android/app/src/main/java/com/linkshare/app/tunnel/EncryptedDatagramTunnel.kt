@@ -30,9 +30,6 @@ class EncryptedDatagramTunnel(
     private val sessionBytes = sessionId.toByteArray(Charsets.US_ASCII).also { require(it.size == SESSION_ID_LEN) { "Session ID must be 36 ASCII characters" } }
     private val random = SecureRandom()
     private val sendSequence = AtomicLong(1)
-
-    // Replay state is updated only after successful AES-GCM authentication.
-    // A bounded set permits authenticated out-of-order packets inside the window.
     private val receivedSequences = LinkedHashSet<Long>(REPLAY_WINDOW)
     private var maxReceivedSequence = 0L
 
@@ -52,13 +49,14 @@ class EncryptedDatagramTunnel(
         require(plaintext.size <= MAX_PAYLOAD) { "Payload exceeds maximum allowable size (${plaintext.size} > $MAX_PAYLOAD)" }
         val seq = sendSequence.getAndIncrement()
         val nonce = ByteArray(NONCE_LEN).also(random::nextBytes)
-        val cipher = Cipher.getInstance(CIPHER_ALGO)
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_LEN_BITS, nonce))
         val aad = ByteBuffer.allocate(HEADER_NO_NONCE_LEN).order(ByteOrder.BIG_ENDIAN).apply {
             put(MAGIC); put(VERSION); put(sessionBytes); put(keyHash); put(role.code); put(type.code); putLong(seq)
         }.array()
-        cipher.updateAAD(aad)
-        val ciphertext = cipher.doFinal(plaintext)
+        val ciphertext = Cipher.getInstance(CIPHER_ALGO).run {
+            init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_LEN_BITS, nonce))
+            updateAAD(aad)
+            doFinal(plaintext)
+        }
         val wire = ByteBuffer.allocate(HEADER_LEN + ciphertext.size).order(ByteOrder.BIG_ENDIAN).apply {
             put(aad); put(nonce); put(ciphertext)
         }.array()
@@ -70,6 +68,10 @@ class EncryptedDatagramTunnel(
         val rawBuffer = ByteArray(MAX_FRAME_LEN)
         val packet = DatagramPacket(rawBuffer, rawBuffer.size)
         try { socket.receive(packet) } catch (_: java.net.SocketTimeoutException) { return null }
+
+        // Session authentication prevents forged packets, while endpoint binding prevents
+        // accepting authenticated traffic from a stale or unexpected candidate once selected.
+        if (packet.address != peer.address || packet.port != peer.port) return null
         if (packet.length < HEADER_LEN + TAG_LEN_BYTES) return null
 
         val buffer = ByteBuffer.wrap(rawBuffer, 0, packet.length).order(ByteOrder.BIG_ENDIAN)
@@ -87,7 +89,6 @@ class EncryptedDatagramTunnel(
         val type = PacketType.values().firstOrNull { it.code == typeCode } ?: return null
         val seq = buffer.getLong()
         if (seq <= 0L) return null
-
         val nonce = ByteArray(NONCE_LEN); buffer.get(nonce)
         val ciphertextLen = packet.length - HEADER_LEN
         if (ciphertextLen < TAG_LEN_BYTES) return null
@@ -105,14 +106,8 @@ class EncryptedDatagramTunnel(
         return ReceivedPacket(type, seq, plaintext)
     }
 
-    fun sendPing(timestampMs: Long = System.currentTimeMillis()) {
-        send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(timestampMs).array(), PacketType.PING)
-    }
-
-    fun sendPong(echoTimestamp: Long) {
-        send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(echoTimestamp).array(), PacketType.PONG)
-    }
-
+    fun sendPing(timestampMs: Long = System.currentTimeMillis()) = send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(timestampMs).array(), PacketType.PING)
+    fun sendPong(echoTimestamp: Long) = send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(echoTimestamp).array(), PacketType.PONG)
     fun sendClose() { runCatching { send(ByteArray(0), PacketType.CLOSE) } }
 
     override fun close() {
