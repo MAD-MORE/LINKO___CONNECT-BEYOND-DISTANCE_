@@ -26,7 +26,6 @@ object LinkoEngineBridge {
     private var scope: CoroutineScope? = null
     private var appContext: Context? = null
     private var connectionJob: Job? = null
-    private var approvedProviderSessionId: String? = null
     private var lastFriendUserId: String? = null
     private val presenceJobs = ConcurrentHashMap<String, Job>()
     private val presenceFlows = ConcurrentHashMap<String, MutableStateFlow<LinkoFriendPresence>>()
@@ -125,6 +124,7 @@ object LinkoEngineBridge {
             when (val state = control.session(sessionId).state) {
                 "approved", "signaling", "connected" -> return
                 "denied" -> throw LinkoNetworkException("connection_request_denied")
+                "failed" -> throw LinkoNetworkException("provider_connection_failed")
                 "expired" -> throw LinkoNetworkException("connection_request_expired")
                 "revoked" -> throw LinkoNetworkException("connection_request_revoked")
                 else -> { if (attempt > 0 && attempt % 5 == 0) publishAndNotify("waiting_for_provider", onState); delay(1_000L) }
@@ -144,9 +144,11 @@ object LinkoEngineBridge {
 
         for (attempt in 0 until 40) {
             val current = control.session(sessionId)
+            if (current.state == "failed") throw LinkoNetworkException("provider_connection_failed")
             if (current.state == "denied" || current.state == "expired" || current.state == "revoked") throw LinkoNetworkException("session_${current.state}")
             val config = runCatching { control.tunnelConfig(sessionId) }.getOrNull()
             if (config != null) {
+                if (config.sessionId != sessionId || config.role != "receiver" || config.transport != "direct_udp") throw LinkoNetworkException("invalid_receiver_tunnel_config")
                 publishAndNotify("establishing", onState)
                 publishAndNotify("direct_connecting", onState)
                 tunnel.startDirectVpnTunnel(config.sessionId, config.key)
@@ -177,32 +179,33 @@ object LinkoEngineBridge {
     suspend fun getPendingProviderRequests(): List<ProviderRequest> = runCatching { api?.pendingProviderRequests() }.getOrNull() ?: emptyList()
 
     fun approvePendingProviderRequest(peerName: String? = null, peerId: String? = null, onState: (String) -> Unit = {}) {
-        val context = appContext ?: return onState("engine_not_initialized")
-        context.startForegroundService(Intent(context, LinkoProviderService::class.java))
+        if (appContext == null) return onState("engine_not_initialized")
         setPeerInfo(peerName ?: "LINKO Friend", peerId, true)
         scope?.launch {
             runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
                     if (request == null) onState("no_pending_request")
                     else runCatching { api?.transition(request.id, "approved") }
-                        .onSuccess { approvedProviderSessionId = request.id; _connection.update { it.copy(sessionId = request.id) }; onState("approved") }
+                        .onSuccess {
+                            _connection.update { it.copy(sessionId = request.id) }
+                            onState("approved")
+                            startApprovedProviderSession(request.id)
+                        }
                         .onFailure { onState(it.message ?: "approval_failed") }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
         } ?: onState("engine_scope_unavailable")
     }
 
-    fun startApprovedProviderSession(onState: (String) -> Unit = {}) {
+    private fun startApprovedProviderSession(sessionId: String, onState: (String) -> Unit = {}) {
         val context = appContext ?: return onState("engine_not_initialized")
-        val sessionId = approvedProviderSessionId ?: return onState("no_approved_session")
+        if (sessionId.isBlank()) return onState("invalid_session_id")
         context.startForegroundService(Intent(context, LinkoProviderService::class.java).setAction(LinkoProviderService.ACTION_START_APPROVED).putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId))
-        approvedProviderSessionId = null
         onState("starting")
     }
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
-        val context = appContext ?: return onState("engine_not_initialized")
-        context.startForegroundService(Intent(context, LinkoProviderService::class.java))
+        if (appContext == null) return onState("engine_not_initialized")
         scope?.launch {
             runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
