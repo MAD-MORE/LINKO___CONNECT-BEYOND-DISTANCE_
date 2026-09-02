@@ -132,6 +132,15 @@ class MainActivity : ComponentActivity() {
     private fun unlockApp() {
         if (appUnlocked) return
         appUnlocked = true
+
+        // Start the actual LINKO runtime as soon as the app is unlocked.
+        // This registers the device, starts Supabase Realtime, publishes
+        // presence heartbeats, and pre-warms the provider service. Without
+        // this call the UI could open while the device remained invisible to
+        // friends, causing every connection attempt to report "offline".
+        runCatching { linkoRuntime.start() }
+            .onFailure { Log.e(TAG, "LINKO runtime startup failed", it) }
+
         runCatching { requestEnginePermissions() }
             .onFailure { Log.e(TAG, "Permission setup failed", it) }
         runCatching {
