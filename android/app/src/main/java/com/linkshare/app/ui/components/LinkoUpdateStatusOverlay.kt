@@ -44,16 +44,7 @@ fun LinkoUpdateStatusOverlay(updateManager: LinkoUpdateManager) {
     var visible by remember { mutableStateOf(false) }
 
     LaunchedEffect(status) {
-        when (status) {
-            LinkoUpdateManager.UpdateStatus.Idle -> visible = false
-            LinkoUpdateManager.UpdateStatus.UpToDate,
-            LinkoUpdateManager.UpdateStatus.Installed -> {
-                visible = true
-                kotlinx.coroutines.delay(2200L)
-                visible = false
-            }
-            else -> visible = true
-        }
+        visible = status != LinkoUpdateManager.UpdateStatus.Idle
     }
 
     if (!visible) return
