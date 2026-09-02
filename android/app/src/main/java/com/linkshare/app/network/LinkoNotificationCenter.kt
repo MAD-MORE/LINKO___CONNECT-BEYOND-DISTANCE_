@@ -34,7 +34,14 @@ data class LinkoNotification(
     val actorName: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
-    enum class Kind { FRIEND_REQUEST, FRIEND_ACCEPTED, FRIEND_DECLINED, FRIEND_REMOVED, CONNECTION }
+    enum class Kind {
+        FRIEND_REQUEST_INCOMING,
+        FRIEND_REQUEST_SENT,
+        FRIEND_ACCEPTED,
+        FRIEND_DECLINED,
+        FRIEND_REMOVED,
+        CONNECTION,
+    }
 }
 
 object LinkoNotificationCenter {
@@ -91,7 +98,7 @@ object LinkoNotificationCenter {
                         id = "friend-request:${event.requestId}",
                         title = "New Friend Request",
                         message = "$name wants to be your LINKO friend.",
-                        kind = LinkoNotification.Kind.FRIEND_REQUEST,
+                        kind = LinkoNotification.Kind.FRIEND_REQUEST_INCOMING,
                         requestId = event.requestId,
                         actorUserId = actorUserId,
                         actorName = name,
@@ -105,7 +112,7 @@ object LinkoNotificationCenter {
                     id = "friend-sent:${event.requestId}",
                     title = "Friend Request Sent",
                     message = "Your LINKO friend request was sent and is waiting for a response.",
-                    kind = LinkoNotification.Kind.FRIEND_REQUEST,
+                    kind = LinkoNotification.Kind.FRIEND_REQUEST_SENT,
                     requestId = event.requestId,
                 )
             )
