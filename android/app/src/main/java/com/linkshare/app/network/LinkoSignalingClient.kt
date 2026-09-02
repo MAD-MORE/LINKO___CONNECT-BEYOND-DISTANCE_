@@ -7,7 +7,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Authenticated client for Supabase-backed signaling. */
+/** Authenticated Supabase signaling client. Supabase carries signaling only, never tunnel data. */
 class LinkoSignalingClient(
     private val baseUrl: String = BuildConfig.LINKO_SUPABASE_URL,
     private val accessToken: String,
@@ -22,25 +22,44 @@ class LinkoSignalingClient(
     }
 
     suspend fun send(sessionId: String, kind: SignalKind, payload: JSONObject): SignalEnvelope = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("p_session_id", sessionId)
-            .put("p_kind", kind.wireValue)
-            .put("p_payload", payload)
-        val response = rpc("linko_send_signal", body)
+        val response = rpc(
+            "linko_send_signal",
+            JSONObject()
+                .put("p_session_id", sessionId)
+                .put("p_kind", kind.wireValue)
+                .put("p_payload", payload)
+        )
         SignalEnvelope.fromJson(response)
     }
 
     suspend fun receive(sessionId: String): List<SignalEnvelope> = withContext(Dispatchers.IO) {
-        val response = rpc("linko_receive_signals", JSONObject().put("p_session_id", sessionId))
+        val response = rpc("linko_receive_signals", JSONObject().put("p_session_id", sessionId), connectTimeoutMs = 2_500, readTimeoutMs = 1_500)
         val result = response.optJSONArray("signals") ?: org.json.JSONArray()
-        buildList(result.length()) { for (i in 0 until result.length()) add(SignalEnvelope.fromJson(result.getJSONObject(i))) }
+        buildList(result.length()) {
+            for (i in 0 until result.length()) {
+                result.optJSONObject(i)?.let(::addSignal)
+            }
+        }
     }
 
-    private fun rpc(function: String, body: JSONObject): JSONObject {
+    private fun buildList(size: Int, block: MutableList<SignalEnvelope>.() -> Unit): List<SignalEnvelope> {
+        return ArrayList<SignalEnvelope>(size).apply(block)
+    }
+
+    private fun MutableList<SignalEnvelope>.addSignal(json: JSONObject) {
+        add(SignalEnvelope.fromJson(json))
+    }
+
+    private fun rpc(
+        function: String,
+        body: JSONObject,
+        connectTimeoutMs: Int = 5_000,
+        readTimeoutMs: Int = 5_000,
+    ): JSONObject {
         val connection = (URL(baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 10_000
-            readTimeout = 15_000
+            connectTimeout = connectTimeoutMs
+            readTimeout = readTimeoutMs
             doOutput = true
             setRequestProperty("Authorization", "Bearer $accessToken")
             setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
@@ -53,7 +72,9 @@ class LinkoSignalingClient(
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = if (text.isBlank()) JSONObject() else JSONObject(text)
-            if (status !in 200..299) throw LinkoSignalingException(status, json.optString("message", json.optString("error", "supabase_rpc_error")))
+            if (status !in 200..299) {
+                throw LinkoSignalingException(status, json.optString("message", json.optString("error", "supabase_rpc_error")))
+            }
             return json
         } finally {
             connection.disconnect()
@@ -80,7 +101,11 @@ data class SignalEnvelope(
             sessionId = json.optString("sessionId"),
             senderDeviceId = json.optString("senderDeviceId"),
             recipientDeviceId = json.optString("recipientDeviceId"),
-            kind = when (json.optString("kind")) { "offer" -> SignalKind.OFFER; "answer" -> SignalKind.ANSWER; else -> SignalKind.ICE },
+            kind = when (json.optString("kind")) {
+                "offer" -> SignalKind.OFFER
+                "answer" -> SignalKind.ANSWER
+                else -> SignalKind.ICE
+            },
             payload = json.optJSONObject("payload") ?: JSONObject(),
             createdAtEpochMillis = json.optLong("createdAt", System.currentTimeMillis()),
         )
