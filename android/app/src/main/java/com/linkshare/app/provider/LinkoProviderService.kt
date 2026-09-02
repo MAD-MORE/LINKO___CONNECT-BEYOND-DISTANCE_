@@ -37,9 +37,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.net.DatagramSocket
-import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.URL
 
 /** Provider foreground service. It shares the real device Internet only over a direct P2P tunnel. */
 class LinkoProviderService : Service() {
@@ -107,6 +104,15 @@ class LinkoProviderService : Service() {
         }
     }
 
+    /** Re-notify currently pending requests after Realtime reports a new request. */
+    private suspend fun notifyPendingConnectionRequests() {
+        runCatching { api.pendingProviderRequests() }
+            .getOrDefault(emptyList())
+            .forEach { request ->
+                postRequestNotification(request.id, request.receiverDeviceId)
+            }
+    }
+
     /**
      * Presence watchdog owned by the foreground engine service. It deliberately keeps the
      * existing 15-second heartbeat and adds Realtime recovery; it does not alter the
@@ -117,8 +123,6 @@ class LinkoProviderService : Service() {
             runCatching {
                 api.ensureRegistered()
                 api.touchPresence()
-                // The activity can disappear/recreate on Android. Re-assert the Realtime
-                // transport from the long-lived provider engine whenever its watchdog fires.
                 LinkoRealtimeManager.start(this@LinkoProviderService)
             }.onFailure { error ->
                 Log.w(TAG, "Presence heartbeat failed: ${error.message}")
@@ -252,7 +256,6 @@ class LinkoProviderService : Service() {
         createChannel()
         startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is active and ready for connection requests"))
         registerNetworkCallback()
-        // The provider service is the long-lived owner of the engine presence/watchdog.
         LinkoRealtimeManager.start(this)
         scope.launch { runCatching { api.ensureRegistered(); api.touchPresence() } }
         scope.launch { listenToRealtime() }
@@ -260,7 +263,6 @@ class LinkoProviderService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Re-assert the realtime engine whenever Android delivers a service start request.
         LinkoRealtimeManager.start(this)
         val dataCapMb = intent?.getLongExtra(EXTRA_DATA_CAP_MB, 0L) ?: 0L
         if (dataCapMb > 0) dataCapBytes = dataCapMb * 1024 * 1024
