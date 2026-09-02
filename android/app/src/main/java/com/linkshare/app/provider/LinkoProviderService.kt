@@ -104,29 +104,19 @@ class LinkoProviderService : Service() {
         }
     }
 
-    /** Re-notify currently pending requests after Realtime reports a new request. */
     private suspend fun notifyPendingConnectionRequests() {
         runCatching { api.pendingProviderRequests() }
             .getOrDefault(emptyList())
-            .forEach { request ->
-                postRequestNotification(request.id, request.receiverDeviceId)
-            }
+            .forEach { request -> postRequestNotification(request.id, request.receiverDeviceId) }
     }
 
-    /**
-     * Presence watchdog owned by the foreground engine service. It deliberately keeps the
-     * existing 15-second heartbeat and adds Realtime recovery; it does not alter the
-     * connection/session process.
-     */
     private suspend fun heartbeat() {
         while (scope.isActive) {
             runCatching {
                 api.ensureRegistered()
                 api.touchPresence()
                 LinkoRealtimeManager.start(this@LinkoProviderService)
-            }.onFailure { error ->
-                Log.w(TAG, "Presence heartbeat failed: ${error.message}")
-            }
+            }.onFailure { error -> Log.w(TAG, "Presence heartbeat failed: ${error.message}") }
             delay(15_000L)
         }
     }
@@ -138,7 +128,8 @@ class LinkoProviderService : Service() {
                 notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
                 return@launch
             }
-            runCatching { api.transition(requestId, "approved"); startApproved(requestId) }.onFailure { stopRunner(requestId) }
+            runCatching { api.transition(requestId, "approved"); startApproved(requestId) }
+                .onFailure { error -> Log.e(TAG, "Approval failed: ${error.message}"); stopRunner(requestId) }
         }
     }
 
@@ -149,6 +140,7 @@ class LinkoProviderService : Service() {
                 notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
                 return@launch
             }
+
             var config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
             if (config == null) {
                 repeat(TUNNEL_CONFIG_RETRIES) {
@@ -158,14 +150,13 @@ class LinkoProviderService : Service() {
                 }
             }
             val activeConfig = config ?: run {
-                Log.e(TAG, "Could not fetch direct tunnel credentials for $requestId")
                 LinkoEngineBridge.reportTunnelState("failed", "Could not obtain secure session credentials")
                 stopRunner(requestId)
                 return@launch
             }
             if (activeConfig.relay || activeConfig.transport != "direct_udp") {
                 Log.e(TAG, "Refusing non-direct transport for $requestId")
-                LinkoEngineBridge.reportTunnelState("failed", "Relay transport is disabled")
+                LinkoEngineBridge.reportTunnelState("failed", "Direct transport is required; relay transport is disabled")
                 stopRunner(requestId)
                 return@launch
             }
@@ -179,17 +170,15 @@ class LinkoProviderService : Service() {
                 LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
                 val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("device_auth_required")
-                val signaling = LinkoSignalingClient(accessToken = token)
                 val negotiated = runBlocking {
                     DirectP2pNegotiator.establish(
                         sessionId = activeConfig.sessionId,
                         sessionKey = activeConfig.key,
                         role = EncryptedDatagramTunnel.Role.PROVIDER,
-                        signaling = signaling,
+                        signaling = LinkoSignalingClient(accessToken = token),
                         socket = socket,
                     )
                 }
-
                 val runner = ProviderTunnelRunner(
                     socket = negotiated.socket,
                     endpoint = negotiated.peer,
@@ -200,6 +189,13 @@ class LinkoProviderService : Service() {
                 )
                 runners[requestId] = runner
                 runner.start()
+
+                // Persist the real data-plane state only after the authenticated P2P check succeeded.
+                runCatching { api.transition(activeConfig.sessionId, "signaling") }
+                    .onFailure { Log.d(TAG, "Session already signaling/advanced: ${it.message}") }
+                runCatching { api.transition(activeConfig.sessionId, "connected") }
+                    .onFailure { Log.w(TAG, "Could not persist connected session state: ${it.message}") }
+
                 LinkoEngineBridge.reportTunnelState("connected", "Direct connection established; Provider is sharing Internet")
                 notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
                 Log.i(TAG, "Direct provider tunnel established for session=${activeConfig.sessionId} peer=${negotiated.peer}")
