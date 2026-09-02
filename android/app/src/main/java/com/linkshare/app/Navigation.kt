@@ -26,7 +26,6 @@ sealed class Screen(val route: String) {
     object RxApproved : Screen("rx_approved")
     object RxConnecting : Screen("rx_connecting")
     object RxDirectPath : Screen("rx_direct_path")
-    object RxRelayFallback : Screen("rx_relay_fallback")
     object Connected : Screen("connected")
     object NetworkQuality : Screen("network_quality")
     object Usage : Screen("usage")
