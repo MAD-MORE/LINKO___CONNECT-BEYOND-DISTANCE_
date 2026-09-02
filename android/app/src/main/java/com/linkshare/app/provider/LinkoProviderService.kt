@@ -158,6 +158,8 @@ class LinkoProviderService : Service() {
                 if (activeConfig.key.size != 32) throw LinkoNetworkException("invalid_tunnel_key")
 
                 val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
+                api.transition(activeConfig.sessionId, "signaling")
+                Log.i(TAG, "SESSION_SIGNALING session=$requestId")
                 val socket = runCatching { DatagramSocket(0) }.getOrElse { throw LinkoNetworkException("udp_socket_creation_failed: ${it.message}") }
                 try {
                     Log.i(TAG, "UDP_SOCKET_CREATED session=$requestId port=${socket.localPort}")
