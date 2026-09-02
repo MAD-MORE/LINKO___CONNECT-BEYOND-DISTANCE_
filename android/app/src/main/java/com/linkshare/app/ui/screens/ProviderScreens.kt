@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
-import com.linkshare.app.network.LinkoProfileApi
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.provider.LinkoProviderService
@@ -68,7 +67,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val auth = remember { LinkoAuth(context) }
-    val api = remember { LinkoProfileApi(auth::currentAccessToken, auth::currentUserId) }
     var username by remember { mutableStateOf(auth.currentUsername() ?: auth.currentDisplayName().orEmpty()) }
     var linkoId by remember { mutableStateOf(auth.currentLinkoId().orEmpty()) }
     var providerState by remember { mutableStateOf(if (linkoId.isNotBlank()) "READY" else "LOADING") }
@@ -86,23 +84,14 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
 
     LaunchedEffect(Unit) {
         LinkoProviderService.start(context)
-
-        // Asynchronously ensure and load canonical profile
         runCatching {
-            val profile = withContext(Dispatchers.IO) { api.load() }
+            val profile = withContext(Dispatchers.IO) { com.linkshare.app.network.LinkoProfileApi(auth::currentAccessToken, auth::currentUserId).load() }
             username = profile.username ?: profile.displayName
             linkoId = profile.linkoId
             auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
-            if (providerState == "LOADING" || providerState == "ID_ERROR") {
-                providerState = "READY"
-            }
-        }.onFailure {
-            if (linkoId.isBlank()) {
-                providerState = "ID_ERROR"
-            }
-        }
+            if (providerState == "LOADING" || providerState == "ID_ERROR") providerState = "READY"
+        }.onFailure { if (linkoId.isBlank()) providerState = "ID_ERROR" }
 
-        // Realtime event listener
         launch {
             LinkoRealtimeManager.events.collect { event ->
                 when (event) {
@@ -120,6 +109,7 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                                 "approved" -> "APPROVED"
                                 "signaling" -> "SIGNALING"
                                 "connected" -> "SHARING"
+                                "failed" -> "FAILED"
                                 "denied" -> "DECLINED"
                                 "revoked", "expired" -> "ENDED"
                                 else -> providerState
@@ -133,7 +123,6 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             }
         }
 
-        // Polling fallback every 2 seconds for resilient request detection
         launch {
             while (true) {
                 runCatching {
@@ -152,15 +141,13 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         }
     }
 
-    LaunchedEffect(copied) {
-        if (copied) { delay(1500); copied = false }
-    }
+    LaunchedEffect(copied) { if (copied) { delay(1500); copied = false } }
 
     val connectionBusy = providerState == "LOADING" || providerState == "REQUESTED" || providerState == "APPROVED" || providerState == "SIGNALING"
     val ringColor = when (providerState) {
         "SHARING", "CONNECTED" -> Green
         "LOADING", "READY", "REQUESTED", "APPROVED", "SIGNALING" -> Blue
-        "DECLINED", "ENDED", "OFFLINE" -> Yellow
+        "DECLINED", "ENDED", "OFFLINE", "FAILED" -> Yellow
         "ID_ERROR" -> Red
         else -> Blue
     }
@@ -171,191 +158,98 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         Text("Share your connection with a friend", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(14.dp))
-
         Ring(color = ringColor, size = 190.dp, pulse = connectionBusy || providerState == "SHARING", label = if (providerState == "SHARING") "SHARING" else "READY")
-
         Spacer(Modifier.height(14.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(Surface)
-                .border(1.dp, Border, RoundedCornerShape(12.dp))
-                .clickable { copyId(linkoId) }
-                .padding(14.dp)
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).clickable { copyId(linkoId) }.padding(14.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("USERNAME", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Text("@${username.removePrefix("@").ifBlank { "LINKO User" }}", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Text("LINKO ID (TAP TO COPY)", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (linkoId.isBlank()) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Blue, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(
-                        if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…",
-                        color = if (linkoId.isBlank()) Blue else Green,
-                        fontSize = 18.sp,
-                        fontFamily = JetBrainsMono,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (linkoId.isBlank()) { CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Blue, strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                    Text(if (linkoId.isNotBlank()) linkoId else "Loading LINKO ID…", color = if (linkoId.isBlank()) Blue else Green, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 }
             }
-            IconButton(enabled = linkoId.isNotBlank(), onClick = { copyId(linkoId) }) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy LINKO ID", tint = if (linkoId.isNotBlank()) Green else TextMuted)
-            }
+            IconButton(enabled = linkoId.isNotBlank(), onClick = { copyId(linkoId) }) { Icon(Icons.Filled.ContentCopy, contentDescription = "Copy LINKO ID", tint = if (linkoId.isNotBlank()) Green else TextMuted) }
         }
 
-        var selectedDataCapMb by remember { mutableStateOf(0L) } // 0 = Unlimited
-
+        var selectedDataCapMb by remember { mutableStateOf(0L) }
         Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val caps = listOf(0L to "UNLIMITED", 500L to "500 MB", 1024L to "1 GB", 2048L to "2 GB")
             for ((capMb, label) in caps) {
                 val isSelected = selectedDataCapMb == capMb
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) Blue.copy(alpha = 0.2f) else Surface)
-                        .border(1.dp, if (isSelected) Blue else Border, RoundedCornerShape(8.dp))
-                        .clickable {
-                            selectedDataCapMb = capMb
-                            LinkoProviderService.start(context, capMb)
-                            Toast.makeText(context, if (capMb == 0L) "Data Limit: Unlimited" else "Data Limit set to $label", Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(vertical = 8.dp)
-                ) {
-                    Text(
-                        label,
-                        color = if (isSelected) Blue else TextSub,
-                        fontSize = 10.sp,
-                        fontFamily = JetBrainsMono,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (isSelected) Blue.copy(alpha = 0.2f) else Surface).border(1.dp, if (isSelected) Blue else Border, RoundedCornerShape(8.dp)).clickable { selectedDataCapMb = capMb; LinkoProviderService.start(context, capMb); Toast.makeText(context, if (capMb == 0L) "Data Limit: Unlimited" else "Data Limit set to $label", Toast.LENGTH_SHORT).show() }.padding(vertical = 8.dp)) {
+                    Text(label, color = if (isSelected) Blue else TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }
 
         if (copied) Text("✓ LINKO ID COPIED", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
-        
         var isProcessingApproval by remember { mutableStateOf(false) }
-        
         if (pendingRequestId != null || providerState == "REQUESTED") {
             Spacer(Modifier.height(14.dp))
             LinkoCard(modifier = Modifier.fillMaxWidth().border(1.dp, Green, RoundedCornerShape(12.dp))) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Green, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("⚡ FRIEND WANTS TO CONNECT", color = Green, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                }
+                Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Green, strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text("⚡ FRIEND WANTS TO CONNECT", color = Green, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
                 Spacer(Modifier.height(6.dp))
                 Text("A LINKO friend has requested to use your shared internet connection.", color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono)
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton(
-                        label = if (isProcessingApproval) "APPROVING…" else "APPROVE & SHARE",
-                        onClick = {
-                            if (!isProcessingApproval) {
-                                isProcessingApproval = true
-                                scope.launch {
-                                    LinkoEngineBridge.approvePendingProviderRequest { state ->
-                                        if (state == "approved") {
-                                            LinkoEngineBridge.startApprovedProviderSession()
-                                            pendingRequestId = null
-                                            isProcessingApproval = false
-                                            providerState = "SHARING"
-                                            Toast.makeText(context, "Connection Approved! Sharing Internet.", Toast.LENGTH_SHORT).show()
-                                        } else if (state.contains("failed") || state.contains("error")) {
-                                            isProcessingApproval = false
-                                            Toast.makeText(context, "Approval error: $state", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        color = Green,
-                        enabled = !isProcessingApproval,
-                        loading = isProcessingApproval,
-                        modifier = Modifier.weight(1f)
-                    )
-                    PrimaryButton(
-                        label = "DECLINE",
-                        onClick = {
-                            if (!isProcessingApproval) {
-                                isProcessingApproval = true
-                                scope.launch {
-                                    LinkoEngineBridge.denyPendingProviderRequest {
+                    PrimaryButton(label = if (isProcessingApproval) "APPROVING…" else "APPROVE & SHARE", onClick = {
+                        if (!isProcessingApproval) {
+                            isProcessingApproval = true
+                            scope.launch {
+                                LinkoEngineBridge.approvePendingProviderRequest { state ->
+                                    if (state == "approved") {
                                         pendingRequestId = null
                                         isProcessingApproval = false
-                                        providerState = "READY"
+                                        providerState = "APPROVED"
+                                        Toast.makeText(context, "Connection approved. Establishing direct tunnel…", Toast.LENGTH_SHORT).show()
+                                    } else if (state.contains("failed") || state.contains("error")) {
+                                        isProcessingApproval = false
+                                        providerState = "FAILED"
+                                        Toast.makeText(context, "Approval error: $state", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
-                        },
-                        color = Red,
-                        outline = true,
-                        enabled = !isProcessingApproval,
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                    }, color = Green, enabled = !isProcessingApproval, loading = isProcessingApproval, modifier = Modifier.weight(1f))
+                    PrimaryButton(label = "DECLINE", onClick = {
+                        if (!isProcessingApproval) {
+                            isProcessingApproval = true
+                            scope.launch { LinkoEngineBridge.denyPendingProviderRequest { pendingRequestId = null; isProcessingApproval = false; providerState = "READY" } }
+                        }
+                    }, color = Red, outline = true, enabled = !isProcessingApproval, modifier = Modifier.weight(1f))
                 }
             }
         }
 
         Spacer(Modifier.height(14.dp))
-
         LinkoCard {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text("ROLE", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
-                    Text("PROVIDER", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                }
+                Column { Text("ROLE", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono); Text("PROVIDER", color = Green, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
                 Column(horizontalAlignment = Alignment.End) {
                     Text("STATUS", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (connectionBusy) {
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Blue, strokeWidth = 2.dp)
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(
-                            providerState,
-                            color = when (providerState) {
-                                "OFFLINE", "DECLINED", "ENDED" -> Red
-                                "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> Blue
-                                else -> Green
-                            },
-                            fontSize = 15.sp,
-                            fontFamily = JetBrainsMono,
-                            fontWeight = FontWeight.Bold
-                        )
+                        if (connectionBusy) { CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Blue, strokeWidth = 2.dp); Spacer(Modifier.width(6.dp)) }
+                        Text(providerState, color = when (providerState) { "OFFLINE", "DECLINED", "ENDED", "FAILED" -> Red; "LOADING", "REQUESTED", "APPROVED", "SIGNALING" -> Blue; else -> Green }, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Text(
-                when (providerState) {
-                    "READY" -> "Waiting for a friend to connect… Your LINKO ID is ready."
-                    "SHARING" -> "A friend is actively using your shared internet connection."
-                    "REQUESTED" -> "A friend is requesting access to your connection."
-                    "APPROVED" -> "Connection approved. Preparing the secure tunnel…"
-                    "SIGNALING" -> "Establishing encrypted AES-256-GCM data plane…"
-                    "LOADING" -> "Loading your account profile and LINKO ID…"
-                    "OFFLINE" -> "The connection service is offline."
-                    else -> "Preparing your LINKO provider…"
-                },
-                color = TextSub,
-                fontSize = 11.sp,
-                fontFamily = JetBrainsMono
-            )
+            Text(when (providerState) {
+                "READY" -> "Waiting for a friend to connect… Your LINKO ID is ready."
+                "SHARING" -> "A friend is actively using your shared internet connection."
+                "REQUESTED" -> "A friend is requesting access to your connection."
+                "APPROVED" -> "Connection approved. Establishing the direct secure tunnel…"
+                "SIGNALING" -> "Establishing encrypted direct UDP data plane…"
+                "FAILED" -> "The direct connection failed. No Internet is being shared."
+                "LOADING" -> "Loading your account profile and LINKO ID…"
+                "OFFLINE" -> "The connection service is offline."
+                else -> "Preparing your LINKO provider…"
+            }, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
-
         Spacer(Modifier.weight(1f))
         Text("Your connection is never shared without your approval.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono)
         Spacer(Modifier.height(12.dp))
