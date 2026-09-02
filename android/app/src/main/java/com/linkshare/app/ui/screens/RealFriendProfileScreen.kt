@@ -110,16 +110,10 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
         else -> Green
     }
 
-    val canConnect = relationship == "friend" && availability?.let {
-        LinkoStateMachine.canRequestConnection(
-            LinkoStateMachine.friendshipFromBackend(relationship),
-            it,
-        )
-    } == true
-
     val actionLabel = when {
         busy -> "CONNECTING…"
-        relationship == "friend" && availability == LinkoStateMachine.Availability.OFFLINE -> "FRIEND OFFLINE"
+        relationship == "friend" && availability == LinkoStateMachine.Availability.OFFLINE -> "RECHECK & CONNECT"
+        relationship == "friend" && availability == null -> "CONNECT TO FRIEND"
         relationship == "friend" -> "CONNECT TO FRIEND"
         relationship == "outgoing_pending" -> "REQUEST SENT"
         relationship == "incoming_pending" -> "REQUEST RECEIVED"
@@ -251,11 +245,8 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                 if (busy || selected == null) return@PrimaryButton
                 when (relationship) {
                     "friend" -> {
-                        // The engine performs its own authoritative backend liveness check before creating the session.
-                        if (!canConnect) {
-                            message = "Friend is offline or not ready for a connection"
-                            return@PrimaryButton
-                        }
+                        // Never block the connection flow on a stale/missing Realtime event.
+                        // The engine performs the authoritative authenticated provider heartbeat check.
                         busy = true
                         message = null
                         LinkoEngineBridge.connectToFriend(selected.userId, selected.displayName, selected.linkoId)
