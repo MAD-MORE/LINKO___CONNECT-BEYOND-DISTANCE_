@@ -17,7 +17,6 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -28,9 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.*
 import com.linkshare.app.Screen
@@ -38,9 +37,7 @@ import com.linkshare.app.activeNavTab
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.*
 import com.linkshare.app.onboardingScreens
-import com.linkshare.app.ui.components.GhostButton
 import com.linkshare.app.ui.components.NavBadge
-import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -102,10 +99,18 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
 
-                // ONE unified friend experience: Home Connect and Friends both open Radar Discovery.
+                // Home Connect opens the Friends tab so the user can choose an existing friend to connect.
                 composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.Friends.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
-                composable(Screen.Friends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
-                // Legacy route retained only for deep links; it renders the same unified screen.
+
+                // Friends is the main friend-list screen. Its Add Friends action opens Radar Discovery.
+                composable(Screen.Friends.route) {
+                    FriendsScreen(
+                        onFindFriends = { nav.navigate(Screen.FindFriends.route) },
+                        onFriendTap = { nav.navigate(Screen.FriendProfile.route) }
+                    )
+                }
+
+                // Friend-search radar is intentionally separate and is reached only through Add Friends.
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
                 composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.RxSelectFriend.route) }) }
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.navigate(Screen.Friends.route) } }
