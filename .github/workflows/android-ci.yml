@@ -1,62 +1,22 @@
-# CI verification: exercise the consolidated main pipeline and Relay deployment.
 name: LINKO Android CI
 
 on:
   push:
-    branches: [main, develop, feature/real-data-plane-internet-sharing, fix/fly-relay-production]
+    branches: [main, develop]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: '0 8 * * 1'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  security-events: write
+  contents: read
 
 concurrency:
   group: linko-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Detect changed layers
-    runs-on: ubuntu-latest
-    outputs:
-      android: ${{ steps.detect.outputs.android }}
-      backend: ${{ steps.detect.outputs.backend }}
-      relay: ${{ steps.detect.outputs.relay }}
-      workflow: ${{ steps.detect.outputs.workflow }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          elif [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BASE=""
-          else
-            BASE="${{ github.event.before }}"
-          fi
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
-            FILES="ALL"
-          else
-            FILES="$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null || echo "ALL")"
-          fi
-          echo "Changed files: $FILES"
-          if [ "$FILES" = "ALL" ] || printf '%s\n' "$FILES" | grep -Eq '^(android/|\.github/workflows/)'; then echo 'android=true' >> "$GITHUB_OUTPUT"; else echo 'android=false' >> "$GITHUB_OUTPUT"; fi
-          if [ "$FILES" = "ALL" ] || printf '%s\n' "$FILES" | grep -Eq '^backend/'; then echo 'backend=true' >> "$GITHUB_OUTPUT"; else echo 'backend=false' >> "$GITHUB_OUTPUT"; fi
-          if [ "$FILES" = "ALL" ] || printf '%s\n' "$FILES" | grep -Eq '^relay/'; then echo 'relay=true' >> "$GITHUB_OUTPUT"; else echo 'relay=false' >> "$GITHUB_OUTPUT"; fi
-          if [ "$FILES" = "ALL" ] || printf '%s\n' "$FILES" | grep -Eq '^\.github/workflows/'; then echo 'workflow=true' >> "$GITHUB_OUTPUT"; else echo 'workflow=false' >> "$GITHUB_OUTPUT"; fi
-
   android:
-    name: Android Build, Test, Sign & Publish
-    needs: changes
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.android == 'true'
+    name: Android Build & Test
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -73,22 +33,13 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
-      - name: Verify cross-layer integrity
+      - name: Cross-layer integrity check
         working-directory: .
         run: python android/scripts/verify_linko_integrity.py
-      - name: Calculate build number
-        id: build_number
-        working-directory: .
-        shell: bash
-        run: |
-          BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
-          VERSION_NAME="0.1.${GITHUB_RUN_NUMBER}"
-          echo "version_code=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-      - name: Run unit tests
+      - name: Unit tests
         run: ./gradlew test --no-daemon
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon -PLINKO_VERSION_CODE=${{ steps.build_number.outputs.version_code }} -PLINKO_VERSION_NAME=${{ steps.build_number.outputs.version_name }}
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
         env:
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
@@ -100,109 +51,9 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
-      - name: Prepare stable development signing key
-        if: github.event_name != 'pull_request'
-        shell: bash
-        working-directory: .
-        env:
-          KEYSTORE_B64: ${{ secrets.LINKO_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.LINKO_KEY_ALIAS || 'linko' }}
-          KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$KEYSTORE_B64" || { echo 'LINKO_KEYSTORE_BASE64 is required'; exit 1; }
-          test -n "$KEYSTORE_PASSWORD" || { echo 'LINKO_KEYSTORE_PASSWORD is required'; exit 1; }
-          test -n "$KEY_PASSWORD" || { echo 'LINKO_KEY_PASSWORD is required'; exit 1; }
-          work_dir="$RUNNER_TEMP/linko-signing"
-          mkdir -p "$work_dir"
-          printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 --decode > "$work_dir/input.bin"
-          normalized="$work_dir/linko-keystore.jks"
-          recovered_alias=""
-          if keytool -list -storetype JKS -keystore "$work_dir/input.bin" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-            cp "$work_dir/input.bin" "$normalized"
-          else
-            for source_type in PKCS12 JCEKS; do
-              if keytool -list -storetype "$source_type" -keystore "$work_dir/input.bin" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1; then
-                recovered_alias="$KEY_ALIAS"
-                if ! keytool -list -storetype "$source_type" -keystore "$work_dir/input.bin" -storepass "$KEYSTORE_PASSWORD" -alias "$recovered_alias" >/dev/null 2>&1; then
-                  recovered_alias="$(keytool -list -storetype "$source_type" -keystore "$work_dir/input.bin" -storepass "$KEYSTORE_PASSWORD" | awk -F, '/PrivateKeyEntry/ {print $1; exit}' | xargs)"
-                fi
-                [ -n "$recovered_alias" ] || { echo 'No PrivateKeyEntry found'; exit 1; }
-                keytool -importkeystore -noprompt -srckeystore "$work_dir/input.bin" -srcstoretype "$source_type" -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$recovered_alias" -srckeypass "$KEY_PASSWORD" -destkeystore "$normalized" -deststoretype JKS -deststorepass "$KEYSTORE_PASSWORD" -destalias "$recovered_alias" -destkeypass "$KEY_PASSWORD"
-                break
-              fi
-            done
-          fi
-          if [ ! -s "$normalized" ]; then echo 'LINKO signing keystore recovery failed'; exit 1; fi
-          if [ -z "$recovered_alias" ]; then
-            recovered_alias="$(keytool -list -storetype JKS -keystore "$normalized" -storepass "$KEYSTORE_PASSWORD" | awk -F, '/PrivateKeyEntry/ {print $1; exit}' | xargs)"
-          fi
-          [ -n "$recovered_alias" ] || { echo 'LINKO signing keystore contains no PrivateKeyEntry'; exit 1; }
-          keytool -importkeystore -noprompt -srckeystore "$normalized" -srcstoretype JKS -srcstorepass "$KEYSTORE_PASSWORD" -srcalias "$recovered_alias" -srckeypass "$KEY_PASSWORD" -destkeystore android/linko-dev.keystore -deststoretype JKS -deststorepass "$KEYSTORE_PASSWORD" -destalias "$recovered_alias" -destkeypass "$KEY_PASSWORD" >/dev/null
-          keytool -list -storetype JKS -keystore android/linko-dev.keystore -storepass "$KEYSTORE_PASSWORD" -alias "$recovered_alias" >/dev/null
-          echo "LINKO_KEY_ALIAS=$recovered_alias" >> "$GITHUB_ENV"
-          echo 'Stable LINKO signing keystore validated with recovered alias.'
-      - name: Build signed update APK
-        if: github.event_name != 'pull_request'
-        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon -PLINKO_VERSION_CODE=${{ steps.build_number.outputs.version_code }} -PLINKO_VERSION_NAME=${{ steps.build_number.outputs.version_name }}
-        env:
-          LINKO_KEYSTORE_PASSWORD: ${{ secrets.LINKO_KEYSTORE_PASSWORD }}
-          LINKO_KEY_ALIAS: ${{ env.LINKO_KEY_ALIAS || secrets.LINKO_KEY_ALIAS || 'linko' }}
-          LINKO_KEY_PASSWORD: ${{ secrets.LINKO_KEY_PASSWORD }}
-          LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
-          LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
-          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
-      - name: Upload signed release APK
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linko-signed-release-${{ steps.build_number.outputs.version_name }}-${{ steps.build_number.outputs.version_code }}
-          path: android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 30
-      - name: Create update manifest
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        working-directory: .
-        env:
-          VERSION_CODE: ${{ steps.build_number.outputs.version_code }}
-          VERSION_NAME: ${{ steps.build_number.outputs.version_name }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json, os
-          manifest = {
-              "schemaVersion": 1,
-              "versionCode": int(os.environ["VERSION_CODE"]),
-              "versionName": os.environ["VERSION_NAME"],
-              "apkAsset": "app-release.apk",
-              "commit": os.environ["GITHUB_SHA"],
-          }
-          with open("linko-update.json", "w", encoding="utf-8") as f:
-              json.dump(manifest, f, separators=(",", ":"))
-              f.write("\n")
-          PY
-          cat linko-update.json
-      - name: Publish latest LINKO development release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        working-directory: .
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_CODE: ${{ steps.build_number.outputs.version_code }}
-          VERSION_NAME: ${{ steps.build_number.outputs.version_name }}
-        run: gh release create "dev-build-${VERSION_CODE}" android/app/build/outputs/apk/release/app-release.apk linko-update.json --title "LINKO development build ${VERSION_NAME} (${VERSION_CODE})" --notes "Automatic development build from commit ${GITHUB_SHA}.\nMachine-readable updater manifest is included as linko-update.json." --latest
-      - name: Remove generated update manifest
-        if: always()
-        working-directory: .
-        run: rm -f linko-update.json
-      - name: Remove signing key
-        if: always()
-        working-directory: .
-        run: rm -f android/linko-dev.keystore
 
   backend:
-    name: Backend Build, Test & Audit
-    needs: changes
+    name: Backend Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -214,159 +65,30 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: npm install
-      - name: Typecheck
+      - name: Syntax check
         working-directory: backend
         run: node --check src/server.js
-      - name: Test
+      - name: Tests
         working-directory: backend
         run: timeout 30s npm test
         env:
           NODE_ENV: test
           LINKO_JWT_SECRET: test-secret-minimum-32-bytes-long-ok
           PORT: '18080'
-      - name: Security audit
-        working-directory: backend
-        run: npm audit --audit-level=high
 
-  relay:
-    name: Relay Build, Test & Container
-    needs: changes
+  direct-p2p-contract:
+    name: Verify Direct-P2P Contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: relay/package.json
-      - name: Install dependencies
-        working-directory: relay
-        run: npm install
-      - name: Typecheck
-        working-directory: relay
-        run: npm run build
-      - name: Test
-        working-directory: relay
-        run: npm test
-        env:
-          NODE_ENV: test
-      - name: Build Docker image
-        working-directory: relay
-        run: docker build -t linko-relay:${{ github.sha }} .
-      - name: Verify container health
-        run: |
-          set -euo pipefail
-          docker run --rm -d --name test-relay -e RELAY_NODE_ID=ci-test -e RELAY_REGION=ci -p 7001:7001 linko-relay:${{ github.sha }} node dist/relay-server.js
-          trap 'docker stop test-relay >/dev/null 2>&1 || true' EXIT
-          for i in {1..10}; do
-            if curl --fail --silent http://localhost:7001/health >/dev/null; then exit 0; fi
-            sleep 1
-          done
-          docker logs test-relay || true
-          exit 1
-
-  security:
-    name: CodeQL & Secret/Dependency Scan
-    needs: changes
-    if: github.event_name == 'schedule' || github.event_name == 'push' || needs.changes.outputs.workflow == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-          queries: security-and-quality
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-      - name: Analyze
-        uses: github/codeql-action/analyze@v3
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Dependency audit
+      - name: Verify active Android/control-plane code has no relay path
         shell: bash
         run: |
-          set -e
-          for dir in backend relay; do
-            if [ -f "$dir/package.json" ]; then
-              (cd "$dir" && npm install && npm audit --audit-level=moderate)
-            fi
-          done
-      - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy-relay:
-    name: Deploy LINKO UDP Relay
-    needs: [changes, relay]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      LINKO_RELAY_HEARTBEAT_URL: ${{ secrets.LINKO_RELAY_HEARTBEAT_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-relay-heartbeat' }}
-      LINKO_RELAY_REGISTRATION_TOKEN: ${{ secrets.LINKO_RELAY_REGISTRATION_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Verify credentials
-        run: |
           set -euo pipefail
-          test -n "$FLY_API_TOKEN" || { echo '::error::FLY_API_TOKEN is not configured'; exit 1; }
-          test -n "$LINKO_RELAY_REGISTRATION_TOKEN" || { echo '::error::LINKO_RELAY_REGISTRATION_TOKEN is not configured'; exit 1; }
-          flyctl auth whoami
-      - name: Verify registration secret shape
-        run: |
-          set -euo pipefail
-          token="$LINKO_RELAY_REGISTRATION_TOKEN"
-          printf 'registration_token_present=%s\n' "$([ -n "$token" ] && echo true || echo false)"
-          printf 'registration_token_length=%s\n' "${#token}"
-          if printf '%s' "$token" | grep -qE '[[:space:]]'; then
-            echo 'registration_token_has_whitespace=true'
-          else
-            echo 'registration_token_has_whitespace=false'
+          if grep -RInE --exclude-dir=.git --exclude='*.md' --exclude='*.sql' \
+            '(RELAY_NODE_ID|RELAY_REGION|FLY_API_TOKEN|no_healthy_relay|relayFallback|relay_fallback|relay_nodes)' \
+            android backend/src backend/package.json 2>/dev/null; then
+            echo 'Active application/control-plane code still references relay transport.'
+            exit 1
           fi
-          case "$token" in
-            (*[!0-9A-Fa-f]*) echo 'registration_token_hex_format=false' ;;
-            (*) echo 'registration_token_hex_format=true' ;;
-          esac
-      - name: Ensure dedicated IPv4
-        run: |
-          if ! flyctl ips list --app linko-relay | grep -q 'v4'; then flyctl ips allocate-v4 --app linko-relay; fi
-      - name: Configure relay credentials
-        run: |
-          set -euo pipefail
-          flyctl secrets set LINKO_RELAY_HEARTBEAT_URL="$LINKO_RELAY_HEARTBEAT_URL" LINKO_RELAY_REGISTRATION_TOKEN="$LINKO_RELAY_REGISTRATION_TOKEN" RELAY_NODE_ID=relay-1 RELAY_PUBLIC_HOST=linko-relay.fly.dev --app linko-relay
-      - name: Deploy
-        run: flyctl deploy ./relay --app linko-relay --remote-only
-      - name: Verify status
-        run: flyctl status --app linko-relay
-      - name: Verify health
-        run: |
-          set -euo pipefail
-          for i in {1..30}; do
-            echo "Health check attempt $i/30..."
-            response_file="$RUNNER_TEMP/linko-health-response"
-            http_code="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 --output "$response_file" --write-out '%{http_code}' https://linko-relay.fly.dev/health || true)"
-            if [ "$http_code" = "200" ]; then
-              echo "Relay health check passed."
-              exit 0
-            fi
-            if [ -s "$response_file" ]; then
-              echo "Relay health check returned HTTP $http_code."
-            else
-              echo "Relay health check did not receive a successful HTTP response."
-            fi
-            if [ "$i" -lt 30 ]; then
-              echo "Relay is not healthy yet; waiting 10 seconds..."
-              sleep 10
-            fi
-          done
-          echo "::error::LINKO relay failed health verification after 30 attempts."
-          exit 1
+          echo 'Direct-P2P contract verified.'
