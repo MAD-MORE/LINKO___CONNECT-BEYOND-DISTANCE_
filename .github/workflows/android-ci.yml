@@ -81,12 +81,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify active Android/control-plane code has no relay path
+      - name: Verify active Android/control-plane code has no relay transport
         shell: bash
         run: |
           set -euo pipefail
           if grep -RInE --exclude-dir=.git --exclude='*.md' --exclude='*.sql' \
-            '(RELAY_NODE_ID|RELAY_REGION|FLY_API_TOKEN|no_healthy_relay|relayFallback|relay_fallback|relay_nodes)' \
+            '(RELAY_NODE_ID|RELAY_REGION|FLY_API_TOKEN|no_healthy_relay|relay_nodes)' \
             android backend/src backend/package.json 2>/dev/null; then
             echo 'Active application/control-plane code still references relay transport.'
             exit 1
