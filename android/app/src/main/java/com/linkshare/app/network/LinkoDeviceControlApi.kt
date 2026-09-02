@@ -15,7 +15,7 @@ import java.net.URL
 
 /**
  * Permanent LINKO control-plane client communicating directly with Supabase via authenticated PostgreSQL RPCs.
- * Eliminates all external control-plane dependencies.
+ * Supabase carries authentication, session state and signaling only; it is never a data-plane relay.
  */
 class LinkoDeviceControlApi(
     private val context: Context,
@@ -96,31 +96,23 @@ class LinkoDeviceControlApi(
         val json = rpc("linko_tunnel_config", body, authToken())
         val endpoint = json.optJSONObject("endpoint")
         val host = json.optString("host").ifBlank { endpoint?.optString("host").orEmpty() }
-        val port = if (json.has("port")) json.optInt("port", -1) else endpoint?.optInt("port", -1) ?: -1
+        val port = if (json.has("port") && !json.isNull("port")) json.optInt("port", -1) else endpoint?.optInt("port", -1) ?: -1
         val keyB64 = json.optString("key").trim()
 
-        // Fail closed: never substitute a guessed relay hostname or an all-zero AES key.
-        if (host.isBlank() || port !in 1..65535 || keyB64.isBlank()) {
-            throw LinkoNetworkException("invalid_tunnel_config")
-        }
-
+        // Direct-P2P mode intentionally has no server endpoint. The endpoint is
+        // discovered by STUN and exchanged through authenticated signaling.
+        if (keyB64.isBlank()) throw LinkoNetworkException("invalid_tunnel_key")
         val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }
             .getOrElse { throw LinkoNetworkException("invalid_tunnel_key") }
-        if (key.size != 32) {
-            throw LinkoNetworkException("invalid_tunnel_key_length")
-        }
+        if (key.size != 32) throw LinkoNetworkException("invalid_tunnel_key_length")
 
         val role = json.optString("role").trim().lowercase()
-        if (role != "provider" && role != "receiver") {
-            throw LinkoNetworkException("invalid_tunnel_role")
-        }
+        if (role != "provider" && role != "receiver") throw LinkoNetworkException("invalid_tunnel_role")
 
         val expiresAt = json.optLong("expiresAt", 0L)
-        if (expiresAt <= System.currentTimeMillis()) {
-            throw LinkoNetworkException("tunnel_config_expired")
-        }
+        if (expiresAt <= System.currentTimeMillis()) throw LinkoNetworkException("tunnel_config_expired")
 
-        TunnelConfig(sessionId, host, port, key, role, expiresAt)
+        TunnelConfig(sessionId, host, port, key, role, expiresAt, transport = json.optString("transport", "direct_udp"), relay = json.optBoolean("relay", false))
     }
 
     suspend fun pendingProviderRequests(): List<ProviderRequest> = withContext(Dispatchers.IO) {
@@ -173,4 +165,13 @@ data class DeviceRegistration(val deviceId: String, val token: String, val userI
 data class PresenceResult(val deviceId: String, val lastSeenAt: Long)
 data class ProviderDevice(val deviceId: String, val online: Boolean, val lastSeenAt: Long)
 data class DeviceSession(val id: String, val state: String, val expiresAt: Long)
-data class TunnelConfig(val sessionId: String, val host: String, val port: Int, val key: ByteArray, val role: String, val expiresAt: Long)
+data class TunnelConfig(
+    val sessionId: String,
+    val host: String,
+    val port: Int,
+    val key: ByteArray,
+    val role: String,
+    val expiresAt: Long,
+    val transport: String = "direct_udp",
+    val relay: Boolean = false,
+)
