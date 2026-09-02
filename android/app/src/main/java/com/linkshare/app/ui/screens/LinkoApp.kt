@@ -1,6 +1,5 @@
 package com.linkshare.app.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -22,10 +22,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,12 +50,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.compose.foundation.layout.offset
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.Screen
 import com.linkshare.app.activeNavTab
 import com.linkshare.app.auth.LinkoAuth
@@ -70,16 +70,13 @@ import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.Accent
 import com.linkshare.app.ui.theme.BG
 import com.linkshare.app.ui.theme.Blue
-import com.linkshare.app.ui.theme.Border
 import com.linkshare.app.ui.theme.Card
-import com.linkshare.app.ui.theme.GlassStroke
 import com.linkshare.app.ui.theme.GradientMid
 import com.linkshare.app.ui.theme.GradientTop
 import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.Surface
-import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.ui.theme.Yellow
@@ -202,7 +199,7 @@ fun LinkoApp(
                 composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
                 composable(Screen.Friends.route) { LiveFriendsScreen({ nav.navigate(Screen.FindFriends.route) }, { nav.navigate(Screen.FriendProfile.route) }) }
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
-                composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.Connected.route) }) }
+                composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.RxSelectFriend.route) }) }
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.popBackStack() } }
                 composable(Screen.IncomingRequest.route) { IncomingRequestScreen({ nav.navigate(Screen.Friends.route) }, { nav.popBackStack() }) }
                 composable(Screen.BlockedRemoved.route) { BlockedRemovedScreen { nav.popBackStack() } }
@@ -218,6 +215,7 @@ fun LinkoApp(
                 composable(Screen.Usage.route) { UsageScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
+                composable(Screen.Notifications.route) { NotificationsScreen() }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { state -> if (state == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
                 composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { state -> if (state == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
@@ -306,9 +304,9 @@ private val titles = mapOf(
     "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries",
     "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting",
     "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path",
-    "rx_relay_fallback" to "Relay Fallback", "connected" to "Connected", "network_quality" to "Network Quality",
+    "rx_relay_fallback" to "Connection Path", "connected" to "Connected", "network_quality" to "Network Quality",
     "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History",
-    "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request",
+    "notifications" to "Notifications", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request",
     "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup",
     "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage",
     "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch",
@@ -326,6 +324,7 @@ private sealed class BottomNavItem(
     object Home : BottomNavItem("HOME", Screen.HomeEngine.route, Icons.Filled.Home, Icons.Outlined.Home)
     object Friends : BottomNavItem("FRIENDS", Screen.Friends.route, Icons.Filled.People, Icons.Outlined.People)
     object History : BottomNavItem("HISTORY", Screen.SessionHistory.route, Icons.Filled.History, Icons.Outlined.History)
+    object Notifications : BottomNavItem("NOTIFICATIONS", Screen.Notifications.route, Icons.Filled.Notifications, Icons.Outlined.Notifications)
     object Settings : BottomNavItem("SETTINGS", Screen.Settings.route, Icons.Filled.Settings, Icons.Outlined.Settings)
 }
 
@@ -333,6 +332,7 @@ private val bottomNavItems = listOf(
     BottomNavItem.Home,
     BottomNavItem.Friends,
     BottomNavItem.History,
+    BottomNavItem.Notifications,
     BottomNavItem.Settings
 )
 
@@ -376,7 +376,6 @@ private fun BottomNav(route: String, nav: androidx.navigation.NavHostController)
             .fillMaxWidth()
             .navigationBarsPadding()
     ) {
-        // Gradient top border
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -418,7 +417,6 @@ private fun BottomNav(route: String, nav: androidx.navigation.NavHostController)
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            // Pill indicator above icon
                             Box(
                                 modifier = Modifier
                                     .width(if (selected) 22.dp else 0.dp)
@@ -434,8 +432,17 @@ private fun BottomNav(route: String, nav: androidx.navigation.NavHostController)
                                     tint = if (selected) activeColor else TextSub,
                                     modifier = Modifier.size(21.dp)
                                 )
-                                // Notification Badges per tab
                                 when (item) {
+                                    BottomNavItem.Notifications -> {
+                                        val count = friendRequestCount + if (hasIncomingConnection) 1 else 0
+                                        if (count > 0) {
+                                            NavBadge(
+                                                count = count,
+                                                color = Red,
+                                                modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)
+                                            )
+                                        }
+                                    }
                                     BottomNavItem.Home -> {
                                         if (hasIncomingConnection) {
                                             NavBadge(
