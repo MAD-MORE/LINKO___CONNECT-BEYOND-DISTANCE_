@@ -3,20 +3,7 @@ package com.linkshare.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -35,13 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,35 +32,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.*
 import com.linkshare.app.Screen
 import com.linkshare.app.activeNavTab
 import com.linkshare.app.auth.LinkoAuth
-import com.linkshare.app.network.LinkoConnectionPhase
-import com.linkshare.app.network.LinkoEngineBridge
-import com.linkshare.app.network.LinkoRealtimeEvent
-import com.linkshare.app.network.LinkoRealtimeManager
-import com.linkshare.app.network.LinkoRuntime
+import com.linkshare.app.network.*
 import com.linkshare.app.onboardingScreens
 import com.linkshare.app.ui.components.GhostButton
 import com.linkshare.app.ui.components.NavBadge
 import com.linkshare.app.ui.components.PrimaryButton
-import com.linkshare.app.ui.theme.Accent
-import com.linkshare.app.ui.theme.BG
-import com.linkshare.app.ui.theme.Blue
-import com.linkshare.app.ui.theme.Card
-import com.linkshare.app.ui.theme.GradientMid
-import com.linkshare.app.ui.theme.GradientTop
-import com.linkshare.app.ui.theme.Green
-import com.linkshare.app.ui.theme.JetBrainsMono
-import com.linkshare.app.ui.theme.Red
-import com.linkshare.app.ui.theme.Surface
-import com.linkshare.app.ui.theme.TextPrimary
-import com.linkshare.app.ui.theme.TextSub
-import com.linkshare.app.ui.theme.Yellow
+import com.linkshare.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,7 +72,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
     }
 
     LaunchedEffect(Unit) {
-        val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize { progress -> startupProgress = progress } }.getOrDefault(true) }
+        val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize { startupProgress = it } }.getOrDefault(true) }
         if (!ok && signedIn && !auth.isSignedIn()) bootstrapFailed = true
         splashShowing = false
     }
@@ -119,22 +81,9 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
         StartupSplashScreen(
             statusMessage = startupProgress,
             failed = bootstrapFailed,
-            onRetry = {
-                bootstrapFailed = false
-                splashShowing = true
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize { progress -> startupProgress = progress } }.getOrDefault(true) }
-                    bootstrapFailed = !ok
-                    splashShowing = false
-                }
-            },
+            onRetry = { bootstrapFailed = false; splashShowing = true; scope.launch { val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize { startupProgress = it } }.getOrDefault(true) }; bootstrapFailed = !ok; splashShowing = false } },
             onContinueOffline = { offlineBypass = true; splashShowing = false; bootstrapFailed = false },
-            onSignOut = {
-                scope.launch {
-                    withContext(Dispatchers.IO) { auth.signOut() }
-                    nav.navigate(Screen.Welcome.route) { popUpTo(Screen.Welcome.route) { inclusive = true } }
-                }
-            }
+            onSignOut = { scope.launch { withContext(Dispatchers.IO) { auth.signOut() }; nav.navigate(Screen.Welcome.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
         )
         return
     }
@@ -145,20 +94,21 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
             NavHost(navController = nav, startDestination = if (signedIn) Screen.HomeEngine.route else Screen.Welcome.route) {
                 composable(Screen.Welcome.route) { WelcomeScreen({ nav.navigate(Screen.SignUp.route) }, { nav.navigate(Screen.SignIn.route) }) }
                 composable(Screen.SignUp.route) { LinkoSignUpScreen(auth) { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
-                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { splashShowing = true; bootstrapFailed = false; scope.launch { val initialized = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }; bootstrapFailed = !initialized && !auth.isSignedIn(); splashShowing = false; nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }) }
-                composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.navigate(Screen.SignIn.route) { popUpTo(Screen.ForgotPassword.route) { inclusive = true } } }) }
-                composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) { popUpTo(Screen.RecoveryOtp.route) { inclusive = true } } }, onBack = { nav.popBackStack() }) }
-                composable(Screen.PasswordReset.route) { PasswordResetScreen(auth) { auth.signOut(); nav.navigate(Screen.SignIn.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
+                composable(Screen.SignIn.route) { SignInScreen(auth, onSignedIn = { splashShowing = true; bootstrapFailed = false; scope.launch { val ok = withContext(Dispatchers.IO) { runCatching { runtime.initialize() }.getOrDefault(true) }; bootstrapFailed = !ok && !auth.isSignedIn(); splashShowing = false; nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }, onCreateAccount = { nav.navigate(Screen.SignUp.route) }, onForgotPassword = { nav.navigate(Screen.ForgotPassword.route) }) }
+                composable(Screen.ForgotPassword.route) { ForgotPasswordScreen(auth, onCodeSent = { nav.navigate(Screen.RecoveryOtp.route) }, onBack = { nav.popBackStack() }) }
+                composable(Screen.RecoveryOtp.route) { RecoveryOtpScreen(auth, onVerified = { nav.navigate(Screen.PasswordReset.route) }, onBack = { nav.popBackStack() }) }
+                composable(Screen.PasswordReset.route) { PasswordResetScreen(auth) { auth.signOut(); nav.navigate(Screen.SignIn.route) } }
                 composable(Screen.Profile.route) { RealAccountProfileScreen { nav.popBackStack() } }
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
-                // Home "Connect to a friend" now opens the same Friends/Radar discovery experience.
+
+                // ONE unified friend experience: Home Connect and Friends both open Radar Discovery.
                 composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.Friends.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
-                composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
-                composable(Screen.Friends.route) { LiveFriendsScreen({ nav.navigate(Screen.FindFriends.route) }, { nav.navigate(Screen.FriendProfile.route) }) }
+                composable(Screen.Friends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
+                // Legacy route retained only for deep links; it renders the same unified screen.
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
                 composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.RxSelectFriend.route) }) }
-                composable(Screen.RequestSent.route) { RequestSentScreen { nav.popBackStack() } }
+                composable(Screen.RequestSent.route) { RequestSentScreen { nav.navigate(Screen.Friends.route) } }
                 composable(Screen.IncomingRequest.route) { IncomingRequestScreen({ nav.navigate(Screen.Friends.route) }, { nav.popBackStack() }) }
                 composable(Screen.BlockedRemoved.route) { BlockedRemovedScreen { nav.popBackStack() } }
                 composable(Screen.RxSelectFriend.route) { RxSelectFriendScreen { nav.navigate(Screen.RxConnecting.route) } }
@@ -174,9 +124,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.Notifications.route) { NotificationsScreen() }
+                composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
-                composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { state -> if (state == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
-                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { state -> if (state == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
+                composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { if (it == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
+                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { if (it == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
                 composable(Screen.ProviderSharingActive.route) { ProviderSharingActiveScreen({ nav.navigate(Screen.ProviderLiveUsage.route) }, { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.ProviderLiveUsage.route) { ProviderLiveUsageScreen { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.ConnectionLost.route) { ConnectionLostScreen({ nav.navigate(Screen.Reconnecting.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
@@ -196,40 +147,14 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
     }
 }
 
-@Composable
-private fun LinkoStartupScreen(failed: Boolean, onRetry: () -> Unit = {}, onContinueOffline: () -> Unit = {}, onSignOut: () -> Unit = {}) {
-    Box(Modifier.fillMaxSize().background(BG).systemBarsPadding(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
-            if (!failed) {
-                CircularProgressIndicator(color = Blue, strokeWidth = 3.dp)
-                Spacer(Modifier.height(20.dp))
-                Text("INITIALIZING LINKO", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Loading your profile, device identity and connection services…", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
-            } else {
-                Text("OFFLINE OR SYNC DELAYED", color = TextPrimary, fontSize = 17.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Could not reach the server right now. You can continue offline using your cached profile.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
-                Spacer(Modifier.height(24.dp))
-                PrimaryButton("CONTINUE OFFLINE", onContinueOffline, color = Blue)
-                Spacer(Modifier.height(10.dp))
-                PrimaryButton("RETRY SYNC", onRetry, outline = true)
-                Spacer(Modifier.height(10.dp))
-                GhostButton("Sign Out", onSignOut)
-            }
-        }
-    }
-}
-
 @Composable private fun AppBar(title: String, onBack: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(56.dp).background(Brush.verticalGradient(listOf(GradientTop.copy(alpha = 0.95f), GradientMid.copy(alpha = 0.0f)))), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(56.dp).background(Brush.verticalGradient(listOf(GradientTop.copy(alpha = .95f), GradientMid.copy(alpha = 0f)))), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary, modifier = Modifier.size(22.dp)) }
         Text(title, color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
     }
 }
 
-private fun appBarTitle(route: String): String? = titles[route]
-private val titles = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Find Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Connection Path", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "notifications" to "Notifications", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")
+private fun appBarTitle(route: String): String? = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Connection Path", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "notifications" to "Notifications", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")[route]
 
 private sealed class BottomNavItem(val label: String, val route: String, val iconFilled: ImageVector, val iconOutlined: ImageVector) {
     object Home : BottomNavItem("HOME", Screen.HomeEngine.route, Icons.Filled.Home, Icons.Outlined.Home)
@@ -238,6 +163,7 @@ private sealed class BottomNavItem(val label: String, val route: String, val ico
     object Notifications : BottomNavItem("NOTIFICATIONS", Screen.Notifications.route, Icons.Filled.Notifications, Icons.Outlined.Notifications)
     object Settings : BottomNavItem("SETTINGS", Screen.Settings.route, Icons.Filled.Settings, Icons.Outlined.Settings)
 }
+
 private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, BottomNavItem.History, BottomNavItem.Notifications, BottomNavItem.Settings)
 
 @Composable private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
@@ -245,41 +171,34 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
     val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     var friendRequestCount by remember { mutableStateOf(0) }
     var hasIncomingConnection by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        LinkoRealtimeManager.events.collect { event ->
-            when (event) {
-                is LinkoRealtimeEvent.FriendRequestReceived -> friendRequestCount += 1
-                is LinkoRealtimeEvent.FriendRequestAccepted, is LinkoRealtimeEvent.FriendRequestDeclined, is LinkoRealtimeEvent.FriendRemoved -> friendRequestCount = (friendRequestCount - 1).coerceAtLeast(0)
-                is LinkoRealtimeEvent.IncomingConnectionRequest -> hasIncomingConnection = true
-                is LinkoRealtimeEvent.SessionStateChanged -> if (event.state == "requested") hasIncomingConnection = true else if (event.state in listOf("approved", "connected", "denied", "revoked", "expired")) hasIncomingConnection = false
-                else -> Unit
-            }
-        }
-    }
+    LaunchedEffect(Unit) { LinkoRealtimeManager.events.collect { event -> when (event) {
+        is LinkoRealtimeEvent.FriendRequestReceived -> friendRequestCount += 1
+        is LinkoRealtimeEvent.FriendRequestAccepted, is LinkoRealtimeEvent.FriendRequestDeclined, is LinkoRealtimeEvent.FriendRemoved -> friendRequestCount = (friendRequestCount - 1).coerceAtLeast(0)
+        is LinkoRealtimeEvent.IncomingConnectionRequest -> hasIncomingConnection = true
+        is LinkoRealtimeEvent.SessionStateChanged -> hasIncomingConnection = event.state == "requested"
+        else -> Unit
+    } } }
     val isSharingLive = engineState.phase == LinkoConnectionPhase.Connected
-    Box(Modifier.fillMaxWidth().navigationBarsPadding()) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(Blue.copy(alpha = 0.0f), Accent.copy(alpha = 0.35f), Blue.copy(alpha = 0.0f))))
-        Surface(Modifier.fillMaxWidth().padding(top = 1.dp), color = GradientMid.copy(alpha = 0.96f), tonalElevation = 0.dp) {
-            Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceAround) {
-                bottomNavItems.forEach { item ->
-                    val selected = activeTab == item.label
-                    val activeColor = if (item == BottomNavItem.Friends) Green else Blue
-                    Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (selected) activeColor.copy(alpha = 0.13f) else androidx.compose.ui.graphics.Color.Transparent).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { if (!selected) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route); launchSingleTop = true } }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(Modifier.width(if (selected) 22.dp else 0.dp).height(2.5.dp).clip(RoundedCornerShape(2.dp)).background(if (selected) activeColor else androidx.compose.ui.graphics.Color.Transparent))
-                            Spacer(Modifier.height(3.dp))
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(if (selected) item.iconFilled else item.iconOutlined, item.label, tint = if (selected) activeColor else TextSub, modifier = Modifier.size(21.dp))
-                                when (item) {
-                                    BottomNavItem.Notifications -> { val count = friendRequestCount + if (hasIncomingConnection) 1 else 0; if (count > 0) NavBadge(count = count, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) }
-                                    BottomNavItem.Home -> if (hasIncomingConnection) NavBadge(text = "⚡", color = Yellow, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) else if (isSharingLive) NavBadge(text = "LIVE", color = Green, modifier = Modifier.align(Alignment.TopEnd).offset(x = 14.dp, y = (-5).dp))
-                                    BottomNavItem.Friends -> if (friendRequestCount > 0) NavBadge(count = friendRequestCount, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp))
-                                    else -> Unit
-                                }
+    Surface(Modifier.fillMaxWidth().navigationBarsPadding(), color = GradientMid.copy(alpha = .96f), tonalElevation = 0.dp) {
+        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceAround) {
+            bottomNavItems.forEach { item ->
+                val selected = activeTab == item.label
+                val activeColor = if (item == BottomNavItem.Friends) Green else Blue
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (selected) activeColor.copy(alpha = .13f) else androidx.compose.ui.graphics.Color.Transparent).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { if (!selected) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route); launchSingleTop = true } }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(Modifier.width(if (selected) 22.dp else 0.dp).height(2.5.dp).clip(RoundedCornerShape(2.dp)).background(if (selected) activeColor else androidx.compose.ui.graphics.Color.Transparent))
+                        Spacer(Modifier.height(3.dp))
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(if (selected) item.iconFilled else item.iconOutlined, item.label, tint = if (selected) activeColor else TextSub, modifier = Modifier.size(21.dp))
+                            when (item) {
+                                BottomNavItem.Notifications -> { val count = friendRequestCount + if (hasIncomingConnection) 1 else 0; if (count > 0) NavBadge(count = count, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) }
+                                BottomNavItem.Home -> if (hasIncomingConnection) NavBadge(text = "⚡", color = Yellow, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) else if (isSharingLive) NavBadge(text = "LIVE", color = Green, modifier = Modifier.align(Alignment.TopEnd).offset(x = 14.dp, y = (-5).dp))
+                                BottomNavItem.Friends -> if (friendRequestCount > 0) NavBadge(count = friendRequestCount, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp))
+                                else -> Unit
                             }
-                            Spacer(Modifier.height(2.dp))
-                            Text(item.label, color = if (selected) activeColor else TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                         }
+                        Spacer(Modifier.height(2.dp))
+                        Text(item.label, color = if (selected) activeColor else TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                     }
                 }
             }
