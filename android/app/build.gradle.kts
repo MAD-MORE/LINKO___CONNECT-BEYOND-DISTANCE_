@@ -21,13 +21,13 @@ android {
 
     signingConfigs {
         // The debug signing configuration is owned by Android Gradle Plugin.
-        // Do not hard-code CI-local ~/.android/debug.keystore paths.
+        // Release signing is supplied only through CI/local environment secrets.
         create("linkoDev") {
-            storeFile = rootProject.file("linko-dev.keystore")
+            val keystorePath = System.getenv("LINKO_KEYSTORE_PATH") ?: "linko-dev.keystore"
+            storeFile = rootProject.file(keystorePath)
             storePassword = System.getenv("LINKO_KEYSTORE_PASSWORD") ?: ""
             keyAlias = System.getenv("LINKO_KEY_ALIAS") ?: "linko"
             keyPassword = System.getenv("LINKO_KEY_PASSWORD") ?: ""
-            // LINKO's persistent signing guide generates .jks (JKS) release keys.
             storeType = "JKS"
         }
     }
@@ -44,7 +44,6 @@ android {
             buildType.buildConfigField("String", "LINKO_SUPABASE_PUBLISHABLE_KEY", "\"${configuredSupabaseKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         }
         getByName("debug") {
-            // Keep the AGP-created debug signing config untouched.
             addConfig(this)
             isDebuggable = true
         }
