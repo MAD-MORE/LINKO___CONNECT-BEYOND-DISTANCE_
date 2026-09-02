@@ -13,11 +13,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /** Coordinates the control plane and direct-P2P data plane. Supabase never carries Internet traffic. */
 object LinkoEngineBridge {
+    private const val TAG = "LinkoEngineBridge"
+    private const val PRESENCE_POLL_MS = 10_000L
+    private const val PRESENCE_STALE_MS = 180_000L
+
     private var api: LinkoDeviceControlApi? = null
     private var coordinator: TunnelCoordinator? = null
     private var scope: CoroutineScope? = null
@@ -25,6 +31,8 @@ object LinkoEngineBridge {
     private var connectionJob: Job? = null
     private var approvedProviderSessionId: String? = null
     private var lastFriendUserId: String? = null
+    private val presenceJobs = ConcurrentHashMap<String, Job>()
+    private val presenceFlows = ConcurrentHashMap<String, MutableStateFlow<LinkoFriendPresence>>()
 
     private val _connection = MutableStateFlow(LinkoEngineConnectionState())
     val connection: StateFlow<LinkoEngineConnectionState> = _connection.asStateFlow()
@@ -38,6 +46,9 @@ object LinkoEngineBridge {
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel()
         connectionJob = null
+        presenceJobs.values.forEach { it.cancel() }
+        presenceJobs.clear()
+        presenceFlows.clear()
         lastFriendUserId = null
         publish("idle", "Ready")
     }
@@ -63,11 +74,68 @@ object LinkoEngineBridge {
         publish(state, detail)
     }
 
+    /**
+     * Engine-level live friend presence watchdog.
+     * Realtime remains the fast path; this authenticated backend probe is the authoritative
+     * recovery path so a temporary Realtime gap does not make an actually-online provider
+     * appear offline in the UI or block the existing connection flow.
+     */
+    fun watchFriendPresence(friendUserId: String): StateFlow<LinkoFriendPresence> {
+        val userId = friendUserId.trim()
+        if (userId.isBlank()) return MutableStateFlow(LinkoFriendPresence())
+
+        val state = presenceFlows.getOrPut(userId) { MutableStateFlow(LinkoFriendPresence()) }
+        if (presenceJobs[userId]?.isActive != true) {
+            val engineScope = scope
+            if (engineScope != null) {
+                presenceJobs[userId] = engineScope.launch {
+                    while (true) {
+                        val control = api ?: break
+                        try {
+                            val provider = control.providerDeviceForUser(userId)
+                            val now = System.currentTimeMillis()
+                            val heartbeatAge = if (provider.lastSeenAt > 0L) (now - provider.lastSeenAt).coerceAtLeast(0L) else Long.MAX_VALUE
+                            val online = provider.online && heartbeatAge <= PRESENCE_STALE_MS
+                            state.update {
+                                it.copy(
+                                    online = online,
+                                    deviceId = provider.deviceId,
+                                    lastSeenAt = provider.lastSeenAt,
+                                    checkedAt = now,
+                                    source = PresenceSource.BackendHeartbeat,
+                                    error = null,
+                                )
+                            }
+                            _events.tryEmit(LinkoEngineEvent.FriendPresenceUpdated(userId, online, provider.lastSeenAt))
+                        } catch (error: Exception) {
+                            state.update {
+                                it.copy(
+                                    checkedAt = System.currentTimeMillis(),
+                                    source = PresenceSource.Unavailable,
+                                    error = error.message ?: "presence_check_failed",
+                                )
+                            }
+                        }
+                        delay(PRESENCE_POLL_MS)
+                    }
+                }
+            }
+        }
+        return state.asStateFlow()
+    }
+
+    fun stopWatchingFriendPresence(friendUserId: String) {
+        val userId = friendUserId.trim()
+        presenceJobs.remove(userId)?.cancel()
+        presenceFlows.remove(userId)
+    }
+
     fun connectToFriend(friendUserId: String, friendName: String? = null, friendId: String? = null, onState: (String) -> Unit = {}) {
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         if (friendUserId.isBlank()) return publishAndNotify("friend_not_selected", onState)
         lastFriendUserId = friendUserId
         setPeerInfo(friendName, friendId, isProvider = false)
+        watchFriendPresence(friendUserId)
         connectionJob?.cancel()
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
         connectionJob = engineScope.launch {
@@ -132,9 +200,6 @@ object LinkoEngineBridge {
                 publishAndNotify("establishing", onState)
                 publishAndNotify("direct_connecting", onState)
                 tunnel.startDirectVpnTunnel(config.sessionId, config.key)
-                // The VPN service performs STUN, candidate exchange, authenticated
-                // direct UDP verification and Internet verification. It reports
-                // connected only after those checks actually pass.
                 publishAndNotify("routing", onState)
                 return
             }
@@ -206,6 +271,7 @@ object LinkoEngineBridge {
         connectionJob?.cancel()
         coordinator?.stopVpnTunnel()
         connectionJob = null
+        lastFriendUserId?.let(::stopWatchingFriendPresence)
         lastFriendUserId = null
         publish("idle", "Disconnected · tunnel closed")
     }
@@ -244,6 +310,9 @@ object LinkoEngineBridge {
         }
         _connection.update { it.copy(phase = normalized, detail = message, error = if (normalized == LinkoConnectionPhase.Failed) message else null) }
     }
+
+    private val _events = MutableStateFlow<LinkoEngineEvent?>(null)
+    val engineEvents: StateFlow<LinkoEngineEvent?> = _events.asStateFlow()
 }
 
 enum class LinkoConnectionPhase { Idle, Connecting, Authenticating, Signaling, Establishing, Securing, Routing, Connected, Failed }
@@ -260,3 +329,22 @@ data class LinkoEngineConnectionState(
     val latencyMs: Int = 0,
     val isProvider: Boolean = false,
 )
+
+enum class PresenceSource { Unknown, BackendHeartbeat, Unavailable }
+
+data class LinkoFriendPresence(
+    val online: Boolean = false,
+    val deviceId: String? = null,
+    val lastSeenAt: Long = 0L,
+    val checkedAt: Long = 0L,
+    val source: PresenceSource = PresenceSource.Unknown,
+    val error: String? = null,
+)
+
+sealed interface LinkoEngineEvent {
+    data class FriendPresenceUpdated(
+        val friendUserId: String,
+        val online: Boolean,
+        val lastSeenAt: Long,
+    ) : LinkoEngineEvent
+}
