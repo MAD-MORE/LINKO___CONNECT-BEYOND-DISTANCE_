@@ -18,11 +18,14 @@ import android.util.Log
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.DirectP2pNegotiator
 import com.linkshare.app.network.LinkoDeviceControlApi
+import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
+import com.linkshare.app.network.LinkoSignalingClient
+import com.linkshare.app.tunnel.EncryptedDatagramTunnel
 import com.linkshare.app.tunnel.FullIpProviderTransportAdapter
-import com.linkshare.app.tunnel.ProviderSocketFactory
 import com.linkshare.app.tunnel.ProviderTunnelRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,12 +35,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.net.DatagramSocket
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
+import java.net.URL
 
-/**
- * Android Foreground Service managing Phone A's provider-side tunnel execution.
- * Hardened with WakeLock, WifiLock, network state listeners, and auto-recovery.
- */
+/** Provider foreground service. It shares the real device Internet only over a direct P2P tunnel. */
 class LinkoProviderService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var auth: LinkoAuth
@@ -48,18 +52,15 @@ class LinkoProviderService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-
     private fun acquireLocks() {
         runCatching {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LINKO:ProviderWakeLock")?.apply {
-                setReferenceCounted(false)
-                acquire(24 * 60 * 60 * 1000L) // 24h safety timeout
+                setReferenceCounted(false); acquire(24 * 60 * 60 * 1000L)
             }
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "LINKO:ProviderWifiLock")?.apply {
-                setReferenceCounted(false)
-                acquire()
+                setReferenceCounted(false); acquire()
             }
         }.onFailure { Log.w(TAG, "Could not acquire locks: ${it.message}") }
     }
@@ -75,16 +76,15 @@ class LinkoProviderService : Service() {
 
     private fun registerNetworkCallback() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        val builder = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val builder = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 Log.i(TAG, "Network became available for provider sharing")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Provider Sharing Active", "Internet connection is active and stable"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Provider Ready", "Internet connection is available"))
             }
             override fun onLost(network: Network) {
                 Log.w(TAG, "Network lost on provider device")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Network Interrupted", "Waiting for internet connection to restore…"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Network Interrupted", "Waiting for Internet to return…"))
             }
         }
         runCatching { cm.registerNetworkCallback(builder.build(), networkCallback!!) }
@@ -94,8 +94,7 @@ class LinkoProviderService : Service() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         val active = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(active) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-               caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private suspend fun listenToRealtime() {
@@ -109,17 +108,12 @@ class LinkoProviderService : Service() {
     }
 
     private suspend fun notifyPendingConnectionRequests() {
-        runCatching { api.pendingProviderRequests() }
-            .getOrDefault(emptyList())
-            .forEach { request -> postRequestNotification(request.id, request.receiverDeviceId) }
+        runCatching { api.pendingProviderRequests() }.getOrDefault(emptyList()).forEach { request -> postRequestNotification(request.id, request.receiverDeviceId) }
     }
 
     private suspend fun heartbeat() {
         while (scope.isActive) {
-            try {
-                api.ensureRegistered()
-                api.touchPresence()
-            } catch (_: Exception) { }
+            runCatching { api.ensureRegistered(); api.touchPresence() }
             delay(15_000L)
         }
     }
@@ -128,16 +122,10 @@ class LinkoProviderService : Service() {
         scope.launch {
             notificationManager().cancel(requestId.hashCode())
             if (!hasActiveInternet()) {
-                Log.w(TAG, "Provider cannot accept session: No active internet connection")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active internet connection on this device"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
                 return@launch
             }
-            runCatching {
-                api.transition(requestId, "approved")
-                startApproved(requestId)
-            }.onFailure {
-                stopRunner(requestId)
-            }
+            runCatching { api.transition(requestId, "approved"); startApproved(requestId) }.onFailure { stopRunner(requestId) }
         }
     }
 
@@ -145,37 +133,69 @@ class LinkoProviderService : Service() {
         scope.launch {
             notificationManager().cancel(requestId.hashCode())
             if (!hasActiveInternet()) {
-                Log.w(TAG, "Provider cannot start sharing: No active internet connection")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active internet connection on this device"))
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
                 return@launch
             }
             var config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
             if (config == null) {
-                repeat(TUNNEL_CONFIG_RETRIES) { attempt ->
+                repeat(TUNNEL_CONFIG_RETRIES) {
                     delay(TUNNEL_CONFIG_RETRY_MS)
                     config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
                     if (config != null) return@repeat
                 }
             }
             val activeConfig = config ?: run {
-                Log.e(TAG, "Could not fetch tunnel config for approved session $requestId")
+                Log.e(TAG, "Could not fetch direct tunnel credentials for $requestId")
+                LinkoEngineBridge.reportTunnelState("failed", "Could not obtain secure session credentials")
+                stopRunner(requestId)
+                return@launch
+            }
+            if (activeConfig.relay || activeConfig.transport != "direct_udp") {
+                Log.e(TAG, "Refusing non-direct transport for $requestId")
+                LinkoEngineBridge.reportTunnelState("failed", "Relay transport is disabled")
                 stopRunner(requestId)
                 return@launch
             }
 
             stopRunner(requestId)
-            val socket = java.net.DatagramSocket(0)
-            val runner = ProviderTunnelRunner(
-                socket = socket,
-                endpoint = InetSocketAddress(activeConfig.host, activeConfig.port),
-                sessionId = activeConfig.sessionId,
-                sessionKey = activeConfig.key,
-                scope = scope,
-                adapter = FullIpProviderTransportAdapter(),
-            )
-            runners[requestId] = runner
-            runner.start()
-            notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Encrypted LINKO tunnel is live and routing traffic"))
+            val socket = runCatching { DatagramSocket(0) }.getOrElse {
+                LinkoEngineBridge.reportTunnelState("failed", "Unable to open direct UDP socket")
+                return@launch
+            }
+            try {
+                LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
+                val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("device_auth_required")
+                val signaling = LinkoSignalingClient(accessToken = token)
+                val negotiated = runBlocking {
+                    DirectP2pNegotiator.establish(
+                        sessionId = activeConfig.sessionId,
+                        sessionKey = activeConfig.key,
+                        role = EncryptedDatagramTunnel.Role.PROVIDER,
+                        signaling = signaling,
+                        socket = socket,
+                    )
+                }
+
+                val runner = ProviderTunnelRunner(
+                    socket = negotiated.socket,
+                    endpoint = negotiated.peer,
+                    sessionId = activeConfig.sessionId,
+                    sessionKey = activeConfig.key,
+                    scope = scope,
+                    adapter = FullIpProviderTransportAdapter(),
+                )
+                runners[requestId] = runner
+                runner.start()
+                LinkoEngineBridge.reportTunnelState("connected", "Direct connection established; Provider is sharing Internet")
+                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
+                Log.i(TAG, "Direct provider tunnel established for session=${activeConfig.sessionId} peer=${negotiated.peer}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Direct P2P provider connection failed: ${e.message}", e)
+                runCatching { socket.close() }
+                LinkoEngineBridge.reportTunnelState("failed", e.message ?: "direct_connection_failed")
+                stopRunner(requestId)
+            }
         }
     }
 
@@ -190,16 +210,10 @@ class LinkoProviderService : Service() {
 
     private fun postRequestNotification(requestId: String, receiverDeviceId: String) {
         if (!seen.add(requestId)) return
-        val accept = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(this, requestId.hashCode(), actionIntent(ACTION_ACCEPT, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        } else {
-            PendingIntent.getService(this, requestId.hashCode(), actionIntent(ACTION_ACCEPT, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        }
-        val decline = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(this, requestId.hashCode() + 1, actionIntent(ACTION_DECLINE, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        } else {
-            PendingIntent.getService(this, requestId.hashCode() + 1, actionIntent(ACTION_DECLINE, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        }
+        val accept = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) PendingIntent.getForegroundService(this, requestId.hashCode(), actionIntent(ACTION_ACCEPT, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        else PendingIntent.getService(this, requestId.hashCode(), actionIntent(ACTION_ACCEPT, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val decline = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) PendingIntent.getForegroundService(this, requestId.hashCode() + 1, actionIntent(ACTION_DECLINE, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        else PendingIntent.getService(this, requestId.hashCode() + 1, actionIntent(ACTION_DECLINE, requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val open = PendingIntent.getActivity(this, requestId.hashCode() + 2, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("EXTRA_REQUEST_ID", requestId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
@@ -236,9 +250,7 @@ class LinkoProviderService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val dataCapMb = intent?.getLongExtra(EXTRA_DATA_CAP_MB, 0L) ?: 0L
-        if (dataCapMb > 0) {
-            dataCapBytes = dataCapMb * 1024 * 1024
-        }
+        if (dataCapMb > 0) dataCapBytes = dataCapMb * 1024 * 1024
         when (intent?.action) {
             ACTION_ACCEPT -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(::accept)
             ACTION_DECLINE -> intent.getStringExtra(EXTRA_REQUEST_ID)?.let(::decline)
@@ -265,7 +277,6 @@ class LinkoProviderService : Service() {
         var isRunning: Boolean = false
             private set
         var dataCapBytes: Long = 0L
-
         const val ACTION_ACCEPT = "com.linkshare.app.provider.ACCEPT"
         const val ACTION_DECLINE = "com.linkshare.app.provider.DECLINE"
         const val ACTION_START_APPROVED = "com.linkshare.app.provider.START_APPROVED"
@@ -277,9 +288,7 @@ class LinkoProviderService : Service() {
         private const val TUNNEL_CONFIG_RETRIES = 5
         private const val TUNNEL_CONFIG_RETRY_MS = 1_000L
         fun start(context: Context, dataCapMb: Long = 0L) {
-            val intent = Intent(context, LinkoProviderService::class.java).apply {
-                if (dataCapMb > 0) putExtra(EXTRA_DATA_CAP_MB, dataCapMb)
-            }
+            val intent = Intent(context, LinkoProviderService::class.java).apply { if (dataCapMb > 0) putExtra(EXTRA_DATA_CAP_MB, dataCapMb) }
             context.startForegroundService(intent)
         }
         fun stop(context: Context) { context.stopService(Intent(context, LinkoProviderService::class.java)) }
