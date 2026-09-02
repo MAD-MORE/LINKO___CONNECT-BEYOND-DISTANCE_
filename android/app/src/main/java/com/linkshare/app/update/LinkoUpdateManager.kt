@@ -130,32 +130,34 @@ class LinkoUpdateManager(private val context: Context) {
         }
     }
 
-    private suspend fun discoverLatestRelease(): UpdateDiscoveryResult = try {
-        val releaseResponse = getText(RELEASES_API, "latest release", GITHUB_JSON_ACCEPT)
-        if (releaseResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("latest release", releaseResponse.code, releaseResponse.errorMessage())
-        val release = runCatching { JSONObject(releaseResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("latest release", "GitHub returned invalid release JSON.") }
-        val assets = release.optJSONArray("assets") ?: return UpdateDiscoveryResult.ValidationError("latest release", "The latest release does not contain an assets list.")
-        val manifestAsset = findAsset(assets, UPDATE_MANIFEST_NAME) ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST MISSING")
-        val manifestUrl = manifestAsset.apiUrl ?: manifestAsset.browserUrl ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
-        if (!manifestUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
-        val manifestAccept = if (manifestAsset.apiUrl != null && manifestUrl == manifestAsset.apiUrl) GITHUB_ASSET_ACCEPT else GITHUB_JSON_ACCEPT
-        val manifestResponse = getText(manifestUrl, "update manifest", manifestAccept)
-        if (manifestResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("update manifest", manifestResponse.code, manifestResponse.errorMessage())
-        val manifest = runCatching { JSONObject(manifestResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("update manifest", "UPDATE MANIFEST INVALID JSON") }
-        if (manifest.optInt("schemaVersion", -1) != SUPPORTED_SCHEMA) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST SCHEMA UNSUPPORTED")
-        val versionLong = manifest.optLong("versionCode", -1L)
-        if (versionLong !in 1L..Int.MAX_VALUE.toLong()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION INVALID")
-        val versionName = manifest.optString("versionName").trim()
-        if (versionName.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION NAME INVALID")
-        val apkAsset = manifest.optString("apkAsset").trim()
-        if (apkAsset.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE APK ASSET NAME INVALID")
-        val commit = manifest.optString("commit").takeIf { it.isNotBlank() }
-        val apk = findAsset(assets, apkAsset) ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK ASSET MISSING")
-        val apkUrl = apk.browserUrl ?: apk.apiUrl ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
-        if (!apkUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
-        UpdateDiscoveryResult.Success(ReleaseInfo(versionLong.toInt(), versionName, apkUrl, commit))
-    } catch (t: Throwable) {
-        UpdateDiscoveryResult.NetworkError("latest release", t.safeMessage())
+    private suspend fun discoverLatestRelease(): UpdateDiscoveryResult {
+        return try {
+            val releaseResponse = getText(RELEASES_API, "latest release", GITHUB_JSON_ACCEPT)
+            if (releaseResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("latest release", releaseResponse.code, releaseResponse.errorMessage())
+            val release = runCatching { JSONObject(releaseResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("latest release", "GitHub returned invalid release JSON.") }
+            val assets = release.optJSONArray("assets") ?: return UpdateDiscoveryResult.ValidationError("latest release", "The latest release does not contain an assets list.")
+            val manifestAsset = findAsset(assets, UPDATE_MANIFEST_NAME) ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST MISSING")
+            val manifestUrl = manifestAsset.apiUrl ?: manifestAsset.browserUrl ?: return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
+            if (!manifestUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST URL INVALID")
+            val manifestAccept = if (manifestAsset.apiUrl != null && manifestUrl == manifestAsset.apiUrl) GITHUB_ASSET_ACCEPT else GITHUB_JSON_ACCEPT
+            val manifestResponse = getText(manifestUrl, "update manifest", manifestAccept)
+            if (manifestResponse.code !in 200..299) return UpdateDiscoveryResult.HttpError("update manifest", manifestResponse.code, manifestResponse.errorMessage())
+            val manifest = runCatching { JSONObject(manifestResponse.body) }.getOrElse { return UpdateDiscoveryResult.ParseError("update manifest", "UPDATE MANIFEST INVALID JSON") }
+            if (manifest.optInt("schemaVersion", -1) != SUPPORTED_SCHEMA) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST SCHEMA UNSUPPORTED")
+            val versionLong = manifest.optLong("versionCode", -1L)
+            if (versionLong !in 1L..Int.MAX_VALUE.toLong()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION INVALID")
+            val versionName = manifest.optString("versionName").trim()
+            if (versionName.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE MANIFEST VERSION NAME INVALID")
+            val apkAsset = manifest.optString("apkAsset").trim()
+            if (apkAsset.isBlank()) return UpdateDiscoveryResult.ValidationError("manifest", "UPDATE APK ASSET NAME INVALID")
+            val commit = manifest.optString("commit").takeIf { it.isNotBlank() }
+            val apk = findAsset(assets, apkAsset) ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK ASSET MISSING")
+            val apkUrl = apk.browserUrl ?: apk.apiUrl ?: return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
+            if (!apkUrl.startsWith("https://")) return UpdateDiscoveryResult.ValidationError("apk asset", "UPDATE APK URL INVALID")
+            UpdateDiscoveryResult.Success(ReleaseInfo(versionLong.toInt(), versionName, apkUrl, commit))
+        } catch (t: Throwable) {
+            UpdateDiscoveryResult.NetworkError("latest release", t.safeMessage())
+        }
     }
 
     private fun getText(url: String, stage: String, accept: String): HttpResponse {

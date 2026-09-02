@@ -185,10 +185,74 @@ private fun LiveActivityCard(telemetry: DiagnosticTelemetrySnapshot, running: Bo
 
 @Composable private fun StartupStyledUpdateCard(state: LinkoUpdateManager.UpdateState) { val active = state.status in setOf(LinkoUpdateManager.UpdateStatus.Checking, LinkoUpdateManager.UpdateStatus.Downloading, LinkoUpdateManager.UpdateStatus.Verifying, LinkoUpdateManager.UpdateStatus.Installing); LinkoCard(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Refresh, contentDescription = "Update status", tint = Blue, modifier = Modifier.size(21.dp)); Spacer(Modifier.size(9.dp)); Column(Modifier.weight(1f)) { Text("UPDATE NETWORK", color = Green, fontFamily = JetBrainsMono, fontSize = 8.sp, fontWeight = FontWeight.Bold); Text(state.statusMessage.ifBlank { "Automatic update detection ready" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 8.sp); Text("Current ${state.installedVersionName} (${state.installedVersionCode})", color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp) }; if (active) LinearProgressIndicator(progress = { state.progressPercent / 100f }, modifier = Modifier.size(width = 48.dp, height = 5.dp)) }; state.errorMessage?.let { Text(it, color = TextSub, fontFamily = JetBrainsMono, fontSize = 7.sp, modifier = Modifier.padding(top = 5.dp)) } } }
 
-private fun statusTint(overall: DiagnosticOverallState): Color = when (overall) { DiagnosticOverallState.PASSED -> Green; DiagnosticOverallState.BLOCKED -> Color(0xFFFFB84D); is DiagnosticOverallState.FAILED -> Color(0xFFFF5D5D); DiagnosticOverallState.CHECKING -> Blue }
-private fun statusTint(status: DiagnosticStatus): Color = when (status) { DiagnosticStatus.PASS -> Green; DiagnosticStatus.FAIL -> Color(0xFFFF5D5D); DiagnosticStatus.BLOCKED -> Color(0xFFFFB84D); DiagnosticStatus.CHECKING -> Blue; DiagnosticStatus.WAITING, DiagnosticStatus.SKIPPED -> TextSub }
-private fun statusLabel(status: DiagnosticStatus): String = when (status) { DiagnosticStatus.PASS -> "PASS"; DiagnosticStatus.FAIL -> "FAILED"; DiagnosticStatus.BLOCKED -> "BLOCKED"; DiagnosticStatus.CHECKING -> "CHECKING"; DiagnosticStatus.WAITING -> "WAITING"; DiagnosticStatus.SKIPPED -> "SKIPPED" }
-private fun subsystemIcon(name: String): ImageVector = when (name.lowercase()) { in listOf("network", "connectivity", "internet") -> Icons.Outlined.NetworkCheck; in listOf("device", "device identity", "registration", "registered device") -> Icons.Outlined.Smartphone; in listOf("presence", "heartbeat", "online status") -> Icons.Outlined.Person; in listOf("relay", "udp relay") -> Icons.Outlined.Hub; in listOf("backend", "control plane", "api") -> Icons.Outlined.Cloud; in listOf("security", "authentication", "auth") -> Icons.Outlined.Security; else -> Icons.Filled.Info }
-private fun diagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot, overall: DiagnosticOverallState): String = buildString { appendLine("LINKO DIAGNOSTIC REPORT"); appendLine("======================="); appendLine("OVERALL   ${overallLabel(overall)}"); appendLine("ENGINE    ${telemetry.enginePhase} · ${telemetry.engineDetail}"); appendLine("REALTIME  ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}"); appendLine("VPN       ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}"); appendLine(); results.forEach { appendLine("${statusLabel(it.status).padEnd(8)} ${it.name} — ${it.detail}") }; if (telemetry.engineTrace.isNotEmpty()) { appendLine(); appendLine("TRACE"); telemetry.engineTrace.takeLast(10).forEach { appendLine("› $it") } } }.trimEnd()
-private fun overallLabel(overall: DiagnosticOverallState): String = when (overall) { DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"; DiagnosticOverallState.BLOCKED -> "SYSTEM CHECK BLOCKED"; is DiagnosticOverallState.FAILED -> "FAILURE AT ${overall.component}"; DiagnosticOverallState.CHECKING -> "CHECKING" }
-private fun copyDiagnosticLog(context: Context, text: String) { val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return; clipboard.setPrimaryClip(ClipData.newPlainText("LINKO Diagnostic Report", text)) }
+private fun statusTint(overall: DiagnosticOverallState): Color {
+    return when (overall) {
+        DiagnosticOverallState.PASSED -> Green
+        DiagnosticOverallState.BLOCKED -> Color(0xFFFFB84D)
+        is DiagnosticOverallState.FAILED -> Color(0xFFFF5D5D)
+        DiagnosticOverallState.CHECKING -> Blue
+    }
+}
+
+private fun statusTint(status: DiagnosticStatus): Color {
+    return when (status) {
+        DiagnosticStatus.PASS -> Green
+        DiagnosticStatus.FAIL -> Color(0xFFFF5D5D)
+        DiagnosticStatus.BLOCKED -> Color(0xFFFFB84D)
+        DiagnosticStatus.CHECKING -> Blue
+        DiagnosticStatus.WAITING, DiagnosticStatus.SKIPPED -> TextSub
+    }
+}
+
+private fun statusLabel(status: DiagnosticStatus): String {
+    return when (status) {
+        DiagnosticStatus.PASS -> "PASS"
+        DiagnosticStatus.FAIL -> "FAILED"
+        DiagnosticStatus.BLOCKED -> "BLOCKED"
+        DiagnosticStatus.CHECKING -> "CHECKING"
+        DiagnosticStatus.WAITING -> "WAITING"
+        DiagnosticStatus.SKIPPED -> "SKIPPED"
+    }
+}
+
+private fun subsystemIcon(name: String): ImageVector {
+    return when (name.lowercase()) {
+        in listOf("network", "connectivity", "internet") -> Icons.Outlined.NetworkCheck
+        in listOf("device", "device identity", "registration", "registered device") -> Icons.Outlined.Smartphone
+        in listOf("presence", "heartbeat", "online status") -> Icons.Outlined.Person
+        in listOf("relay", "udp relay") -> Icons.Outlined.Hub
+        in listOf("backend", "control plane", "api") -> Icons.Outlined.Cloud
+        in listOf("security", "authentication", "auth") -> Icons.Outlined.Security
+        else -> Icons.Filled.Info
+    }
+}
+private fun diagnosticLog(results: List<DiagnosticResult>, telemetry: DiagnosticTelemetrySnapshot, overall: DiagnosticOverallState): String {
+    return buildString {
+        appendLine("LINKO DIAGNOSTIC REPORT")
+        appendLine("=======================")
+        appendLine("OVERALL   ${overallLabel(overall)}")
+        appendLine("ENGINE    ${telemetry.enginePhase} · ${telemetry.engineDetail}")
+        appendLine("REALTIME  ${if (telemetry.realtimeConnected) "CONNECTED" else "DISCONNECTED"}")
+        appendLine("VPN       ${if (telemetry.vpnRunning) "RUNNING" else "STOPPED"}")
+        appendLine()
+        results.forEach { appendLine("${statusLabel(it.status).padEnd(8)} ${it.name} — ${it.detail}") }
+        if (telemetry.engineTrace.isNotEmpty()) {
+            appendLine()
+            appendLine("TRACE")
+            telemetry.engineTrace.takeLast(10).forEach { appendLine("› $it") }
+        }
+    }.trimEnd()
+}
+private fun overallLabel(overall: DiagnosticOverallState): String {
+    return when (overall) {
+        DiagnosticOverallState.PASSED -> "SYSTEM HEALTHY"
+        DiagnosticOverallState.BLOCKED -> "SYSTEM CHECK BLOCKED"
+        is DiagnosticOverallState.FAILED -> "FAILURE AT ${overall.component}"
+        DiagnosticOverallState.CHECKING -> "CHECKING"
+    }
+}
+
+private fun copyDiagnosticLog(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("LINKO Diagnostic Report", text))
+}
