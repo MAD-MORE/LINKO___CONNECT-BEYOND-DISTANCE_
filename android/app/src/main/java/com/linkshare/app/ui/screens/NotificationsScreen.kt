@@ -13,74 +13,97 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.linkshare.app.network.LinkoRealtimeEvent
-import com.linkshare.app.network.LinkoRealtimeManager
+import com.linkshare.app.network.LinkoNotification
+import com.linkshare.app.network.LinkoNotificationCenter
+import com.linkshare.app.network.LinkoFriendsApiHolder
+import com.linkshare.app.ui.components.LinkoCard
+import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.Blue
 import com.linkshare.app.ui.theme.Card
 import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
+import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
+import kotlinx.coroutines.launch
 
 @Composable
 fun NotificationsScreen() {
-    val notifications = remember { mutableStateListOf<String>() }
+    val notifications by LinkoNotificationCenter.notifications.collectAsState()
+    val scope = rememberCoroutineScope()
+    var respondingId by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        LinkoRealtimeManager.events.collect { event ->
-            val message = when (event) {
-                is LinkoRealtimeEvent.FriendRequestReceived -> "New friend request received"
-                is LinkoRealtimeEvent.FriendRequestAccepted -> "Friend request accepted"
-                is LinkoRealtimeEvent.FriendRequestDeclined -> "Friend request declined"
-                is LinkoRealtimeEvent.FriendRemoved -> "Friend removed"
-                is LinkoRealtimeEvent.IncomingConnectionRequest -> "Incoming connection request"
-                is LinkoRealtimeEvent.SessionStateChanged -> when (event.state) {
-                    "requested" -> "Connection request sent"
-                    "approved" -> "Connection approved"
-                    "connected" -> "LINKO connection established"
-                    "denied" -> "Connection request declined"
-                    "revoked" -> "Connection ended"
-                    "expired" -> "Connection session expired"
-                    else -> event.state?.replaceFirstChar { it.uppercase() } ?: "Connection updated"
+    fun respond(notification: LinkoNotification, accepted: Boolean) {
+        val requestId = notification.requestId ?: return
+        if (respondingId != null) return
+        respondingId = notification.id
+        error = null
+        scope.launch {
+            runCatching { LinkoFriendsApiHolder.api.respond(requestId, accepted) }
+                .onSuccess {
+                    LinkoNotificationCenter.remove(notification.id)
                 }
-                is LinkoRealtimeEvent.TransportError -> "Connection service: ${event.message}"
-                else -> null
-            }
-            if (message != null) {
-                notifications.add(0, message)
-                while (notifications.size > 50) notifications.removeLast()
-            }
+                .onFailure { error = it.message ?: "Request action failed" }
+            respondingId = null
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)
-    ) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
         Text("Notifications", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono)
         Spacer(Modifier.height(6.dp))
-        Text("Friend requests and connection activity appear here.", color = TextSub, fontSize = 12.sp)
-        Spacer(Modifier.height(18.dp))
+        Text("Friend requests, responses and connection activity appear here in real time.", color = TextSub, fontSize = 12.sp)
+        Spacer(Modifier.height(12.dp))
+
+        error?.let {
+            Text(it, color = Red, fontSize = 11.sp, fontFamily = JetBrainsMono)
+            Spacer(Modifier.height(8.dp))
+        }
+
         if (notifications.isEmpty()) {
             Surface(color = Card, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("You’re all caught up", color = Green, fontSize = 16.sp, fontFamily = JetBrainsMono)
-                    Text("New activity from LINKO will show here automatically.", color = TextSub, fontSize = 12.sp)
+                    Text("New LINKO activity will appear here automatically while realtime is connected.", color = TextSub, fontSize = 12.sp)
                 }
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(notifications) { text ->
-                    Surface(color = Card, modifier = Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text, color = TextPrimary, fontSize = 12.sp)
-                            Text("LIVE", color = Blue, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                items(notifications, key = { it.id }) { notification ->
+                    LinkoCard {
+                        Text(notification.title, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono)
+                        Spacer(Modifier.height(5.dp))
+                        Text(notification.message, color = TextSub, fontSize = 12.sp)
+
+                        if (notification.kind == LinkoNotification.Kind.FRIEND_REQUEST && !notification.requestId.isNullOrBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth()) {
+                                PrimaryButton(
+                                    if (respondingId == notification.id) "..." else "ACCEPT",
+                                    { respond(notification, true) },
+                                    color = Green,
+                                )
+                                Spacer(Modifier.padding(horizontal = 4.dp))
+                                PrimaryButton(
+                                    if (respondingId == notification.id) "" else "DECLINE",
+                                    { respond(notification, false) },
+                                    color = Red,
+                                    outline = true,
+                                )
+                            }
                         }
+
+                        Spacer(Modifier.height(6.dp))
+                        Text("LIVE • LINKO", color = Blue, fontSize = 9.sp, fontFamily = JetBrainsMono)
                     }
                 }
             }
