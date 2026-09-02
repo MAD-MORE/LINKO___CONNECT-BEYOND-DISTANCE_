@@ -37,6 +37,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.net.DatagramSocket
+import java.util.concurrent.ConcurrentHashMap
 
 /** Provider foreground service. It shares the real device Internet only over a direct P2P tunnel. */
 class LinkoProviderService : Service() {
@@ -44,7 +45,8 @@ class LinkoProviderService : Service() {
     private lateinit var auth: LinkoAuth
     private lateinit var api: LinkoDeviceControlApi
     private val seen = mutableSetOf<String>()
-    private val runners = mutableMapOf<String, ProviderTunnelRunner>()
+    private val runners = ConcurrentHashMap<String, ProviderTunnelRunner>()
+    private val startingSessions = ConcurrentHashMap.newKeySet<String>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -109,81 +111,104 @@ class LinkoProviderService : Service() {
 
     private fun accept(requestId: String) {
         scope.launch {
+            Log.i(TAG, "ACCEPT_REQUEST session=$requestId")
             notificationManager().cancel(requestId.hashCode())
             if (!hasActiveInternet()) {
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
+                failSession(requestId, "provider_internet_unavailable")
                 return@launch
             }
-            runCatching { api.transition(requestId, "approved"); startApproved(requestId) }
-                .onFailure { error -> Log.e(TAG, "Approval failed: ${error.message}"); stopRunner(requestId) }
+            runCatching { api.transition(requestId, "approved") }
+                .onSuccess {
+                    Log.i(TAG, "SESSION_APPROVED session=$requestId")
+                    startApproved(requestId)
+                }
+                .onFailure { error -> failSession(requestId, error.message ?: "approval_failed", error) }
         }
     }
 
     private fun startApproved(requestId: String) {
+        if (requestId.isBlank()) return
+        if (runners.containsKey(requestId)) {
+            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$requestId")
+            return
+        }
+        if (!startingSessions.add(requestId)) {
+            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$requestId startup_already_in_progress")
+            return
+        }
+
         scope.launch {
-            notificationManager().cancel(requestId.hashCode())
-            if (!hasActiveInternet()) {
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Cannot Share", "No active Internet connection on this device"))
-                return@launch
-            }
-
-            var config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
-            if (config == null) {
-                repeat(TUNNEL_CONFIG_RETRIES) {
-                    delay(TUNNEL_CONFIG_RETRY_MS)
-                    config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
-                    if (config != null) return@repeat
-                }
-            }
-            val activeConfig = config ?: run {
-                LinkoEngineBridge.reportTunnelState("failed", "Could not obtain secure session credentials")
-                stopRunner(requestId)
-                return@launch
-            }
-            if (activeConfig.transport != "direct_udp") {
-                Log.e(TAG, "Refusing unsupported transport for $requestId")
-                LinkoEngineBridge.reportTunnelState("failed", "Direct UDP transport is required")
-                stopRunner(requestId)
-                return@launch
-            }
-
-            stopRunner(requestId)
-            val socket = runCatching { DatagramSocket(0) }.getOrElse {
-                LinkoEngineBridge.reportTunnelState("failed", "Unable to open direct UDP socket")
-                return@launch
-            }
+            Log.i(TAG, "PROVIDER_SERVICE_START session=$requestId")
             try {
-                LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
-                val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("device_auth_required")
-                val negotiated = runBlocking {
-                    DirectP2pNegotiator.establish(
+                notificationManager().cancel(requestId.hashCode())
+                if (!hasActiveInternet()) throw LinkoNetworkException("provider_internet_unavailable")
+
+                var config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
+                if (config == null) {
+                    repeat(TUNNEL_CONFIG_RETRIES) {
+                        delay(TUNNEL_CONFIG_RETRY_MS)
+                        config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
+                        if (config != null) return@repeat
+                    }
+                }
+                val activeConfig = config ?: throw LinkoNetworkException("tunnel_config_unavailable")
+                Log.i(TAG, "TUNNEL_CONFIG_LOADED session=${activeConfig.sessionId} transport=${activeConfig.transport}")
+                if (activeConfig.sessionId != requestId) throw LinkoNetworkException("session_id_mismatch")
+                if (activeConfig.transport != "direct_udp") throw LinkoNetworkException("unsupported_direct_transport")
+                if (activeConfig.role != "provider") throw LinkoNetworkException("invalid_provider_role")
+                if (activeConfig.key.size != 32) throw LinkoNetworkException("invalid_tunnel_key")
+
+                val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
+                val socket = runCatching { DatagramSocket(0) }.getOrElse { throw LinkoNetworkException("udp_socket_creation_failed: ${it.message}", it) }
+                try {
+                    Log.i(TAG, "UDP_SOCKET_CREATED session=$requestId port=${socket.localPort}")
+                    LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
+                    Log.i(TAG, "P2P_NEGOTIATION_STARTED session=$requestId")
+                    val negotiated = DirectP2pNegotiator.establish(
                         sessionId = activeConfig.sessionId,
                         sessionKey = activeConfig.key,
                         role = EncryptedDatagramTunnel.Role.PROVIDER,
                         signaling = LinkoSignalingClient(accessToken = token),
                         socket = socket,
                     )
+                    Log.i(TAG, "UDP_CHECK_SUCCEEDED session=$requestId peer=${negotiated.peer}")
+                    val runner = ProviderTunnelRunner(
+                        socket = negotiated.socket,
+                        endpoint = negotiated.peer,
+                        sessionId = activeConfig.sessionId,
+                        sessionKey = activeConfig.key,
+                        scope = scope,
+                        adapter = FullIpProviderTransportAdapter(),
+                    )
+                    runners[requestId] = runner
+                    runner.start()
+                    api.transition(activeConfig.sessionId, "connected")
+                    LinkoEngineBridge.reportTunnelState("connected", "Direct connection established; Provider is sharing Internet")
+                    notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
+                    Log.i(TAG, "TUNNEL_STARTED session=$requestId peer=${negotiated.peer}")
+                    Log.i(TAG, "SESSION_CONNECTED session=$requestId")
+                } catch (error: Exception) {
+                    runCatching { socket.close() }
+                    throw error
                 }
-                val runner = ProviderTunnelRunner(
-                    socket = negotiated.socket,
-                    endpoint = negotiated.peer,
-                    sessionId = activeConfig.sessionId,
-                    sessionKey = activeConfig.key,
-                    scope = scope,
-                    adapter = FullIpProviderTransportAdapter(),
-                )
-                runners[requestId] = runner
-                runner.start()
-                runCatching { api.transition(activeConfig.sessionId, "connected") }.onFailure { Log.d(TAG, "Connected state update: ${it.message}") }
-                LinkoEngineBridge.reportTunnelState("connected", "Direct connection established; Provider is sharing Internet")
-                notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
-                Log.i(TAG, "Direct provider tunnel established for session=${activeConfig.sessionId} peer=${negotiated.peer}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Direct P2P provider connection failed: ${e.message}", e)
-                runCatching { socket.close() }
-                LinkoEngineBridge.reportTunnelState("failed", e.message ?: "direct_connection_failed")
-                stopRunner(requestId)
+            } catch (error: Exception) {
+                failSession(requestId, error.message ?: "direct_connection_failed", error)
+            } finally {
+                startingSessions.remove(requestId)
             }
+        }
+    }
+
+    private fun failSession(sessionId: String, reason: String, error: Throwable? = null) {
+        if (error != null) Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason", error)
+        else Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason")
+        scope.launch {
+            runCatching { api.transition(sessionId, "failed") }
+                .onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$sessionId reason=${it.message}", it) }
+            stopRunner(sessionId)
+            LinkoEngineBridge.reportTunnelState("failed", reason)
+            Log.e(TAG, "SESSION_FAILED session=$sessionId reason=$reason")
+            notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection Failed", reason.replace('_', ' ')))
         }
     }
 
@@ -220,7 +245,7 @@ class LinkoProviderService : Service() {
     private fun serviceNotification(title: String, text: String): Notification = Notification.Builder(this, CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher).setContentTitle(title).setContentText(text).setContentIntent(PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).setOngoing(true).build()
     private fun createChannel() { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) notificationManager().createNotificationChannel(NotificationChannel(CHANNEL_ID, "LINKO Provider", NotificationManager.IMPORTANCE_HIGH)) }
     private fun notificationManager() = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private fun stopRunner(sessionId: String) { runners.remove(sessionId)?.stop() }
+    private fun stopRunner(sessionId: String) { startingSessions.remove(sessionId); runners.remove(sessionId)?.stop() }
 
     override fun onCreate() {
         super.onCreate()
@@ -251,7 +276,7 @@ class LinkoProviderService : Service() {
     override fun onDestroy() {
         isRunning = false
         runCatching { networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(it) } }
-        releaseLocks(); runners.values.toList().forEach { it.stop() }; runners.clear(); scope.cancel(); super.onDestroy()
+        releaseLocks(); runners.values.toList().forEach { it.stop() }; runners.clear(); startingSessions.clear(); scope.cancel(); super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
