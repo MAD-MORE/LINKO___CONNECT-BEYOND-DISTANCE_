@@ -21,6 +21,7 @@ import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.DirectP2pNegotiator
 import com.linkshare.app.network.LinkoDeviceControlApi
 import com.linkshare.app.network.LinkoEngineBridge
+import com.linkshare.app.network.LinkoNetworkException
 import com.linkshare.app.network.LinkoRealtimeEvent
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoSignalingClient
@@ -35,7 +36,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.net.DatagramSocket
 import java.util.concurrent.ConcurrentHashMap
 
@@ -148,7 +148,6 @@ class LinkoProviderService : Service() {
                     repeat(TUNNEL_CONFIG_RETRIES) {
                         delay(TUNNEL_CONFIG_RETRY_MS)
                         config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
-                        if (config != null) return@repeat
                     }
                 }
                 val activeConfig = config ?: throw LinkoNetworkException("tunnel_config_unavailable")
@@ -159,7 +158,7 @@ class LinkoProviderService : Service() {
                 if (activeConfig.key.size != 32) throw LinkoNetworkException("invalid_tunnel_key")
 
                 val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
-                val socket = runCatching { DatagramSocket(0) }.getOrElse { throw LinkoNetworkException("udp_socket_creation_failed: ${it.message}", it) }
+                val socket = runCatching { DatagramSocket(0) }.getOrElse { throw LinkoNetworkException("udp_socket_creation_failed: ${it.message}") }
                 try {
                     Log.i(TAG, "UDP_SOCKET_CREATED session=$requestId port=${socket.localPort}")
                     LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
