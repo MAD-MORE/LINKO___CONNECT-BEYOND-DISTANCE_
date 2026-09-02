@@ -49,9 +49,7 @@ class LinkShareVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForeground(NOTIFICATION_ID, serviceNotification("LINKO", "Preparing direct encrypted tunnel"))
-        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) startForeground(NOTIFICATION_ID, serviceNotification("LINKO", "Preparing direct encrypted tunnel"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -115,13 +113,7 @@ class LinkShareVpnService : VpnService() {
                     socket = socket,
                 )
             }
-            transport = EncryptedDatagramTunnel(
-                socket = result.socket,
-                peer = result.peer,
-                sessionId = sessionId,
-                role = EncryptedDatagramTunnel.Role.RECEIVER,
-                sessionKey = sessionKey,
-            )
+            transport = EncryptedDatagramTunnel(socket = result.socket, peer = result.peer, sessionId = sessionId, role = EncryptedDatagramTunnel.Role.RECEIVER, sessionKey = sessionKey)
             running.set(true)
             lastPongReceivedAt.set(System.currentTimeMillis())
             runCatching { LinkoDeviceControlApi(applicationContext).transition(sessionId, "connected") }
@@ -208,8 +200,7 @@ class LinkShareVpnService : VpnService() {
                                 EncryptedDatagramTunnel.PacketType.DATA -> {
                                     val packet = rx.payload
                                     if (packet.isNotEmpty() && packet.size <= MAX_IP_PACKET && router.parse(packet) != null) {
-                                        output.write(packet); output.flush(); bytesDown.addAndGet(packet.size.toLong())
-                                        LinkoEngineBridge.updateTrafficStats(bytesDown.get(), bytesUp.get())
+                                        output.write(packet); output.flush(); bytesDown.addAndGet(packet.size.toLong()); LinkoEngineBridge.updateTrafficStats(bytesDown.get(), bytesUp.get())
                                     }
                                 }
                                 EncryptedDatagramTunnel.PacketType.PONG -> {
@@ -233,22 +224,22 @@ class LinkShareVpnService : VpnService() {
     }
 
     private fun stopTunnel() {
-        if (!running.getAndSet(false)) { releaseLocks(); return }
+        val wasRunning = running.getAndSet(false)
         releaseLocks()
-        runCatching { networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.unregisterNetworkCallback(it) } }
+        runCatching {
+            networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.unregisterNetworkCallback(it) }
+        }
         networkCallback = null
         scheduler?.shutdownNow(); scheduler = null
         runCatching { transport?.sendClose() }; runCatching { transport?.close() }; transport = null
         runCatching { tunnelInterface?.close() }; tunnelInterface = null
-        updateForegroundNotification("LINKO", "Direct tunnel closed")
-        LinkoEngineBridge.reportTunnelState("stopped", "Direct tunnel closed")
+        updateForegroundNotification("LINKO", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
+        LinkoEngineBridge.reportTunnelState("stopped", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
         Log.i(TAG, "LINKO VPN tunnel stopped. Uploaded=${bytesUp.get()} bytes, downloaded=${bytesDown.get()} bytes")
     }
 
     private fun createChannel() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(CHANNEL_ID, "LINKO VPN", NotificationManager.IMPORTANCE_LOW))
-        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(CHANNEL_ID, "LINKO VPN", NotificationManager.IMPORTANCE_LOW))
     }
 
     private fun serviceNotification(title: String, text: String): Notification {
