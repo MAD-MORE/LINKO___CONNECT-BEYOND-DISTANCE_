@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Coordinates the control plane and direct-P2P data plane. Supabase never carries Internet traffic. */
 object LinkoEngineBridge {
     private var api: LinkoDeviceControlApi? = null
     private var coordinator: TunnelCoordinator? = null
@@ -53,12 +54,13 @@ object LinkoEngineBridge {
 
     fun updateTrafficStats(bytesIn: Long, bytesOut: Long, latencyMs: Int = 0) {
         _connection.update {
-            it.copy(
-                bytesIn = bytesIn,
-                bytesOut = bytesOut,
-                latencyMs = if (latencyMs > 0) latencyMs else it.latencyMs
-            )
+            it.copy(bytesIn = bytesIn, bytesOut = bytesOut, latencyMs = if (latencyMs > 0) latencyMs else it.latencyMs)
         }
+    }
+
+    /** Called by the actual VPN/data service; UI must never infer connection success itself. */
+    fun reportTunnelState(state: String, detail: String? = null) {
+        publish(state, detail)
     }
 
     fun connectToFriend(friendUserId: String, friendName: String? = null, friendId: String? = null, onState: (String) -> Unit = {}) {
@@ -119,7 +121,6 @@ object LinkoEngineBridge {
         control.transition(sessionId, "signaling")
         publishAndNotify("signaling", onState)
 
-        var started = false
         for (attempt in 0 until 40) {
             val current = control.session(sessionId)
             if (current.state == "denied" || current.state == "expired" || current.state == "revoked") {
@@ -127,35 +128,20 @@ object LinkoEngineBridge {
             }
             val config = runCatching { control.tunnelConfig(sessionId) }.getOrNull()
             if (config != null) {
+                if (config.relay) throw LinkoNetworkException("relay_disabled")
                 publishAndNotify("establishing", onState)
-                
-                // Probe for Direct P2P or Local LAN endpoint before falling back to Relay
-                var targetHost = config.host
-                var targetPort = config.port
-                try {
-                    val directEndpoint = LinkoStunClient.discoverPublicEndpoint(timeoutMs = 1500)
-                    if (directEndpoint != null && !directEndpoint.address.isLoopbackAddress) {
-                        // Check if direct endpoint responds to probe
-                        targetHost = directEndpoint.hostString
-                        targetPort = directEndpoint.port
-                        Log.i("LinkoEngineBridge", "Discovered direct P2P STUN endpoint: $targetHost:$targetPort")
-                    }
-                } catch (_: Exception) {
-                    // Transparently keep relay fallback
-                }
-
-                tunnel.startVpnTunnel(targetHost, targetPort, config.sessionId, config.key)
-                started = true
-                publishAndNotify("securing", onState)
+                publishAndNotify("direct_connecting", onState)
+                tunnel.startDirectVpnTunnel(config.sessionId, config.key)
+                // The VPN service performs STUN, candidate exchange, authenticated
+                // direct UDP verification and Internet verification. It reports
+                // connected only after those checks actually pass.
                 publishAndNotify("routing", onState)
-                runCatching { control.transition(sessionId, "connected") }
-                publishAndNotify("connected", onState)
                 return
             }
             if (attempt > 0) publishAndNotify("signaling_retry", onState)
             delay(1_000L)
         }
-        if (!started) throw LinkoNetworkException("tunnel_setup_timeout")
+        throw LinkoNetworkException("tunnel_setup_timeout")
     }
 
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) {
@@ -175,9 +161,7 @@ object LinkoEngineBridge {
         }
     }
 
-    suspend fun getPendingProviderRequests(): List<ProviderRequest> {
-        return runCatching { api?.pendingProviderRequests() }.getOrNull() ?: emptyList()
-    }
+    suspend fun getPendingProviderRequests(): List<ProviderRequest> = runCatching { api?.pendingProviderRequests() }.getOrNull() ?: emptyList()
 
     fun approvePendingProviderRequest(peerName: String? = null, peerId: String? = null, onState: (String) -> Unit = {}) {
         val context = appContext ?: return onState("engine_not_initialized")
@@ -188,11 +172,7 @@ object LinkoEngineBridge {
                 .onSuccess { request ->
                     if (request == null) onState("no_pending_request")
                     else runCatching { api?.transition(request.id, "approved") }
-                        .onSuccess {
-                            approvedProviderSessionId = request.id
-                            _connection.update { it.copy(sessionId = request.id) }
-                            onState("approved")
-                        }
+                        .onSuccess { approvedProviderSessionId = request.id; _connection.update { it.copy(sessionId = request.id) }; onState("approved") }
                         .onFailure { onState(it.message ?: "approval_failed") }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
@@ -204,7 +184,6 @@ object LinkoEngineBridge {
         val sessionId = approvedProviderSessionId ?: return onState("no_approved_session")
         context.startForegroundService(Intent(context, LinkoProviderService::class.java).setAction(LinkoProviderService.ACTION_START_APPROVED).putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId))
         approvedProviderSessionId = null
-        publish("connected", "Sharing connection active")
         onState("starting")
     }
 
@@ -238,11 +217,11 @@ object LinkoEngineBridge {
             "connecting", "reconnecting", "waiting_for_provider" -> LinkoConnectionPhase.Connecting
             "authenticating" -> LinkoConnectionPhase.Authenticating
             "resolving_provider", "provider_ready", "requesting", "signaling", "signaling_retry" -> LinkoConnectionPhase.Signaling
-            "establishing" -> LinkoConnectionPhase.Establishing
+            "establishing", "direct_connecting" -> LinkoConnectionPhase.Establishing
             "securing" -> LinkoConnectionPhase.Securing
             "routing" -> LinkoConnectionPhase.Routing
-            "connected" -> LinkoConnectionPhase.Connected
-            "idle" -> LinkoConnectionPhase.Idle
+            "direct_established", "connected" -> LinkoConnectionPhase.Connected
+            "idle", "stopped" -> LinkoConnectionPhase.Idle
             else -> LinkoConnectionPhase.Failed
         }
         val message = detail ?: when (state) {
@@ -253,12 +232,14 @@ object LinkoEngineBridge {
             "resolving_provider" -> "Finding your friend's available device…"
             "provider_ready" -> "Provider found. Preparing a secure request…"
             "requesting" -> "Waiting for provider approval…"
-            "signaling" -> "Negotiating the secure session…"
+            "signaling" -> "Exchanging direct connection information…"
             "signaling_retry" -> "Negotiating… retrying"
-            "establishing" -> "Establishing tunnel…"
+            "establishing", "direct_connecting" -> "Establishing a direct peer connection…"
             "securing" -> "Securing encrypted transport…"
-            "routing" -> "Routing traffic…"
-            "connected" -> "Connected · tunnel active"
+            "routing" -> "Routing traffic through the direct tunnel…"
+            "direct_established" -> "Direct encrypted tunnel established"
+            "connected" -> "Internet sharing verified"
+            "stopped" -> "Direct tunnel stopped"
             else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
         _connection.update { it.copy(phase = normalized, detail = message, error = if (normalized == LinkoConnectionPhase.Failed) message else null) }
