@@ -35,6 +35,7 @@ import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoFriendsApi
 import com.linkshare.app.network.LinkoFriendsApiHolder
+import com.linkshare.app.network.LinkoNotificationCenter
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // The updater is now the first page. Nothing in LinkoApp is shown until
+        // The updater is the first page. Nothing in LinkoApp is shown until
         // the startup update gate reaches a safe-to-open state.
         window.decorView.post { checkForStartupUpdate() }
     }
@@ -95,14 +96,20 @@ class MainActivity : ComponentActivity() {
             updateManager.onInstallerReturned()
             checkForStartupUpdate()
         }
-        if (appUnlocked) runCatching { LinkoRealtimeManager.setForeground(true) }
+        if (appUnlocked) runCatching {
+            LinkoRealtimeManager.setForeground(true)
+            LinkoNotificationCenter.start(this)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.getStringExtra("EXTRA_REQUEST_ID")?.let { requestId ->
-            Log.i(TAG, "Opened via notification with request ID: $requestId")
+            Log.i(TAG, "Opened via connection notification with request ID: $requestId")
+        }
+        intent.getStringExtra("EXTRA_NOTIFICATION_REQUEST_ID")?.let { requestId ->
+            Log.i(TAG, "Opened via friend-request notification with request ID: $requestId")
         }
     }
 
@@ -127,8 +134,10 @@ class MainActivity : ComponentActivity() {
         appUnlocked = true
         runCatching { requestEnginePermissions() }
             .onFailure { Log.e(TAG, "Permission setup failed", it) }
-        runCatching { LinkoRealtimeManager.start(this) }
-            .onFailure { Log.e(TAG, "Realtime startup failed", it) }
+        runCatching {
+            LinkoRealtimeManager.start(this)
+            LinkoNotificationCenter.start(this)
+        }.onFailure { Log.e(TAG, "Realtime/notification startup failed", it) }
     }
 
     private fun requestEnginePermissions() {
