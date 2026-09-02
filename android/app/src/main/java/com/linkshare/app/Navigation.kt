@@ -48,19 +48,21 @@ sealed class Screen(val route: String) {
     object Privacy : Screen("privacy")
     object DataRetention : Screen("data_retention")
     object Settings : Screen("settings")
+    object Notifications : Screen("notifications")
     object DeleteAccount : Screen("delete_account")
     /** Standalone, first-class system diagnostics destination. */
     object DiagnosticCenter : Screen("diagnostic_center")
 }
 
 val onboardingScreens = setOf(Screen.Welcome.route, Screen.SignIn.route, Screen.SignUp.route, Screen.ForgotPassword.route, Screen.SignupOtp.route, Screen.RecoveryOtp.route, Screen.PasswordReset.route, Screen.CreateAccount.route, Screen.Verify.route, Screen.Profile.route, Screen.RegisterDevice.route, Screen.Permissions.route)
-val bottomNavScreens = setOf(Screen.HomeEngine.route, Screen.Friends.route, Screen.SessionHistory.route, Screen.Settings.route, Screen.DiagnosticCenter.route)
+val bottomNavScreens = setOf(Screen.HomeEngine.route, Screen.Friends.route, Screen.SessionHistory.route, Screen.Notifications.route, Screen.Settings.route, Screen.DiagnosticCenter.route)
 fun activeNavTab(route: String?): String = when {
     route == null -> "HOME"
     route == Screen.DiagnosticCenter.route -> "DIAGNOSTICS"
     route.startsWith("home") || route.startsWith("rx") || route.startsWith("connected") || route.startsWith("network") || route.startsWith("usage") || route.startsWith("session_details") || route.startsWith("provider") || route.startsWith("connection") || route.startsWith("reconnect") -> "HOME"
     route.startsWith("friend") || route.startsWith("find") || route.startsWith("request") || route.startsWith("incoming") || route.startsWith("blocked") -> "FRIENDS"
     route == Screen.SessionHistory.route -> "HISTORY"
+    route == Screen.Notifications.route -> "NOTIFICATIONS"
     route.startsWith("settings") || route.startsWith("privacy") || route.startsWith("data") || route.startsWith("device") || route.startsWith("security") || route.startsWith("key") || route.startsWith("delete") -> "SETTINGS"
     else -> "HOME"
 }
