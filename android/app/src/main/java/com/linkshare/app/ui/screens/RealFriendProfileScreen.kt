@@ -51,8 +51,11 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
     val context = LocalContext.current
     val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val friendUserId = friend?.userId.orEmpty()
+    val livePresenceFlow = remember(friendUserId) { LinkoEngineBridge.watchFriendPresence(friendUserId) }
+    val livePresence by livePresenceFlow.collectAsStateWithLifecycle()
     var relationship by remember(friend?.userId) { mutableStateOf(friend?.relationshipStatus ?: "none") }
-    var availability by remember(friend?.userId) { mutableStateOf<LinkoStateMachine.Availability?>(null) }
+    var realtimeAvailability by remember(friend?.userId) { mutableStateOf<LinkoStateMachine.Availability?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var showManage by remember { mutableStateOf(false) }
@@ -60,10 +63,11 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
     var removing by remember { mutableStateOf(false) }
 
     LaunchedEffect(friend?.userId) {
-        availability = null
+        realtimeAvailability = null
+        if (friendUserId.isBlank()) return@LaunchedEffect
         LinkoRealtimeManager.events.collect { event ->
-            if (event is LinkoRealtimeEvent.PresenceChanged && event.presence.userId == friend?.userId) {
-                availability = LinkoStateMachine.availabilityFromPresence(event.presence.state, event.presence.online)
+            if (event is LinkoRealtimeEvent.PresenceChanged && event.presence.userId == friendUserId) {
+                realtimeAvailability = LinkoStateMachine.availabilityFromPresence(event.presence.state, event.presence.online)
             }
         }
     }
@@ -81,6 +85,14 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
             }
             else -> Unit
         }
+    }
+
+    // Backend heartbeat is authoritative for liveness. Realtime is retained as the fast UI path.
+    val availability = when {
+        friendUserId.isBlank() -> LinkoStateMachine.Availability.OFFLINE
+        livePresence.checkedAt > 0L && !livePresence.online -> LinkoStateMachine.Availability.OFFLINE
+        livePresence.checkedAt > 0L && livePresence.online && realtimeAvailability == null -> LinkoStateMachine.Availability.ONLINE
+        else -> realtimeAvailability
     }
 
     val presenceLabel = when (availability) {
@@ -207,16 +219,16 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                 },
             )
             Spacer(Modifier.height(12.dp))
-            InfoRow("PRESENCE", presenceLabel, "Real device heartbeat state", accent = presenceColor)
+            InfoRow("PRESENCE", presenceLabel, "Live device heartbeat + Realtime", accent = presenceColor)
             Spacer(Modifier.height(12.dp))
             if (busy) {
                 InfoRow("CONNECTION", engineState.detail, "Real engine state", accent = Blue)
             } else {
                 InfoRow(
                     "DEVICE",
-                    if (friend?.isSharing == true) "AVAILABLE" else "NOT SHARING",
+                    if (friend?.isSharing == true || livePresence.online) "AVAILABLE" else "NOT SHARING",
                     friend?.deviceName ?: "Provider availability is resolved when connecting",
-                    accent = if (friend?.isSharing == true) Green else Blue,
+                    accent = if (friend?.isSharing == true || livePresence.online) Green else Blue,
                 )
             }
         }
@@ -239,6 +251,7 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                 if (busy || selected == null) return@PrimaryButton
                 when (relationship) {
                     "friend" -> {
+                        // The engine performs its own authoritative backend liveness check before creating the session.
                         if (!canConnect) {
                             message = "Friend is offline or not ready for a connection"
                             return@PrimaryButton
