@@ -116,8 +116,11 @@ class LinkShareVpnService : VpnService() {
             transport = EncryptedDatagramTunnel(socket = result.socket, peer = result.peer, sessionId = sessionId, role = EncryptedDatagramTunnel.Role.RECEIVER, sessionKey = sessionKey)
             running.set(true)
             lastPongReceivedAt.set(System.currentTimeMillis())
-            runCatching { LinkoDeviceControlApi(applicationContext).transition(sessionId, "connected") }
-                .onFailure { Log.w(TAG, "Connected tunnel established but session-state update failed: ${it.message}") }
+            runCatching {
+                runBlocking {
+                    LinkoDeviceControlApi(applicationContext).transition(sessionId, "connected")
+                }
+            }.onFailure { Log.w(TAG, "Connected tunnel established but session-state update failed: ${it.message}") }
             updateForegroundNotification("Connected", "Direct encrypted LINKO tunnel is active")
             LinkoEngineBridge.reportTunnelState("direct_established", "Secure direct connection established")
             executor.execute { outboundLoop() }
