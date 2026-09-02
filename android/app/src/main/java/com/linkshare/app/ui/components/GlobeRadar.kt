@@ -15,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -45,12 +44,10 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
             val center = Offset(cx, cy)
             val gridStroke = 1.1.dp.toPx()
 
-            // Atmospheric shell and polished spherical rim.
             drawCircle(color.copy(alpha = 0.045f), radius * 1.08f, center)
             drawCircle(color.copy(alpha = 0.10f), radius, center, style = Stroke(1.5.dp.toPx()))
             drawCircle(color.copy(alpha = 0.20f), radius * 0.94f, center, style = Stroke(0.8.dp.toPx()))
 
-            // Curved latitude lines create the 3D globe depth.
             floatArrayOf(-0.72f, -0.42f, -0.18f, 0.18f, 0.42f, 0.72f).forEach { latitude ->
                 val y = cy + radius * latitude
                 val rx = radius * sqrt((1f - latitude * latitude).coerceAtLeast(0.08f))
@@ -63,7 +60,6 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                 )
             }
 
-            // Rotating longitude curves make the sphere visibly spin.
             intArrayOf(-72, -36, 0, 36, 72).forEach { longitude ->
                 val phase = Math.toRadians((longitude + rotation).toDouble())
                 val x = cx + radius * sin(phase).toFloat()
@@ -78,7 +74,6 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                 drawPath(path, color.copy(alpha = if (longitude == 0) 0.27f else 0.14f), style = Stroke(gridStroke, cap = StrokeCap.Round))
             }
 
-            // Bright equator.
             drawOval(
                 color.copy(alpha = 0.30f),
                 topLeft = Offset(cx - radius, cy - radius * 0.055f),
@@ -86,7 +81,6 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                 style = Stroke(1.2.dp.toPx())
             )
 
-            // Global internet nodes and connection traces.
             val nodes = arrayOf(
                 -0.62f to -0.18f, -0.38f to 0.42f, -0.08f to -0.52f,
                 0.18f to 0.20f, 0.42f to -0.30f, 0.62f to 0.18f,
@@ -101,7 +95,6 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                 if (index % 2 == 0) drawLine(color.copy(alpha = 0.18f), center, Offset(nx, ny), 0.7.dp.toPx(), StrokeCap.Round)
             }
 
-            // Radar beam scans around the globe for reachable LINKO peers.
             val sweepRad = Math.toRadians(sweep.toDouble())
             val sx = cx + radius * cos(sweepRad).toFloat()
             val sy = cy + radius * sin(sweepRad).toFloat()
@@ -110,10 +103,13 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
             drawCircle(color.copy(alpha = 0.30f), 6.dp.toPx(), Offset(sx, sy))
             drawCircle(color, 2.4.dp.toPx(), Offset(sx, sy))
 
-            // Rotating highlight gives the edge a glassy 3D finish.
             drawArc(
-                color.copy(alpha = 0.60f), rotation - 48f, 105f, false,
-                Rect(cx - radius, cy - radius, cx + radius, cy + radius),
+                color = color.copy(alpha = 0.60f),
+                startAngle = rotation - 48f,
+                sweepAngle = 105f,
+                useCenter = false,
+                topLeft = Offset(cx - radius, cy - radius),
+                size = Size(radius * 2f, radius * 2f),
                 style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round)
             )
         }
