@@ -7,6 +7,7 @@ import android.net.wifi.WifiManager
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.util.Log
+import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.tunnel.EncryptedDatagramTunnel
 import com.linkshare.app.tunnel.IpPacketRouter
 import java.net.DatagramSocket
