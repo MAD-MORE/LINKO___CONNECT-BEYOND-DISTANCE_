@@ -87,11 +87,14 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
         }
     }
 
-    // Backend heartbeat is authoritative for liveness. Realtime is retained as the fast UI path.
+    // Backend heartbeat is authoritative for liveness. Realtime remains the fast UI path.
     val availability = when {
         friendUserId.isBlank() -> LinkoStateMachine.Availability.OFFLINE
         livePresence.checkedAt > 0L && !livePresence.online -> LinkoStateMachine.Availability.OFFLINE
-        livePresence.checkedAt > 0L && livePresence.online && realtimeAvailability == null -> LinkoStateMachine.Availability.ONLINE
+        livePresence.checkedAt > 0L && livePresence.online -> when (realtimeAvailability) {
+            null, LinkoStateMachine.Availability.OFFLINE -> LinkoStateMachine.Availability.ONLINE
+            else -> realtimeAvailability
+        }
         else -> realtimeAvailability
     }
 
