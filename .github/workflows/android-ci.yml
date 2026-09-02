@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: detect
         shell: bash
         run: |
@@ -42,10 +42,10 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             FILES="ALL"
           else
-            FILES="$(git diff --name-only "$BASE" "$GITHUB_SHA")"
+            FILES="$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null || echo "ALL")"
           fi
           echo "Changed files: $FILES"
           if [ "$FILES" = "ALL" ] || printf '%s\n' "$FILES" | grep -Eq '^(android/|\.github/workflows/)'; then echo 'android=true' >> "$GITHUB_OUTPUT"; else echo 'android=false' >> "$GITHUB_OUTPUT"; fi
