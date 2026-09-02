@@ -37,17 +37,11 @@ class LinkoSignalingClient(
         val result = response.optJSONArray("signals") ?: org.json.JSONArray()
         buildList(result.length()) {
             for (i in 0 until result.length()) {
-                result.optJSONObject(i)?.let(::addSignal)
+                result.optJSONObject(i)?.let { json ->
+                    add(SignalEnvelope.fromJson(json))
+                }
             }
         }
-    }
-
-    private fun buildList(size: Int, block: MutableList<SignalEnvelope>.() -> Unit): List<SignalEnvelope> {
-        return ArrayList<SignalEnvelope>(size).apply(block)
-    }
-
-    private fun MutableList<SignalEnvelope>.addSignal(json: JSONObject) {
-        add(SignalEnvelope.fromJson(json))
     }
 
     private fun rpc(
