@@ -8,23 +8,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoNotification
 import com.linkshare.app.network.LinkoNotificationCenter
-import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.theme.Blue
@@ -50,9 +51,7 @@ fun NotificationsScreen() {
         error = null
         scope.launch {
             runCatching { LinkoFriendsApiHolder.api.respond(requestId, accepted) }
-                .onSuccess {
-                    LinkoNotificationCenter.remove(notification.id)
-                }
+                .onSuccess { LinkoNotificationCenter.remove(notification.id) }
                 .onFailure { error = it.message ?: "Request action failed" }
             respondingId = null
         }
@@ -84,7 +83,7 @@ fun NotificationsScreen() {
                         Spacer(Modifier.height(5.dp))
                         Text(notification.message, color = TextSub, fontSize = 12.sp)
 
-                        if (notification.kind == LinkoNotification.Kind.FRIEND_REQUEST && !notification.requestId.isNullOrBlank()) {
+                        if (notification.kind == LinkoNotification.Kind.FRIEND_REQUEST_INCOMING && !notification.requestId.isNullOrBlank()) {
                             Spacer(Modifier.height(10.dp))
                             Row(Modifier.fillMaxWidth()) {
                                 PrimaryButton(
@@ -92,9 +91,9 @@ fun NotificationsScreen() {
                                     { respond(notification, true) },
                                     color = Green,
                                 )
-                                Spacer(Modifier.padding(horizontal = 4.dp))
+                                Spacer(Modifier.width(8.dp))
                                 PrimaryButton(
-                                    if (respondingId == notification.id) "" else "DECLINE",
+                                    if (respondingId == notification.id) "..." else "DECLINE",
                                     { respond(notification, false) },
                                     color = Red,
                                     outline = true,
