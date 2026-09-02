@@ -5,14 +5,16 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.linkshare.app.audio.ConnectionSoundManager
-import com.linkshare.app.data.MockLinkShareRepository
 import com.linkshare.app.model.AppMode
 import com.linkshare.app.model.ConnectionPhase
 import com.linkshare.app.model.ConnectionUiState
 import com.linkshare.app.model.Friend
 import com.linkshare.app.model.IncomingRequest
 import com.linkshare.app.model.UsageStats
+import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoControlPlaneApi
+import com.linkshare.app.network.LinkoEngineBridge
+import com.linkshare.app.network.LinkoEngineConnectionState
 import com.linkshare.app.network.LinkoNetworkException
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.tunnel.TunnelCoordinator
@@ -26,210 +28,96 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/** Live compatibility ViewModel. Connection state always comes from the real LINKO engine. */
 class LinkShareViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = MockLinkShareRepository()
     private val connectionSoundManager = ConnectionSoundManager(application)
-
-    private val _uiState = MutableStateFlow(
-        ConnectionUiState(
-            friends = repository.friends(),
-            incomingRequest = repository.incomingRequest()
-        )
-    )
+    private val _uiState = MutableStateFlow(ConnectionUiState())
     val uiState: StateFlow<ConnectionUiState> = _uiState.asStateFlow()
-    private var connectionJob: Job? = null
     private var requestPollJob: Job? = null
+    private var usageJob: Job? = null
+    private var engineJob: Job? = null
+
+    init {
+        engineJob = viewModelScope.launch {
+            LinkoEngineBridge.connection.collect { applyEngineSnapshot(it) }
+        }
+        startRequestPollingIfConfigured()
+    }
 
     fun setMode(mode: AppMode) = _uiState.update { it.copy(mode = mode, eventMessage = null, failureReason = null) }
 
     fun toggleHostSharing() {
-        val context = engineContext
-            ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
-
+        val context = engineContext ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
         if (_uiState.value.hostSharingEnabled) {
             LinkoProviderService.stop(context)
-            _uiState.update {
-                it.copy(
-                    hostSharingEnabled = false,
-                    incomingRequest = null,
-                    eventMessage = "Sharing stopped."
-                )
-            }
+            _uiState.update { it.copy(hostSharingEnabled = false, incomingRequest = null, eventMessage = "Sharing stopped.") }
         } else {
             LinkoProviderService.start(context)
-            _uiState.update {
-                it.copy(
-                    hostSharingEnabled = true,
-                    eventMessage = "Sharing is live and waiting for a secure request."
-                )
-            }
+            _uiState.update { it.copy(hostSharingEnabled = true, eventMessage = "Sharing is live and waiting for a secure request.") }
         }
     }
 
-    fun approveIncomingRequest() {
-        val api = controlPlaneApi
-            ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
-        val request = _uiState.value.incomingRequest ?: return
+    fun approveIncomingRequest() = LinkoEngineBridge.approvePendingProviderRequest(onState = ::handleEngineCallback)
 
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { api.approveRequest(request.id) }
-                .onSuccess {
-                    _uiState.update {
-                        it.copy(
-                            incomingRequest = null,
-                            eventMessage = "Request approved. Preparing the secure tunnel…"
-                        )
-                    }
-                }
-                .onFailure { error -> fail("Approval failed", readable(error)) }
-        }
-    }
-
-    fun denyIncomingRequest() {
-        val api = controlPlaneApi
-            ?: return _uiState.update { it.copy(eventMessage = "Engine is still initializing.") }
-        val request = _uiState.value.incomingRequest ?: return
-
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { api.denyRequest(request.id) }
-                .onSuccess {
-                    _uiState.update {
-                        it.copy(
-                            incomingRequest = null,
-                            eventMessage = "Request declined."
-                        )
-                    }
-                }
-                .onFailure { error -> fail("Decline failed", readable(error)) }
-        }
-    }
+    fun denyIncomingRequest() = LinkoEngineBridge.denyPendingProviderRequest(onState = ::handleEngineCallback)
 
     fun connectToFriend(friend: Friend) {
-        if (!friend.isSharing) {
-            updateConnectionPhase(ConnectionPhase.Failed) {
-                it.copy(
-                    activeFriend = friend,
-                    eventMessage = "${friend.name} is not sharing right now."
-                )
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            stopUsageTicker()
-            updateConnectionPhase(ConnectionPhase.Requesting) {
-                it.copy(
-                    activeFriend = friend,
-                    retryAttempt = 0,
-                    failureReason = null,
-                    eventMessage = "Asking ${friend.name} for access..."
-                )
-            }
-
-            val accepted = repository.requestHostAccess(friend.id)
-            if (!accepted) {
-                updateConnectionPhase(ConnectionPhase.Failed) {
-                    it.copy(eventMessage = "${friend.name} did not approve this request.")
-                }
-                return@launch
-            }
-
-            updateConnectionPhase(ConnectionPhase.Handshaking) {
-                it.copy(eventMessage = "Building an encrypted path...")
-            }
-
-            var handshakeOk = repository.performWireGuardStyleHandshake()
-            if (!handshakeOk) {
-                updateConnectionPhase(ConnectionPhase.Retrying) {
-                    it.copy(
-                        retryAttempt = 1,
-                        eventMessage = "Retrying on weak connection..."
-                    )
-                }
-                handshakeOk = repository.retryHandshakeOnWeakSignal()
-            }
-
-            if (!handshakeOk) {
-                updateConnectionPhase(ConnectionPhase.Failed) {
-                    it.copy(
-                        failureReason = "Secure handshake failed.",
-                        eventMessage = "Unable to establish a secure connection."
-                    )
-                }
-                return@launch
-            }
-
-            updateConnectionPhase(ConnectionPhase.Connected) {
-                it.copy(
-                    usageStats = UsageStats(connectedClients = 1),
-                    failureReason = null,
-                    eventMessage = "Connected through ${friend.name}."
-                )
-            }
-            startUsageTicker(hostMode = false)
-        }
-    }
-
-    fun disconnect() {
-        stopUsageTicker()
-        updateConnectionPhase(ConnectionPhase.Idle) {
-            it.copy(
-                activeFriend = null,
-                retryAttempt = 0,
-                usageStats = UsageStats(),
-                failureReason = null,
-                eventMessage = "Disconnected."
-            )
-        }
-    }
-
-    fun onVpnPermissionResult(granted: Boolean) = _uiState.update {
-        it.copy(
-            hasVpnPermission = granted,
-            eventMessage = if (granted) {
-                "VPN permission granted."
-            } else {
-                "VPN permission is required before connecting."
-            }
+        if (friend.id.isBlank()) return fail("Friend identity is missing")
+        _uiState.update { it.copy(activeFriend = friend, retryAttempt = 0, failureReason = null, eventMessage = "Connecting to ${friend.name}…") }
+        LinkoEngineBridge.connectToFriend(
+            friendUserId = friend.id,
+            friendName = friend.name,
+            friendId = friend.id,
+            onState = ::handleEngineCallback,
         )
     }
 
-    private fun fail(label: String, reason: String) {
-        _uiState.update {
-            it.copy(
-                connectionPhase = ConnectionPhase.Failed,
-                failureReason = reason,
-                eventMessage = "$label · $reason"
+    fun disconnect() {
+        LinkoEngineBridge.disconnect()
+        stopUsageTicker()
+        _uiState.update { it.copy(activeFriend = null, retryAttempt = 0, usageStats = UsageStats(), failureReason = null, eventMessage = "Disconnected.") }
+    }
+
+    fun onVpnPermissionResult(granted: Boolean) = _uiState.update {
+        it.copy(hasVpnPermission = granted, eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting.")
+    }
+
+    private fun handleEngineCallback(state: String) {
+        if (state.contains("failed", true) || state.contains("error", true)) fail(state.replace('_', ' '))
+        else _uiState.update { it.copy(eventMessage = state.replace('_', ' ').replaceFirstChar { c -> c.uppercase() }) }
+    }
+
+    private fun applyEngineSnapshot(state: LinkoEngineConnectionState) {
+        val phase = when (state.phase) {
+            LinkoConnectionPhase.Idle -> ConnectionPhase.Idle
+            LinkoConnectionPhase.Connecting,
+            LinkoConnectionPhase.Authenticating,
+            LinkoConnectionPhase.Signaling -> ConnectionPhase.Requesting
+            LinkoConnectionPhase.Establishing,
+            LinkoConnectionPhase.Securing,
+            LinkoConnectionPhase.Routing -> ConnectionPhase.Handshaking
+            LinkoConnectionPhase.Connected -> ConnectionPhase.Connected
+            LinkoConnectionPhase.Failed -> ConnectionPhase.Failed
+        }
+        _uiState.update { current ->
+            current.copy(
+                connectionPhase = phase,
+                eventMessage = state.detail,
+                failureReason = state.error,
+                usageStats = if (phase == ConnectionPhase.Connected) current.usageStats.copy(connectedClients = if (state.isProvider) maxOf(1, current.usageStats.connectedClients) else 1) else current.usageStats,
             )
         }
+        if (phase == ConnectionPhase.Connected) startUsageTicker(state.isProvider) else if (phase != ConnectionPhase.Retrying) stopUsageTicker()
     }
 
-    private fun readable(error: Throwable): String = when (error) {
-        is LinkoNetworkException -> error.message ?: "Network request failed"
-        else -> error.message ?: error.javaClass.simpleName
-    }
-
-    private fun startRequestPolling(api: LinkoControlPlaneApi) {
+    private fun startRequestPollingIfConfigured() {
+        val api = controlPlaneApi ?: return
         if (requestPollJob?.isActive == true) return
-
         requestPollJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 runCatching { api.getPendingProviderRequests().firstOrNull() }
                     .onSuccess { request ->
-                        if (request != null) {
-                            _uiState.update {
-                                it.copy(
-                                    incomingRequest = IncomingRequest(
-                                        request.id,
-                                        "LINKO user",
-                                        "L",
-                                        request.receiverDeviceId,
-                                        "REMOTE",
-                                        "NOW"
-                                    )
-                                )
-                            }
-                        }
+                        _uiState.update { current -> current.copy(incomingRequest = request?.let { IncomingRequest(it.id, "LINKO friend", "L", it.receiverDeviceId, "REMOTE", "NOW") }) }
                     }
                 delay(3_000L)
             }
@@ -237,30 +125,23 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun startUsageTicker(hostMode: Boolean) {
-        stopUsageTicker()
-        connectionJob = viewModelScope.launch {
-            while (isActive && _uiState.value.connectionPhase == ConnectionPhase.Connected) {
+        if (usageJob?.isActive == true) return
+        usageJob = viewModelScope.launch {
+            while (isActive) {
                 delay(1_000L)
+                if (_uiState.value.connectionPhase != ConnectionPhase.Connected) break
                 _uiState.update { current ->
                     val stats = current.usageStats
-                    current.copy(
-                        usageStats = stats.copy(
-                            sessionSeconds = stats.sessionSeconds + 1,
-                            connectedClients = if (hostMode) {
-                                maxOf(1, stats.connectedClients)
-                            } else {
-                                1
-                            }
-                        )
-                    )
+                    current.copy(usageStats = stats.copy(sessionSeconds = stats.sessionSeconds + 1, connectedClients = if (hostMode) maxOf(1, stats.connectedClients) else 1))
                 }
             }
         }
     }
 
-    private fun stopUsageTicker() {
-        connectionJob?.cancel()
-        connectionJob = null
+    private fun stopUsageTicker() { usageJob?.cancel(); usageJob = null }
+
+    private fun fail(reason: String) {
+        _uiState.update { it.copy(connectionPhase = ConnectionPhase.Failed, failureReason = reason, eventMessage = reason) }
     }
 
     companion object {
@@ -268,32 +149,18 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
         private var controlPlaneApi: LinkoControlPlaneApi? = null
         private var tunnelCoordinator: TunnelCoordinator? = null
 
-        fun configure(
-            context: Context,
-            api: LinkoControlPlaneApi,
-            coordinator: TunnelCoordinator
-        ) {
+        fun configure(context: Context, api: LinkoControlPlaneApi, coordinator: TunnelCoordinator) {
             engineContext = context.applicationContext
             controlPlaneApi = api
             tunnelCoordinator = coordinator
         }
 
-        fun startEnginePolling(viewModel: LinkShareViewModel) {
-            controlPlaneApi?.let(viewModel::startRequestPolling)
-        }
-    }
-
-    private fun updateConnectionPhase(
-        phase: ConnectionPhase,
-        update: (ConnectionUiState) -> ConnectionUiState
-    ) {
-        val previousPhase = _uiState.value.connectionPhase
-        _uiState.update { current -> update(current).copy(connectionPhase = phase) }
-        connectionSoundManager.onConnectionPhaseChanged(previousPhase, phase)
+        fun startEnginePolling(viewModel: LinkShareViewModel) = viewModel.startRequestPollingIfConfigured()
     }
 
     override fun onCleared() {
         requestPollJob?.cancel()
+        engineJob?.cancel()
         stopUsageTicker()
         connectionSoundManager.release()
         super.onCleared()
