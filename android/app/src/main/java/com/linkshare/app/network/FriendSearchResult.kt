@@ -8,6 +8,7 @@ data class FriendSearchResult(
     val deviceId: String? = null,
     val deviceName: String? = null,
     val isSharing: Boolean = false,
+    val isOnline: Boolean = false,
     val relationshipStatus: String = "none",
     val requestId: String? = null,
     val username: String? = null,
