@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** LINKO control-plane client. Production control operations use authenticated Supabase RPCs. */
+/** Compatibility control-plane client. Internet traffic never traverses this API. */
 class LinkoControlPlaneApi(
     private val baseUrl: String,
     private val accessTokenProvider: () -> String?,
@@ -53,19 +53,21 @@ class LinkoControlPlaneApi(
             JSONObject().put("p_receiver_device_id", receiverDeviceId).put("p_provider_device_id", hostId),
         )
         SignalingSession(
-            session.getString("id"),
-            session.optString("providerPublicKey", ""),
-            session.optString("relayUrl").ifBlank { null },
-            session.optLong("expiresAt", 0L) / 1000L,
+            sessionId = session.getString("id"),
+            hostPublicKey = session.optString("providerPublicKey", ""),
+            expiresAtEpochSeconds = session.optLong("expiresAt", 0L) / 1000L,
+            transport = session.optString("transport", "direct_udp"),
         )
     }
 
     override suspend fun approveRequest(requestId: String): HostSession = withContext(Dispatchers.IO) {
-        val session = rpc(
-            "linko_transition_session",
-            JSONObject().put("p_session_id", requestId).put("p_state", "approved"),
+        val session = rpc("linko_transition_session", JSONObject().put("p_session_id", requestId).put("p_state", "approved"))
+        HostSession(
+            sessionId = session.getString("id"),
+            clientPublicKey = session.optString("receiverPublicKey", ""),
+            allowedUntilEpochSeconds = session.optLong("expiresAt", 0L) / 1000L,
+            transport = session.optString("transport", "direct_udp"),
         )
-        HostSession(session.getString("id"), session.optString("receiverPublicKey", ""), session.optLong("expiresAt", 0L) / 1000L)
     }
 
     override suspend fun denyRequest(requestId: String) = withContext(Dispatchers.IO) {
@@ -84,21 +86,10 @@ class LinkoControlPlaneApi(
         }
     }
 
-    suspend fun markPresence() = withContext(Dispatchers.IO) {
-        rpc("linko_mark_presence", JSONObject().put("p_device_id", requireConfiguredDeviceId()))
-    }
-
-    suspend fun health(): JSONObject = withContext(Dispatchers.IO) {
-        rpc("linko_control_health")
-    }
-
-    suspend fun transition(sessionId: String, state: String): JSONObject = withContext(Dispatchers.IO) {
-        rpc("linko_transition_session", JSONObject().put("p_session_id", sessionId).put("p_state", state))
-    }
-
-    suspend fun tunnelConfig(sessionId: String): JSONObject = withContext(Dispatchers.IO) {
-        rpc("linko_tunnel_config", JSONObject().put("p_session_id", sessionId))
-    }
+    suspend fun markPresence() = withContext(Dispatchers.IO) { rpc("linko_mark_presence", JSONObject().put("p_device_id", requireConfiguredDeviceId())) }
+    suspend fun health(): JSONObject = withContext(Dispatchers.IO) { rpc("linko_control_health") }
+    suspend fun transition(sessionId: String, state: String): JSONObject = withContext(Dispatchers.IO) { rpc("linko_transition_session", JSONObject().put("p_session_id", sessionId).put("p_state", state)) }
+    suspend fun tunnelConfig(sessionId: String): JSONObject = withContext(Dispatchers.IO) { rpc("linko_tunnel_config", JSONObject().put("p_session_id", sessionId)) }
 
     private fun parseFriends(array: JSONArray): List<Friend> = buildList {
         for (i in 0 until array.length()) {
@@ -116,31 +107,23 @@ class LinkoControlPlaneApi(
         if (!baseUrl.startsWith("https://")) throw LinkoNetworkException("control_plane_https_required")
         val token = if (authenticated) accessTokenProvider()?.takeIf { it.isNotBlank() } else null
         if (authenticated && token == null) throw LinkoNetworkException("device_auth_required")
-        val url = URL(baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function)
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            doOutput = true
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json")
+        val connection = (URL(baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 10_000; readTimeout = 15_000; doOutput = true
+            setRequestProperty("Accept", "application/json"); setRequestProperty("Content-Type", "application/json")
             setRequestProperty("apikey", com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
             token?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
         return try {
             connection.outputStream.use { it.write((body?.toString() ?: "{}").toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val text = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val error = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrNull()
                 val message = error?.optString("message").orEmpty().ifBlank { error?.optString("error").orEmpty() }.ifBlank { "http_$status" }
                 throw LinkoNetworkException(message, status)
             }
             JSONObject(text.ifBlank { "{}" })
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 
     private fun requestHttp(method: String, path: String, body: JSONObject? = null): JSONObject {
@@ -148,25 +131,17 @@ class LinkoControlPlaneApi(
         if (!baseUrl.startsWith("https://")) throw LinkoNetworkException("control_plane_https_required")
         val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("auth_required")
         val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            doOutput = body != null
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("apikey", com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
-            setRequestProperty("Authorization", "Bearer $token")
+            requestMethod = method; connectTimeout = 10_000; readTimeout = 15_000; doOutput = body != null
+            setRequestProperty("Accept", "application/json"); setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("apikey", com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY); setRequestProperty("Authorization", "Bearer $token")
         }
         return try {
             body?.let { connection.outputStream.use { out -> out.write(it.toString().toByteArray(Charsets.UTF_8)) } }
             val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val text = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) throw LinkoNetworkException("http_$status", status)
             JSONObject(text.ifBlank { "{}" })
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 }
 
