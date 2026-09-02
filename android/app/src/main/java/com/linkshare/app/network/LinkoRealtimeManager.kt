@@ -416,7 +416,7 @@ data class LinkoPresence(val userId: String, val deviceId: String, val state: St
 
 sealed interface LinkoRealtimeEvent {
     data class IncomingConnectionRequest(val sessionId: String, val peerName: String? = null) : LinkoRealtimeEvent
-    data class FriendRequestReceived(val requestId: String) : LinkoRealtimeEvent
+    data class FriendRequestReceived(val requestId: String, val senderName: String? = null) : LinkoRealtimeEvent
     data class FriendRequestSent(val requestId: String) : LinkoRealtimeEvent
     data class FriendRequestAccepted(val requestId: String) : LinkoRealtimeEvent
     data class FriendRequestDeclined(val requestId: String) : LinkoRealtimeEvent

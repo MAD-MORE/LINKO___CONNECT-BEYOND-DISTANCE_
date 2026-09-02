@@ -88,7 +88,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime) {
+fun LinkoApp(
+    auth: LinkoAuth,
+    runtime: LinkoRuntime,
+    updateManager: com.linkshare.app.update.LinkoUpdateManager? = null
+) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val signedIn = auth.isSignedIn()

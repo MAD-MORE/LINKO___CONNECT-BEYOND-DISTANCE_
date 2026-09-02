@@ -63,6 +63,7 @@ class LinkoAuth(context: Context) {
     }
 
     fun saveLinkoSession(deviceId: String, linkoToken: String, userId: String?) { prefs.edit().putString(KEY_DEVICE_ID, deviceId).putString(KEY_LINKO_TOKEN, linkoToken).apply(); userId?.takeIf { it.isNotBlank() }?.let { prefs.edit().putString(KEY_USER_ID, it).apply() } }
+    fun saveDeviceId(deviceId: String) { prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply() }
     fun clearLinkoSession() { prefs.edit().remove(KEY_DEVICE_ID).remove(KEY_LINKO_TOKEN).apply() }
     fun signOut() { prefs.edit().remove(KEY_ACCESS_TOKEN).remove(KEY_REFRESH_TOKEN).remove(KEY_USER_ID).remove(KEY_LINKO_TOKEN).remove(KEY_DEVICE_ID).remove(KEY_DISPLAY_NAME).remove(KEY_LINKO_ID).remove(KEY_USERNAME).apply() }
 

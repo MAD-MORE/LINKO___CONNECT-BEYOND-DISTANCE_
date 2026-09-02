@@ -27,6 +27,24 @@ object LinkoStunClient {
 
     private val random = SecureRandom()
 
+    data class Candidate(val address: InetAddress, val port: Int, val type: String = "srflx") {
+        val endpoint: InetSocketAddress get() = InetSocketAddress(address, port)
+    }
+
+    fun discover(socket: DatagramSocket, serverHost: String = "stun.l.google.com", serverPort: Int = 19302, timeoutMs: Int = 2500): Candidate? {
+        val transaction = ByteArray(12).also(random::nextBytes)
+        val request = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN)
+            .putShort(BINDING_REQUEST.toShort()).putShort(0).putInt(STUN_MAGIC_COOKIE).put(transaction).array()
+        return runCatching {
+            socket.soTimeout = timeoutMs
+            socket.send(DatagramPacket(request, request.size, InetAddress.getByName(serverHost), serverPort))
+            val response = DatagramPacket(ByteArray(2048), 2048)
+            socket.receive(response)
+            val parsed = parseStunResponse(response.data, response.length, transaction)
+            if (parsed != null) Candidate(parsed.address, parsed.port, "srflx") else null
+        }.getOrNull()
+    }
+
     val DEFAULT_STUN_SERVERS = listOf(
         "stun.l.google.com" to 19302,
         "stun1.l.google.com" to 19302,
