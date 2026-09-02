@@ -36,6 +36,12 @@ private val SPIRALS = listOf(
 
 @Composable
 fun Ring(color: Color, size: Dp = 160.dp, pulse: Boolean = false, idle: Boolean = false, label: String? = null, onClick: (() -> Unit)? = null) {
+    // The Home hero uses the idle READY state as the globe/radar centerpiece.
+    if (idle && label == "READY") {
+        GlobeRadar(color = color, size = size, label = "ONLINE")
+        return
+    }
+
     val infiniteTransition = rememberInfiniteTransition(label = "ring")
     val speedMultiplier = when { idle -> 2.4f; pulse -> 0.7f; else -> 1.0f }
     val outerDurationMs = ((if (idle) 2800 else 1100) * speedMultiplier).toInt()
