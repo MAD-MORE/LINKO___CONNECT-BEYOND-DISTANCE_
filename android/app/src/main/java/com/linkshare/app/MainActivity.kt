@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -85,8 +86,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // The updater is the first page. Nothing in LinkoApp is shown until
-        // the startup update gate reaches a safe-to-open state.
         window.decorView.post { checkForStartupUpdate() }
     }
 
@@ -132,15 +131,8 @@ class MainActivity : ComponentActivity() {
     private fun unlockApp() {
         if (appUnlocked) return
         appUnlocked = true
-
-        // Start the actual LINKO runtime as soon as the app is unlocked.
-        // This registers the device, starts Supabase Realtime, publishes
-        // presence heartbeats, and pre-warms the provider service. Without
-        // this call the UI could open while the device remained invisible to
-        // friends, causing every connection attempt to report "offline".
         runCatching { linkoRuntime.start() }
             .onFailure { Log.e(TAG, "LINKO runtime startup failed", it) }
-
         runCatching { requestEnginePermissions() }
             .onFailure { Log.e(TAG, "Permission setup failed", it) }
         runCatching {
@@ -174,30 +166,31 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun StartupUpdateGate(
-        manager: LinkoUpdateManager,
-        state: LinkoUpdateManager.UpdateState,
-    ) {
+    private fun StartupUpdateGate(manager: LinkoUpdateManager, state: LinkoUpdateManager.UpdateState) {
         LaunchedEffect(state.status, state.latestVersionCode, state.installedVersionCode) {
             when (state.status) {
                 LinkoUpdateManager.UpdateStatus.UpdateAvailable -> manager.startUpdate()
                 LinkoUpdateManager.UpdateStatus.UpToDate,
                 LinkoUpdateManager.UpdateStatus.Installed -> {
-                    delay(500L)
+                    delay(350L)
                     unlockApp()
                 }
                 LinkoUpdateManager.UpdateStatus.Error,
                 LinkoUpdateManager.UpdateStatus.RateLimited -> {
-                    // A failed optional check must not lock the user out forever.
-                    // Installation/download/verification states remain blocking.
                     if (state.latestVersionCode == null || state.latestVersionCode <= state.installedVersionCode) {
-                        delay(300L)
+                        delay(250L)
                         unlockApp()
                     }
                 }
                 else -> Unit
             }
         }
+
+        val isDownloading = state.status == LinkoUpdateManager.UpdateStatus.Downloading
+        val isWorking = state.status == LinkoUpdateManager.UpdateStatus.Checking ||
+            state.status == LinkoUpdateManager.UpdateStatus.Verifying ||
+            state.status == LinkoUpdateManager.UpdateStatus.Installing
+        val progress = (state.progressPercent.coerceIn(0, 100) / 100f)
 
         Column(
             modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
@@ -208,7 +201,29 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(12.dp))
             Text("STARTUP UPDATE CENTER", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp)
             Spacer(Modifier.height(24.dp))
-            CircularProgressIndicator(color = Blue)
+
+            if (isDownloading) {
+                Text("${state.progressPercent.coerceIn(0, 100)}%", color = Blue, fontFamily = JetBrainsMono, fontSize = 32.sp)
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                if (state.totalBytes > 0) {
+                    Text(
+                        "${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)}",
+                        color = TextMuted,
+                        fontFamily = JetBrainsMono,
+                        fontSize = 10.sp,
+                    )
+                }
+            } else if (isWorking) {
+                CircularProgressIndicator(color = Blue)
+            } else {
+                CircularProgressIndicator(color = Blue)
+            }
+
             Spacer(Modifier.height(18.dp))
             Text(state.statusMessage.ifBlank { "CHECKING FOR LINKO UPDATES…" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
@@ -217,18 +232,26 @@ class MainActivity : ComponentActivity() {
                 LinkoUpdateManager.UpdateStatus.Verifying,
                 LinkoUpdateManager.UpdateStatus.Installing,
                 LinkoUpdateManager.UpdateStatus.UpdateAvailable -> Text(
-                    "LINKO ${state.latestVersionName.orEmpty()} MUST FINISH UPDATING BEFORE THE APP OPENS.",
+                    "LINKO ${state.latestVersionName.orEmpty()} • UPDATE IN PROGRESS",
                     color = Blue,
                     fontFamily = JetBrainsMono,
                     fontSize = 10.sp,
                 )
                 LinkoUpdateManager.UpdateStatus.UpToDate,
-                LinkoUpdateManager.UpdateStatus.Installed -> Text("NO UPDATE REQUIRED • OPENING LINKO…", color = Green, fontFamily = JetBrainsMono, fontSize = 10.sp)
+                LinkoUpdateManager.UpdateStatus.Installed -> Text("UPDATE COMPLETE • OPENING LINKO…", color = Green, fontFamily = JetBrainsMono, fontSize = 10.sp)
                 LinkoUpdateManager.UpdateStatus.Error,
                 LinkoUpdateManager.UpdateStatus.RateLimited -> Text(state.errorMessage.orEmpty(), color = Red, fontFamily = JetBrainsMono, fontSize = 10.sp)
                 else -> Text("SECURELY CHECKING THE LATEST LINKO BUILD…", color = TextMuted, fontFamily = JetBrainsMono, fontSize = 10.sp)
             }
         }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024L) return "$bytes B"
+        val kb = bytes / 1024L
+        if (kb < 1024L) return "$kb KB"
+        val mb = kb / 1024L
+        return "$mb MB"
     }
 
     companion object {
