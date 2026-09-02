@@ -12,7 +12,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +32,20 @@ import com.linkshare.app.ui.theme.*
 import kotlinx.coroutines.launch
 
 @Composable
+private fun OnlinePresenceBadge(isOnline: Boolean, isSharing: Boolean = false) {
+    val transition = rememberInfiniteTransition(label = "presence")
+    val pulse by transition.animateFloat(0.55f, 1f, infiniteRepeatable(tween(850, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "presencePulse")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(16.dp)) {
+            if (isOnline) Box(Modifier.size(15.dp).clip(CircleShape).background(Green.copy(alpha = 0.16f * pulse)))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (isOnline) Green else TextMuted).border(1.dp, if (isOnline) Green.copy(alpha = 0.65f) else TextMuted.copy(alpha = 0.5f), CircleShape))
+        }
+        Spacer(Modifier.width(5.dp))
+        Text(when { isSharing -> "ONLINE • SHARING"; isOnline -> "ONLINE"; else -> "OFFLINE" }, color = if (isOnline) Green else TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
 fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
     val api=LinkoFriendsApiHolder.api
     var friends by remember{mutableStateOf<List<FriendSearchResult>>(emptyList())}
@@ -42,471 +55,40 @@ fun FriendsScreen(onFindFriends:()->Unit,onFriendTap:()->Unit){
     var loading by remember{mutableStateOf(true)}
     var message by remember{mutableStateOf<String?>(null)}
     val scope=rememberCoroutineScope()
-
-    fun refresh(){
-        scope.launch{
-            loading=true
-            message=null
-            try{
-                val f=api.friends().optJSONArray("friends")?:org.json.JSONArray()
-                friends=buildList{
-                    for(i in 0 until f.length()){
-                        val o=f.optJSONObject(i)?:continue
-                        add(FriendSearchResult(o.optString("user_id"),o.optString("linko_id"),o.optString("display_name"),null,null,false,"friend"))
-                    }
-                }
-                val r=api.requests().optJSONArray("requests")?:org.json.JSONArray()
-                incoming=buildList{
-                    for(i in 0 until r.length()){
-                        val o=r.optJSONObject(i)?:continue
-                        if(o.optBoolean("incoming")&&o.optString("status")=="pending")add(o)
-                    }
-                }
-                outgoing=buildList{
-                    for(i in 0 until r.length()){
-                        val o=r.optJSONObject(i)?:continue
-                        if(!o.optBoolean("incoming")&&o.optString("status")=="pending")add(o)
-                    }
-                }
-                resolved=buildList{
-                    for(i in 0 until r.length()){
-                        val o=r.optJSONObject(i)?:continue
-                        val status=o.optString("status")
-                        if(!o.optBoolean("incoming")&&(status=="accepted"||status=="declined"))add(o)
-                    }
-                }
-            }catch(e:Exception){message=e.message?:"Unable to load friends"}
-            finally{loading=false}
-        }
-    }
-
+    fun refresh(){scope.launch{loading=true;message=null;try{
+        val f=api.friends().optJSONArray("friends")?:org.json.JSONArray();friends=buildList{for(i in 0 until f.length()){val o=f.optJSONObject(i)?:continue;add(FriendSearchResult(o.optString("user_id"),o.optString("linko_id"),o.optString("display_name").ifBlank{"LINKO User"},isSharing=o.optBoolean("is_sharing",false),isOnline=o.optBoolean("is_online",o.optBoolean("is_sharing",false)),relationshipStatus="friend",username=o.optString("username").takeIf{it.isNotBlank()}))}}
+        val r=api.requests().optJSONArray("requests")?:org.json.JSONArray();incoming=buildList{for(i in 0 until r.length()){val o=r.optJSONObject(i)?:continue;if(o.optBoolean("incoming")&&o.optString("status")=="pending")add(o)}};outgoing=buildList{for(i in 0 until r.length()){val o=r.optJSONObject(i)?:continue;if(!o.optBoolean("incoming")&&o.optString("status")=="pending")add(o)}};resolved=buildList{for(i in 0 until r.length()){val o=r.optJSONObject(i)?:continue;val status=o.optString("status");if(!o.optBoolean("incoming")&&(status=="accepted"||status=="declined"))add(o)}}
+    }catch(e:Exception){message=e.message?:"Unable to load friends"}finally{loading=false}}}
     LaunchedEffect(Unit){refresh()}
-
+    LaunchedEffect(Unit){LinkoRealtimeManager.events.collect{event->if(event is LinkoRealtimeEvent.FriendRequestAccepted)refresh()}}
     Column(Modifier.fillMaxSize().padding(horizontal=16.dp)){
-        Spacer(Modifier.height(8.dp))
-        Text("Friends",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("Your LINKO connection network",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono)
-        Spacer(Modifier.height(16.dp))
-
-        message?.let{Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(8.dp))}
-
-        if(incoming.isNotEmpty()){
-            Text("FRIEND REQUESTS",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            incoming.forEach{request->
-                val profile=request.optJSONObject("profile")
-                var responding by remember(request.optString("id")){mutableStateOf(false)}
-                LinkoCard{
-                    Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
-                    Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth()){
-                        PrimaryButton(if(responding)"..."else"ACCEPT",{
-                            if(!responding){
-                                responding=true
-                                scope.launch{
-                                    try{api.respond(request.optString("id"),true);refresh()}
-                                    catch(e:Exception){message=e.message?:"Accept failed";responding=false}
-                                }
-                            }
-                        },color=Green)
-                        Spacer(Modifier.width(8.dp))
-                        PrimaryButton(if(responding)""else"DECLINE",{
-                            if(!responding){
-                                responding=true
-                                scope.launch{
-                                    try{api.respond(request.optString("id"),false);refresh()}
-                                    catch(e:Exception){message=e.message?:"Decline failed";responding=false}
-                                }
-                            }
-                        },color=Red,outline=true)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        if(outgoing.isNotEmpty()){
-            Text("REQUESTS SENT",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            outgoing.take(10).forEach{request->
-                val profile=request.optJSONObject("profile")
-                LinkoCard{
-                    Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
-                    Spacer(Modifier.height(6.dp))
-                    Text("PENDING • WAITING FOR ACCEPTANCE",color=Yellow,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        if(resolved.isNotEmpty()){
-            Text("REQUEST HISTORY",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            resolved.take(10).forEach{request->
-                val profile=request.optJSONObject("profile")
-                val status=request.optString("status")
-                val accepted=status=="accepted"
-                LinkoCard{
-                    Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                    Spacer(Modifier.height(3.dp))
-                    Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
-                    Spacer(Modifier.height(6.dp))
-                    Text(if(accepted)"ACCEPTED • YOU ARE NOW FRIENDS"else"DECLINED • REQUEST NOT ACCEPTED",color=if(accepted)Green else Red,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        if(friends.isEmpty()&&!loading){
-            LinkoCard{
-                Text("NO FRIENDS YET",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Find a real LINKO user by their LINKO ID or username.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)
-            }
-        }else{
-            friends.forEach{f->
-                LinkoCard{
-                    Column(Modifier.fillMaxWidth().clickable{LinkoFriendsApiHolder.selected=f;onFriendTap()}){
-                        Text(f.displayName,color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)
-                        Text(f.linkoId,color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono)
-                        Text("FRIEND • CONNECT USING LINKO ID OR USERNAME",color=Green,fontSize=10.sp,fontFamily=JetBrainsMono)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        Spacer(Modifier.weight(1f))
-        PrimaryButton("+ FIND FRIENDS",onFindFriends)
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(8.dp));Text("Friends",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(4.dp));Text("Your LINKO connection network",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(16.dp));message?.let{Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(8.dp))}
+        if(incoming.isNotEmpty()){Text("FRIEND REQUESTS",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));incoming.forEach{request->val profile=request.optJSONObject("profile");var responding by remember(request.optString("id")){mutableStateOf(false)};LinkoCard{Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(3.dp));Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(10.dp));Row(Modifier.fillMaxWidth()){PrimaryButton(if(responding)"..."else"ACCEPT",{if(!responding){responding=true;scope.launch{try{api.respond(request.optString("id"),true);refresh()}catch(e:Exception){message=e.message?:"Accept failed";responding=false}}}},color=Green);Spacer(Modifier.width(8.dp));PrimaryButton(if(responding)""else"DECLINE",{if(!responding){responding=true;scope.launch{try{api.respond(request.optString("id"),false);refresh()}catch(e:Exception){message=e.message?:"Decline failed";responding=false}}}},color=Red,outline=true)}};Spacer(Modifier.height(8.dp))}}
+        if(outgoing.isNotEmpty()){Text("REQUESTS SENT",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));outgoing.take(10).forEach{request->val profile=request.optJSONObject("profile");LinkoCard{Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(3.dp));Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(6.dp));Text("PENDING • WAITING FOR ACCEPTANCE",color=Yellow,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)};Spacer(Modifier.height(8.dp))}}
+        if(resolved.isNotEmpty()){Text("REQUEST HISTORY",color=Yellow,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));resolved.take(10).forEach{request->val profile=request.optJSONObject("profile");val accepted=request.optString("status")=="accepted";LinkoCard{Text(profile?.optString("display_name","LINKO User")?:"LINKO User",color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(3.dp));Text(profile?.optString("linko_id","")?:"",color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(6.dp));Text(if(accepted)"ACCEPTED • YOU ARE NOW FRIENDS"else"DECLINED • REQUEST NOT ACCEPTED",color=if(accepted)Green else Red,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)};Spacer(Modifier.height(8.dp))}}
+        if(friends.isEmpty()&&!loading){LinkoCard{Text("NO FRIENDS YET",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("Find a real LINKO user by their LINKO ID or username.",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono)}}else{friends.forEach{f->LinkoCard{Column(Modifier.fillMaxWidth().clickable{LinkoFriendsApiHolder.selected=f;onFriendTap()}){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(f.displayName,color=TextPrimary,fontSize=15.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));OnlinePresenceBadge(f.isOnline,f.isSharing)};Text(f.linkoId,color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(4.dp));Text(if(f.isSharing)"FRIEND • INTERNET SHARING ACTIVE"else if(f.isOnline)"FRIEND • READY TO CONNECT"else"FRIEND • OFFLINE",color=if(f.isOnline)Green else TextMuted,fontSize=10.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)}};Spacer(Modifier.height(8.dp))}}
+        Spacer(Modifier.weight(1f));PrimaryButton("+ FIND FRIENDS",onFindFriends);Spacer(Modifier.height(24.dp))
     }
 }
 
 @Composable
 fun FindFriendsScreen(onSearch: () -> Unit) {
-    val api = LinkoFriendsApiHolder.api
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<FriendSearchResult>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var acceptedFriend by remember { mutableStateOf<FriendSearchResult?>(null) }
-    val scope = rememberCoroutineScope()
-
-    val infiniteTransition = rememberInfiniteTransition(label = "radar")
-    val radarRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(4000, easing = LinearEasing), RepeatMode.Restart),
-        label = "radarSweep"
-    )
-    val rippleScale by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(tween(2500, easing = FastOutSlowInEasing), RepeatMode.Restart),
-        label = "radarRipple"
-    )
-    val rippleAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.8f,
-        targetValue = 0.0f,
-        animationSpec = infiniteRepeatable(tween(2500, easing = LinearEasing), RepeatMode.Restart),
-        label = "radarAlpha"
-    )
-
-    // Listen to realtime acceptance
-    LaunchedEffect(Unit) {
-        LinkoRealtimeManager.events.collect { event ->
-            if (event is LinkoRealtimeEvent.FriendRequestAccepted) {
-                val found = results.firstOrNull() ?: LinkoFriendsApiHolder.selected
-                acceptedFriend = found
-            }
-        }
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(8.dp))
-        Text("Radar Discovery", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(4.dp))
-        Text("Discover online LINKO peers • Tap to invite instantly", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(14.dp))
-
-        // Celebration Modal if Accepted in Realtime
-        if (acceptedFriend != null) {
-            GlassCard(accentColor = Green, modifier = Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    BlinkingDot(Green, 10.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("🎉 FRIEND REQUEST ACCEPTED!", color = Green, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("You and ${acceptedFriend?.displayName ?: "Friend"} are now connected. You can start sharing internet immediately!", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
-                Spacer(Modifier.height(14.dp))
-                PrimaryButton("⚡ CONNECT & SHARE NOW", {
-                    acceptedFriend?.let {
-                        LinkoEngineBridge.connectToFriend(it.userId, it.displayName, it.linkoId)
-                    }
-                }, color = Green)
-            }
-            Spacer(Modifier.height(14.dp))
-        }
-
-        // Xender Radar Graphic
-        Box(
-            modifier = Modifier
-                .size(200.dp)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Blue.copy(alpha = 0.15f), Color.Transparent)))
-                .border(1.dp, Border, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            // Ripples
-            Box(
-                modifier = Modifier
-                    .size(200.dp * rippleScale)
-                    .clip(CircleShape)
-                    .border(1.5.dp, Green.copy(alpha = rippleAlpha), CircleShape)
-            )
-            Box(
-                modifier = Modifier
-                    .size(130.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, Blue.copy(alpha = 0.25f), CircleShape)
-            )
-            // Center Device Icon
-            Box(
-                modifier = Modifier
-                    .size(54.dp)
-                    .clip(CircleShape)
-                    .background(Brush.radialGradient(listOf(Blue, Accent)))
-                    .border(2.dp, Color.White.copy(alpha = 0.7f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("📡", fontSize = 22.sp)
-            }
-        }
-
-        Spacer(Modifier.height(14.dp))
-        LinkoInput("SEARCH ID OR USERNAME", query, { query = it }, "LNK-XXXXXXXX", "Enter LINKO ID or username")
-        Spacer(Modifier.height(10.dp))
-
-        message?.let { Text(it, color = Red, fontSize = 11.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(6.dp)) }
-
-        results.forEach { f ->
-            LinkoCard {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { LinkoFriendsApiHolder.selected = f; onSearch() },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Avatar(f.displayName.take(1).uppercase(), Green, 38.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(f.displayName, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                        Text(f.linkoId, color = Blue, fontSize = 11.sp, fontFamily = JetBrainsMono)
-                    }
-                    StatusChip(
-                        when (f.relationshipStatus) {
-                            "friend" -> "FRIENDS"
-                            "outgoing_pending" -> "SENT"
-                            "incoming_pending" -> "RECEIVED"
-                            else -> "INVITE +"
-                        },
-                        when (f.relationshipStatus) {
-                            "friend" -> Green
-                            "outgoing_pending", "incoming_pending" -> Yellow
-                            else -> Blue
-                        }
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-
-        Spacer(Modifier.weight(1f))
-        PrimaryButton(if (searching) "SCANNING…" else "SCAN & SEARCH", {
-            if (!searching) {
-                searching = true
-                message = null
-                scope.launch {
-                    try {
-                        if (query.trim().length < 2) throw IllegalArgumentException("Enter at least 2 characters")
-                        results = api.search(query)
-                        if (results.isEmpty()) message = "No online LINKO users found."
-                    } catch (e: Exception) {
-                        message = e.message ?: "Search failed"
-                    } finally {
-                        searching = false
-                    }
-                }
-            }
-        })
-        Spacer(Modifier.height(24.dp))
-    }
+    val api=LinkoFriendsApiHolder.api;var query by remember{mutableStateOf("")};var results by remember{mutableStateOf<List<FriendSearchResult>>(emptyList())};var searching by remember{mutableStateOf(false)};var message by remember{mutableStateOf<String?>(null)};var acceptedFriend by remember{mutableStateOf<FriendSearchResult?>(null)};val scope=rememberCoroutineScope();val infiniteTransition=rememberInfiniteTransition(label="radar");val radarRotation by infiniteTransition.animateFloat(0f,360f,infiniteRepeatable(tween(4000,easing=LinearEasing),RepeatMode.Restart),label="radarSweep");val rippleScale by infiniteTransition.animateFloat(.4f,1f,infiniteRepeatable(tween(2500,easing=FastOutSlowInEasing),RepeatMode.Restart),label="radarRipple");val rippleAlpha by infiniteTransition.animateFloat(.8f,0f,infiniteRepeatable(tween(2500,easing=LinearEasing),RepeatMode.Restart),label="radarAlpha")
+    LaunchedEffect(Unit){LinkoRealtimeManager.events.collect{event->if(event is LinkoRealtimeEvent.FriendRequestAccepted)acceptedFriend=results.firstOrNull()?:LinkoFriendsApiHolder.selected}}
+    Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Text("Radar Discovery",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(4.dp));Text("Discover online LINKO peers • Tap to invite instantly",color=TextSub,fontSize=12.sp,fontFamily=JetBrainsMono,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(14.dp));if(acceptedFriend!=null){GlassCard(accentColor=Green,modifier=Modifier.fillMaxWidth()){Row(verticalAlignment=Alignment.CenterVertically){BlinkingDot(Green,10.dp);Spacer(Modifier.width(10.dp));Text("🎉 FRIEND REQUEST ACCEPTED!",color=Green,fontSize=14.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)};Spacer(Modifier.height(8.dp));Text("You and ${acceptedFriend?.displayName?:"Friend"} are now connected. You can start sharing internet immediately!",color=TextPrimary,fontSize=12.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(14.dp));PrimaryButton("⚡ CONNECT & SHARE NOW",{acceptedFriend?.let{LinkoEngineBridge.connectToFriend(it.userId,it.displayName,it.linkoId)}},color=Green)};Spacer(Modifier.height(14.dp))};Box(Modifier.size(200.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Blue.copy(alpha=.15f),Color.Transparent))).border(1.dp,Border,CircleShape),contentAlignment=Alignment.Center){Box(Modifier.size(200.dp*rippleScale).clip(CircleShape).border(1.5.dp,Green.copy(alpha=rippleAlpha),CircleShape));Box(Modifier.size(130.dp).clip(CircleShape).border(1.dp,Blue.copy(alpha=.25f),CircleShape));Box(Modifier.size(54.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Blue,Accent))).border(2.dp,Color.White.copy(alpha=.7f),CircleShape),contentAlignment=Alignment.Center){Text("📡",fontSize=22.sp)}};Spacer(Modifier.height(14.dp));LinkoInput("SEARCH ID OR USERNAME",query,{query=it},"LNK-XXXXXXXX","Enter LINKO ID or username");Spacer(Modifier.height(10.dp));message?.let{Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(6.dp))};results.forEach{f->LinkoCard{Row(Modifier.fillMaxWidth().clickable{LinkoFriendsApiHolder.selected=f;onSearch()},verticalAlignment=Alignment.CenterVertically){Avatar(f.displayName.take(1).uppercase(),if(f.isOnline)Green else TextMuted,38.dp);Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(f.displayName,color=TextPrimary,fontSize=14.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Text(f.linkoId,color=Blue,fontSize=11.sp,fontFamily=JetBrainsMono);OnlinePresenceBadge(f.isOnline,f.isSharing)};StatusChip(when(f.relationshipStatus){"friend"->"FRIENDS";"outgoing_pending"->"SENT";"incoming_pending"->"RECEIVED";else->"INVITE +"},when(f.relationshipStatus){"friend"->Green;"outgoing_pending","incoming_pending"->Yellow;else->Blue})}};Spacer(Modifier.height(8.dp))};Spacer(Modifier.weight(1f));PrimaryButton(if(searching)"SCANNING…"else"SCAN & SEARCH",{if(!searching){searching=true;message=null;scope.launch{try{if(query.trim().length<2)throw IllegalArgumentException("Enter at least 2 characters");results=api.search(query);if(results.isEmpty())message="No online LINKO users found."}catch(e:Exception){message=e.message?:"Search failed"}finally{searching=false}}}});Spacer(Modifier.height(24.dp))}
 }
 
 @Composable
 fun FriendProfileScreen(onSendRequest: () -> Unit) {
-    val api = LinkoFriendsApiHolder.api
-    val friend = LinkoFriendsApiHolder.selected
-    var sending by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var realtimeAccepted by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val relationship = friend?.relationshipStatus ?: "none"
-
-    // Realtime celebration listener
-    LaunchedEffect(Unit) {
-        LinkoRealtimeManager.events.collect { event ->
-            if (event is LinkoRealtimeEvent.FriendRequestAccepted) {
-                realtimeAccepted = true
-            }
-        }
-    }
-
-    val buttonLabel = when {
-        realtimeAccepted -> "⚡ START SHARING INTERNET"
-        relationship == "friend" -> "CONNECT & SHARE"
-        relationship == "outgoing_pending" -> "WAITING FOR ACCEPTANCE…"
-        relationship == "incoming_pending" -> "ACCEPT REQUEST"
-        sending -> "INVITING…"
-        else -> "⚡ SEND FRIEND INVITE"
-    }
-    val buttonEnabled = (relationship == "none" || relationship == "friend" || realtimeAccepted) && !sending
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(20.dp))
-        Avatar(friend?.displayName?.take(1)?.uppercase() ?: "U", if (realtimeAccepted || relationship == "friend") Green else Blue, 90.dp)
-        Spacer(Modifier.height(14.dp))
-        Text(friend?.displayName ?: "LINKO User", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(friend?.linkoId ?: "No friend selected", color = Blue, fontSize = 13.sp, fontFamily = JetBrainsMono)
-        Spacer(Modifier.height(20.dp))
-
-        if (realtimeAccepted) {
-            GlassCard(accentColor = Green) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    BlinkingDot(Green, 8.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("🎉 ACCEPTED IN REAL-TIME!", color = Green, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(4.dp))
-                Text("Your friend accepted your request right now. Tap below to share internet!", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
-            }
-            Spacer(Modifier.height(14.dp))
-        }
-
-        LinkoCard {
-            InfoRow("IDENTITY STATUS", if (relationship == "friend" || realtimeAccepted) "VERIFIED FRIEND" else "AVAILABLE PEER", "Cryptographically signed LINKO account", accent = if (relationship == "friend" || realtimeAccepted) Green else Blue)
-        }
-        Spacer(Modifier.height(8.dp))
-        message?.let { Spacer(Modifier.height(6.dp)); Text(it, color = Red, fontSize = 11.sp, fontFamily = JetBrainsMono) }
-        Spacer(Modifier.weight(1f))
-        PrimaryButton(
-            buttonLabel,
-            onClick = {
-                if (realtimeAccepted || relationship == "friend") {
-                    friend?.let { LinkoEngineBridge.connectToFriend(it.userId, it.displayName, it.linkoId) }
-                } else if (buttonEnabled && friend != null) {
-                    sending = true
-                    scope.launch {
-                        try {
-                            val response = api.sendRequest(friend.userId)
-                            when (response.optString("state")) {
-                                "friend" -> message = "You are already friends."
-                                "outgoing_pending" -> onSendRequest()
-                                else -> message = "Request sent. Waiting for response…"
-                            }
-                        } catch (e: Exception) {
-                            message = e.message ?: "Request failed"
-                        } finally {
-                            sending = false
-                        }
-                    }
-                }
-            },
-            color = if (realtimeAccepted || relationship == "friend") Green else Blue,
-            outline = !buttonEnabled
-        )
-        Spacer(Modifier.height(24.dp))
-    }
+    val api=LinkoFriendsApiHolder.api;val friend=LinkoFriendsApiHolder.selected;var sending by remember{mutableStateOf(false)};var message by remember{mutableStateOf<String?>(null)};var realtimeAccepted by remember{mutableStateOf(false)};val scope=rememberCoroutineScope();val relationship=friend?.relationshipStatus?:"none";LaunchedEffect(Unit){LinkoRealtimeManager.events.collect{event->if(event is LinkoRealtimeEvent.FriendRequestAccepted)realtimeAccepted=true}};val buttonLabel=when{realtimeAccepted->"⚡ START SHARING INTERNET";relationship=="friend"->"CONNECT & SHARE";relationship=="outgoing_pending"->"WAITING FOR ACCEPTANCE…";relationship=="incoming_pending"->"ACCEPT REQUEST";sending->"INVITING…";else->"⚡ SEND FRIEND INVITE"};val buttonEnabled=(relationship=="none"||relationship=="friend"||realtimeAccepted)&&!sending
+    Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(20.dp));Avatar(friend?.displayName?.take(1)?.uppercase()?:"U",if(realtimeAccepted||relationship=="friend")Green else Blue,90.dp);Spacer(Modifier.height(14.dp));Text(friend?.displayName?:"LINKO User",color=TextPrimary,fontSize=20.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(4.dp));Text(friend?.linkoId?:"No friend selected",color=Blue,fontSize=13.sp,fontFamily=JetBrainsMono);friend?.let{Spacer(Modifier.height(8.dp));OnlinePresenceBadge(it.isOnline,it.isSharing)};Spacer(Modifier.height(20.dp));if(realtimeAccepted){GlassCard(accentColor=Green){Row(verticalAlignment=Alignment.CenterVertically){BlinkingDot(Green,8.dp);Spacer(Modifier.width(8.dp));Text("🎉 ACCEPTED IN REAL-TIME!",color=Green,fontSize=13.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)};Spacer(Modifier.height(4.dp));Text("Your friend accepted your request right now. Tap below to share internet!",color=TextPrimary,fontSize=12.sp,fontFamily=JetBrainsMono)};Spacer(Modifier.height(14.dp))};LinkoCard{InfoRow("IDENTITY STATUS",if(relationship=="friend"||realtimeAccepted)"VERIFIED FRIEND"else"AVAILABLE PEER","Cryptographically signed LINKO account",accent=if(relationship=="friend"||realtimeAccepted)Green else Blue)};Spacer(Modifier.height(8.dp));message?.let{Spacer(Modifier.height(6.dp));Text(it,color=Red,fontSize=11.sp,fontFamily=JetBrainsMono)};Spacer(Modifier.weight(1f));PrimaryButton(buttonLabel,{if(realtimeAccepted||relationship=="friend"){friend?.let{LinkoEngineBridge.connectToFriend(it.userId,it.displayName,it.linkoId)}}else if(buttonEnabled&&friend!=null){sending=true;scope.launch{try{val response=api.sendRequest(friend.userId);when(response.optString("state")){"friend"->message="You are already friends.";"outgoing_pending"->onSendRequest();else->message="Request sent. Waiting for response…"}}catch(e:Exception){message=e.message?:"Request failed"}finally{sending=false}}}},color=if(realtimeAccepted||relationship=="friend")Green else Blue,outline=!buttonEnabled);Spacer(Modifier.height(24.dp))}
 }
 
 @Composable
-fun RequestSentScreen(onCancel: () -> Unit) {
-    var acceptedLive by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        LinkoRealtimeManager.events.collect { event ->
-            if (event is LinkoRealtimeEvent.FriendRequestAccepted) {
-                acceptedLive = true
-            }
-        }
-    }
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.weight(1f))
-        Ring(if (acceptedLive) Green else Yellow, 180.dp, pulse = true, label = if (acceptedLive) "ACCEPTED" else "PENDING", onClick = onCancel)
-        Spacer(Modifier.height(20.dp))
-        Text(if (acceptedLive) "🎉 Friend Request Accepted!" else "Request Sent", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(6.dp))
-        Text(if (acceptedLive) "Your friend just accepted. You can now connect & share internet!" else "Waiting for your friend to accept in real-time…", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono)
-        Spacer(Modifier.weight(1f))
-        PrimaryButton(if (acceptedLive) "⚡ CONNECT TO FRIEND" else "BACK TO FRIENDS", onCancel, color = if (acceptedLive) Green else Blue, outline = !acceptedLive)
-        Spacer(Modifier.height(24.dp))
-    }
-}
+fun RequestSentScreen(onCancel: () -> Unit){var acceptedLive by remember{mutableStateOf(false)};LaunchedEffect(Unit){LinkoRealtimeManager.events.collect{event->if(event is LinkoRealtimeEvent.FriendRequestAccepted)acceptedLive=true}};Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.weight(1f));Ring(if(acceptedLive)Green else Yellow,180.dp,pulse=true,label=if(acceptedLive)"ACCEPTED"else"PENDING",onClick=onCancel);Spacer(Modifier.height(20.dp));Text(if(acceptedLive)"🎉 Friend Request Accepted!"else"Request Sent",color=TextPrimary,fontSize=18.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text(if(acceptedLive)"Your friend just accepted. You can now connect & share internet!"else"Waiting for your friend to accept in real-time…",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.weight(1f));PrimaryButton(if(acceptedLive)"⚡ CONNECT TO FRIEND"else"BACK TO FRIENDS",onCancel,color=if(acceptedLive)Green else Blue,outline=!acceptedLive);Spacer(Modifier.height(24.dp))}}
 
 @Composable
-fun IncomingRequestScreen(onAccept: () -> Unit, onReject: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(8.dp))
-        Text("Incoming Request", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(4.dp))
-        Text("A LINKO user is requesting to become a friend", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(28.dp))
-        Ring(Yellow, 120.dp, label = "REQUEST")
-        Spacer(Modifier.height(20.dp))
-        GlassCard(accentColor = Yellow) {
-            InfoRow("REQUEST", "Pending", "Review friend request to allow mutual connection", Yellow)
-        }
-        Spacer(Modifier.weight(1f))
-        PrimaryButton("ACCEPT", onAccept, color = Green)
-        Spacer(Modifier.height(8.dp))
-        PrimaryButton("REJECT", onReject, color = Red, outline = true)
-        Spacer(Modifier.height(24.dp))
-    }
-}
+fun IncomingRequestScreen(onAccept: () -> Unit,onReject: () -> Unit){Column(Modifier.fillMaxSize().padding(horizontal=16.dp),horizontalAlignment=Alignment.CenterHorizontally){Spacer(Modifier.height(8.dp));Text("Incoming Request",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(4.dp));Text("A LINKO user is requesting to become a friend",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono,modifier=Modifier.fillMaxWidth());Spacer(Modifier.height(28.dp));Ring(Yellow,120.dp,label="REQUEST");Spacer(Modifier.height(20.dp));GlassCard(accentColor=Yellow){InfoRow("REQUEST","Pending","Review friend request to allow mutual connection",Yellow)};Spacer(Modifier.weight(1f));PrimaryButton("ACCEPT",onAccept,color=Green);Spacer(Modifier.height(8.dp));PrimaryButton("REJECT",onReject,color=Red,outline=true);Spacer(Modifier.height(24.dp))}}
 
 @Composable
-fun BlockedRemovedScreen(onManage: () -> Unit) {
-    var tab by remember { mutableStateOf("BLOCKED") }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Spacer(Modifier.height(8.dp))
-        Text("Trust Boundaries", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("Manage devices you have blocked or removed", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono)
-        Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth()) {
-            PrimaryButton("BLOCKED", { tab = "BLOCKED" }, color = if (tab == "BLOCKED") Blue else TextMuted, outline = tab != "BLOCKED")
-            Spacer(Modifier.width(8.dp))
-            PrimaryButton("REMOVED", { tab = "REMOVED" }, color = if (tab == "REMOVED") Blue else TextMuted, outline = tab != "REMOVED")
-        }
-        Spacer(Modifier.height(14.dp))
-        LinkoCard {
-            Text(if (tab == "BLOCKED") "NO BLOCKED DEVICES" else "NO REMOVED DEVICES", color = TextMuted, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.weight(1f))
-        Text("Use the back button to return to Settings.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono)
-        Spacer(Modifier.height(24.dp))
-    }
-}
+fun BlockedRemovedScreen(onManage: () -> Unit){var tab by remember{mutableStateOf("BLOCKED")};Column(Modifier.fillMaxSize().padding(horizontal=16.dp)){Spacer(Modifier.height(8.dp));Text("Trust Boundaries",color=TextPrimary,fontSize=22.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold);Spacer(Modifier.height(4.dp));Text("Manage devices you have blocked or removed",color=TextSub,fontSize=13.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(18.dp));Row(Modifier.fillMaxWidth()){PrimaryButton("BLOCKED",{tab="BLOCKED"},color=if(tab=="BLOCKED")Blue else TextMuted,outline=tab!="BLOCKED");Spacer(Modifier.width(8.dp));PrimaryButton("REMOVED",{tab="REMOVED"},color=if(tab=="REMOVED")Blue else TextMuted,outline=tab!="REMOVED")};Spacer(Modifier.height(14.dp));LinkoCard{Text(if(tab=="BLOCKED")"NO BLOCKED DEVICES"else"NO REMOVED DEVICES",color=TextMuted,fontSize=11.sp,fontFamily=JetBrainsMono,fontWeight=FontWeight.Bold)};Spacer(Modifier.weight(1f));Text("Use the back button to return to Settings.",color=TextMuted,fontSize=10.sp,fontFamily=JetBrainsMono);Spacer(Modifier.height(24.dp))}}
