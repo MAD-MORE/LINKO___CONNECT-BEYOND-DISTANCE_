@@ -208,6 +208,41 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
             }
         }
 
+        var selectedDataCapMb by remember { mutableStateOf(0L) } // 0 = Unlimited
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val caps = listOf(0L to "UNLIMITED", 500L to "500 MB", 1024L to "1 GB", 2048L to "2 GB")
+            for ((capMb, label) in caps) {
+                val isSelected = selectedDataCapMb == capMb
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) Blue.copy(alpha = 0.2f) else Surface)
+                        .border(1.dp, if (isSelected) Blue else Border, RoundedCornerShape(8.dp))
+                        .clickable {
+                            selectedDataCapMb = capMb
+                            LinkoProviderService.start(context, capMb)
+                            Toast.makeText(context, if (capMb == 0L) "Data Limit: Unlimited" else "Data Limit set to $label", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        label,
+                        color = if (isSelected) Blue else TextSub,
+                        fontSize = 10.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+
         if (copied) Text("✓ LINKO ID COPIED", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.padding(top = 6.dp))
         
         var isProcessingApproval by remember { mutableStateOf(false) }

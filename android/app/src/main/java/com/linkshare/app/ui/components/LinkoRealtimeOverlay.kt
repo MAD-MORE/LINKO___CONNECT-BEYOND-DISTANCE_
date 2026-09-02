@@ -33,8 +33,11 @@ import kotlinx.coroutines.launch
 fun LinkoRealtimeOverlay() {
     val scope = rememberCoroutineScope()
     var friendRequestId by remember { mutableStateOf<String?>(null) }
+    var friendSenderName by remember { mutableStateOf<String?>(null) }
     var connectionSessionId by remember { mutableStateOf<String?>(null) }
+    var requesterPeerName by remember { mutableStateOf<String?>(null) }
     var statusText by remember { mutableStateOf<String?>(null) }
+    var isCelebration by remember { mutableStateOf(false) }
     var processingConnection by remember { mutableStateOf(false) }
     var processingFriend by remember { mutableStateOf(false) }
 
@@ -43,6 +46,7 @@ fun LinkoRealtimeOverlay() {
             when (event) {
                 is LinkoRealtimeEvent.IncomingConnectionRequest -> {
                     connectionSessionId = event.sessionId
+                    requesterPeerName = event.peerName
                     statusText = null
                     processingConnection = false
                 }
@@ -53,29 +57,38 @@ fun LinkoRealtimeOverlay() {
                         processingConnection = false
                     } else if (event.state == "approved" || event.state == "connected") {
                         connectionSessionId = null
+                        requesterPeerName = null
                         processingConnection = false
                     } else if (event.state == "denied" || event.state == "revoked" || event.state == "expired") {
                         connectionSessionId = null
+                        requesterPeerName = null
                         processingConnection = false
                     }
                 }
                 is LinkoRealtimeEvent.FriendRequestReceived -> {
                     friendRequestId = event.requestId
+                    friendSenderName = event.senderName
                     statusText = null
+                    isCelebration = false
                     processingFriend = false
                 }
                 is LinkoRealtimeEvent.FriendRequestAccepted -> {
                     friendRequestId = null
+                    friendSenderName = null
                     processingFriend = false
-                    statusText = "ACCEPTED • YOU ARE NOW FRIENDS"
+                    isCelebration = true
+                    statusText = "🎉 FRIEND REQUEST ACCEPTED • YOU CAN NOW CONNECT & SHARE"
                 }
                 is LinkoRealtimeEvent.FriendRequestDeclined -> {
                     friendRequestId = null
+                    friendSenderName = null
                     processingFriend = false
+                    isCelebration = false
                     statusText = "DECLINED • REQUEST NOT ACCEPTED"
                 }
                 is LinkoRealtimeEvent.FriendRemoved -> {
                     friendRequestId = null
+                    friendSenderName = null
                     processingFriend = false
                     statusText = "FRIEND REMOVED"
                 }
@@ -85,16 +98,38 @@ fun LinkoRealtimeOverlay() {
     }
 
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        // Status & Celebration Notification Banner
+        if (statusText != null) {
+            GlassCard(accentColor = if (isCelebration) Green else Blue, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isCelebration) BlinkingDot(Green, 8.dp)
+                    else Box(Modifier.size(6.dp).clip(CircleShape).background(Blue))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        statusText ?: "",
+                        color = if (isCelebration) Green else TextPrimary,
+                        fontSize = 11.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { statusText = null; isCelebration = false }, contentPadding = PaddingValues(0.dp)) {
+                        Text("✕", color = TextMuted, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                    }
+                }
+            }
+        }
+
         // 1. Prominent Incoming Connection (Session) Request Banner with Anti-Double-Tap Loading
         if (connectionSessionId != null) {
-            LinkoCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            GlassCard(accentColor = Yellow, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Green, strokeWidth = 2.dp)
+                    BlinkingDot(Yellow, 8.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("⚡ INCOMING CONNECTION REQUEST", color = Green, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text("⚡ INCOMING CONNECTION REQUEST", color = Yellow, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 }
                 SpacerSmall()
-                Text("A friend is requesting to connect and share your internet.", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                Text("${requesterPeerName ?: "A verified friend"} wants to connect and use your shared internet.", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
                 SpacerSmall()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PrimaryButton(
@@ -103,11 +138,13 @@ fun LinkoRealtimeOverlay() {
                             if (!processingConnection) {
                                 processingConnection = true
                                 scope.launch {
-                                    LinkoEngineBridge.approvePendingProviderRequest { state ->
+                                    LinkoEngineBridge.approvePendingProviderRequest(peerName = requesterPeerName) { state ->
                                         if (state == "approved") {
                                             LinkoEngineBridge.startApprovedProviderSession()
                                             connectionSessionId = null
+                                            requesterPeerName = null
                                             processingConnection = false
+                                            isCelebration = true
                                             statusText = "SHARING ACTIVE • FRIEND CONNECTED"
                                         } else if (state.contains("failed") || state.contains("error")) {
                                             processingConnection = false
@@ -130,6 +167,7 @@ fun LinkoRealtimeOverlay() {
                                 scope.launch {
                                     LinkoEngineBridge.denyPendingProviderRequest {
                                         connectionSessionId = null
+                                        requesterPeerName = null
                                         processingConnection = false
                                         statusText = "DECLINED • CONNECTION DISMISSED"
                                     }
@@ -145,12 +183,17 @@ fun LinkoRealtimeOverlay() {
             }
         }
 
-        // 2. Incoming Friend Invitation Banner with Anti-Double-Tap Loading
+        // 2. Incoming Friend Invitation Banner with Anti-Double-Tap Loading (Xender Style)
         if (friendRequestId != null) {
-            LinkoCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text("NEW FRIEND REQUEST", color = Yellow, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                SpacerSmall()
-                Text("A LINKO user wants to add you to their network.", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono)
+            GlassCard(accentColor = Green, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Avatar((friendSenderName ?: "U").take(1).uppercase(), Green, 36.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("⚡ NEW FRIEND INVITATION", color = Green, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        Text(friendSenderName ?: "A LINKO User wants to add you", color = TextPrimary, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Medium)
+                    }
+                }
                 SpacerSmall()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PrimaryButton(
@@ -163,8 +206,10 @@ fun LinkoRealtimeOverlay() {
                                     runCatching { LinkoFriendsApiHolder.api.respond(id, true) }
                                         .onSuccess {
                                             friendRequestId = null
+                                            friendSenderName = null
                                             processingFriend = false
-                                            statusText = "ACCEPTED • YOU ARE NOW FRIENDS"
+                                            isCelebration = true
+                                            statusText = "🎉 ACCEPTED • YOU ARE NOW FRIENDS"
                                         }
                                         .onFailure {
                                             processingFriend = false
@@ -188,8 +233,9 @@ fun LinkoRealtimeOverlay() {
                                     runCatching { LinkoFriendsApiHolder.api.respond(id, false) }
                                         .onSuccess {
                                             friendRequestId = null
+                                            friendSenderName = null
                                             processingFriend = false
-                                            statusText = "DECLINED • REQUEST NOT ACCEPTED"
+                                            statusText = "DECLINED • REQUEST DISMISSED"
                                         }
                                         .onFailure {
                                             processingFriend = false
@@ -204,23 +250,6 @@ fun LinkoRealtimeOverlay() {
                         modifier = Modifier.weight(1f)
                     )
                 }
-            }
-        }
-
-        // 3. Temporary Status Feedback Toast
-        statusText?.let { status ->
-            LaunchedEffect(status) {
-                kotlinx.coroutines.delay(3500)
-                if (statusText == status) statusText = null
-            }
-            LinkoCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text(
-                    status,
-                    color = if (status.startsWith("ACCEPTED") || status.startsWith("SHARING") || status.startsWith("CONNECTED")) Green else if (status.startsWith("DECLINED")) Red else Yellow,
-                    fontSize = 11.sp,
-                    fontFamily = JetBrainsMono,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }

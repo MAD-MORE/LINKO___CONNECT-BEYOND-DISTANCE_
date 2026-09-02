@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,7 +31,53 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@Composable fun WelcomeScreen(onCreateAccount: () -> Unit, onSignIn: () -> Unit) { Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spacer(Modifier.weight(1f)); Text("LINKO", color = Blue, fontSize = 28.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.ExtraBold); Spacer(Modifier.height(4.dp)); Text("SECURE CONNECTION ENGINE", color = TextMuted, fontSize = 11.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(40.dp)); Ring(Blue, 200.dp, idle = true, label = "READY", onClick = onCreateAccount); Spacer(Modifier.height(40.dp)); Text("Welcome", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text("Secure connection beyond distance", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(14.dp)); Text("LINKO ENGINE READY", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono); Spacer(Modifier.weight(1f)); PrimaryButton("CREATE ACCOUNT", onCreateAccount); Spacer(Modifier.height(4.dp)); GhostButton("Already registered? SIGN IN", onSignIn); Spacer(Modifier.height(8.dp)) } }
+@Composable fun WelcomeScreen(onCreateAccount: () -> Unit, onSignIn: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Accent.copy(alpha = 0.10f), GradientMid),
+                    radius = 1100f
+                )
+            )
+    ) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.weight(0.8f))
+
+            // Wordmark
+            Text("LINKO", color = Blue, fontSize = 32.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
+            Spacer(Modifier.height(4.dp))
+            Text("CONNECT BEYOND DISTANCE", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.20.sp)
+
+            Spacer(Modifier.height(36.dp))
+
+            // Hero Ring in GlassCard
+            GlassCard(accentColor = Accent) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Spacer(Modifier.height(10.dp))
+                    Ring(Blue, 190.dp, idle = true, label = "READY", onClick = onCreateAccount)
+                    Spacer(Modifier.height(16.dp))
+                    Text("Secure connection engine", color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Share internet securely with trusted friends", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            PrimaryButton("CREATE ACCOUNT", onCreateAccount)
+            Spacer(Modifier.height(4.dp))
+            GhostButton("Already registered? SIGN IN", onSignIn)
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
 
 @Composable fun CreateAccountScreen(onContinue: () -> Unit) { var identity by remember { mutableStateOf("") }; var displayName by remember { mutableStateOf("") }; Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) { Spacer(Modifier.height(8.dp)); Text("Create Account", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(4.dp)); Text("Create your Linko identity", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.height(24.dp)); LinkoInput("IDENTITY", identity, { identity = it }, "Phone or email", "Used for account verification"); Spacer(Modifier.height(12.dp)); LinkoInput("DISPLAY NAME", displayName, { displayName = it }, "Your display name", "Visible to trusted friends"); Spacer(Modifier.weight(1f)); PrimaryButton("CONTINUE", onContinue); Spacer(Modifier.height(24.dp)) } }
 

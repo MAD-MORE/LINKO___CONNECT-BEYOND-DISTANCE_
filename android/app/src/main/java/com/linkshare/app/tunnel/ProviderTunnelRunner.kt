@@ -35,6 +35,8 @@ class ProviderTunnelRunner(
 
     private var receiveJob: Job? = null
     private var drainJob: Job? = null
+    private val bytesIn = java.util.concurrent.atomic.AtomicLong(0)
+    private val bytesOut = java.util.concurrent.atomic.AtomicLong(0)
 
     fun start() {
         if (receiveJob != null) return
@@ -46,9 +48,13 @@ class ProviderTunnelRunner(
                     val rx = tunnel.receive(500) ?: continue
                     when (rx.type) {
                         EncryptedDatagramTunnel.PacketType.DATA -> {
+                            val inCount = bytesIn.addAndGet(rx.payload.size.toLong())
+                            com.linkshare.app.network.LinkoEngineBridge.updateTrafficStats(inCount, bytesOut.get())
                             val responses = adapter.forward(rx.payload)
                             for (resp in responses) {
                                 tunnel.send(resp, EncryptedDatagramTunnel.PacketType.DATA)
+                                val outCount = bytesOut.addAndGet(resp.size.toLong())
+                                com.linkshare.app.network.LinkoEngineBridge.updateTrafficStats(bytesIn.get(), outCount)
                             }
                         }
                         EncryptedDatagramTunnel.PacketType.PING -> {
@@ -79,6 +85,8 @@ class ProviderTunnelRunner(
                     val pending = adapter.drainPending(16)
                     for (packet in pending) {
                         tunnel.send(packet, EncryptedDatagramTunnel.PacketType.DATA)
+                        val outCount = bytesOut.addAndGet(packet.size.toLong())
+                        com.linkshare.app.network.LinkoEngineBridge.updateTrafficStats(bytesIn.get(), outCount)
                     }
                     if (pending.isEmpty()) {
                         delay(20)

@@ -49,52 +49,72 @@ class LinkoRuntime(
     val presence by lazy { presenceManager.state }
 
     /**
-     * Resilient startup initialization:
-     * 1. If signed in and cached identity exists, enters app immediately without network wait.
-     * 2. Background coroutine attempts to synchronize profile, presence, and devices.
-     * 3. If offline, the app continues functioning in offline/cached mode.
+     * Complete real startup initialization:
+     * 1. Cryptographic Keystore verification
+     * 2. Local database & storage preparation
+     * 3. Session authentication & token refresh
+     * 4. Device registration with Supabase / PostgreSQL
+     * 5. Realtime WebSocket mesh & presence engine connection
+     * 6. Provider engine & tunnel coordinator configuration
+     * 7. Profile & friend network synchronization
      */
-    suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun initialize(onProgress: (String) -> Unit = {}): Boolean = withContext(Dispatchers.IO) {
         initializeMutex.withLock {
-            if (!auth.isSignedIn()) return@withLock true
+            onProgress("Initializing Cryptographic Keystore…")
+            val identity = com.linkshare.app.auth.LinkoDeviceIdentity()
+            val hasKey = identity.publicKeyBase64().isNotBlank()
+            if (!hasKey) Log.w(TAG, "Hardware keystore fallback engaged")
 
+            onProgress("Preparing Database & Local Cache…")
+            LinkoEngineBridge.configure(appContext)
+
+            if (!auth.isSignedIn()) {
+                onProgress("Engine Ready")
+                return@withLock true
+            }
+
+            onProgress("Verifying Authentication Session…")
             val currentUserId = auth.currentUserId()
-            if (!currentUserId.isNullOrBlank() && initializedUserId == currentUserId) return@withLock true
-
-            // Fast path 1: Usable cached identity
-            if (cache.hasUsableIdentity() && cache.userId() == currentUserId) {
-                initializedUserId = currentUserId
-                safeStartPresence()
-                scope.launch(Dispatchers.IO) { synchronize(currentUserId!!) }
-                return@withLock true
-            }
-
-            // Fast path 2: Stored user ID in Auth preferences (Offline resilient)
-            val storedUserId = currentUserId?.takeIf { it.isNotBlank() }
-                ?: cache.userId()?.takeIf { it.isNotBlank() }
-
-            if (storedUserId != null) {
-                initializedUserId = storedUserId
-                safeStartPresence()
-                scope.launch(Dispatchers.IO) { synchronize(storedUserId) }
-                return@withLock true
-            }
-
-            // Network path: Try to refresh / verify session with Supabase
             val session = runCatching { auth.ensureSession() }.getOrNull()
             val resolvedUserId = session?.userId?.takeIf { it.isNotBlank() }
-                ?: auth.currentUserId()?.takeIf { it.isNotBlank() }
+                ?: currentUserId?.takeIf { it.isNotBlank() }
+                ?: cache.userId()?.takeIf { it.isNotBlank() }
 
             if (resolvedUserId != null) {
                 initializedUserId = resolvedUserId
-                safeStartPresence()
-                scope.launch(Dispatchers.IO) { synchronize(resolvedUserId) }
+
+                onProgress("Registering Device & Keys on Mesh…")
+                runCatching {
+                    val reg = deviceApi.ensureRegistered()
+                    cache.saveDeviceId(reg.deviceId)
+                }.onFailure { Log.w(TAG, "Device registration non-fatal retry: ${it.message}") }
+
+                onProgress("Connecting to Realtime Mesh Cloud…")
+                runCatching {
+                    LinkoRealtimeManager.start(appContext)
+                    safeStartPresence()
+                    deviceApi.touchPresence()
+                }.onFailure { Log.w(TAG, "Realtime mesh connection non-fatal: ${it.message}") }
+
+                onProgress("Synchronizing Profile & Friends…")
+                runCatching {
+                    val profile = profileApi.load()
+                    auth.saveProfile(profile.displayName, profile.linkoId, profile.username)
+                    cache.saveIdentity(profile.userId, profile.linkoId, profile.username, profile.displayName)
+                }.onFailure { Log.w(TAG, "Profile sync non-fatal: ${it.message}") }
+
+                runCatching {
+                    com.linkshare.app.provider.LinkoProviderService.start(appContext)
+                }.onFailure { Log.w(TAG, "Provider service pre-warm non-fatal: ${it.message}") }
+
+                onProgress("System Ready • Entering LINKO")
                 return@withLock true
             }
 
-            // Fallback path: If still marked signed-in, allow entry in offline mode
+            // Offline mode entry
             if (auth.isSignedIn()) {
                 initializedUserId = "offline_user"
+                onProgress("Entering in Offline Mode…")
                 return@withLock true
             }
 

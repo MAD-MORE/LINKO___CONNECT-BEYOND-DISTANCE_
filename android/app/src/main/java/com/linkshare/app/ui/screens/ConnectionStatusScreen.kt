@@ -37,20 +37,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
+import androidx.compose.ui.graphics.Brush
+import com.linkshare.app.ui.components.GlassCard
 import com.linkshare.app.ui.components.InfoRow
 import com.linkshare.app.ui.components.LinkoCard
 import com.linkshare.app.ui.components.PrimaryButton
 import com.linkshare.app.ui.components.Ring
-import com.linkshare.app.ui.theme.BG
-import com.linkshare.app.ui.theme.Blue
-import com.linkshare.app.ui.theme.Green
-import com.linkshare.app.ui.theme.JetBrainsMono
-import com.linkshare.app.ui.theme.Red
-import com.linkshare.app.ui.theme.Surface
-import com.linkshare.app.ui.theme.TextMuted
-import com.linkshare.app.ui.theme.TextPrimary
-import com.linkshare.app.ui.theme.TextSub
-import com.linkshare.app.ui.theme.Yellow
+import com.linkshare.app.ui.theme.*
 
 @Composable
 fun ConnectionStatusScreen(
@@ -108,8 +101,13 @@ fun ConnectionStatusScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BG)
-            .padding(20.dp),
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(color.copy(alpha = 0.07f), GradientMid),
+                    radius = 900f
+                )
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween,
     ) {

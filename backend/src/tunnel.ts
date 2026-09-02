@@ -1,6 +1,5 @@
 import dgram from "node:dgram";
 import { randomBytes } from "node:crypto";
-import { decryptPacket, encryptPacket } from "./crypto.js";
 
 export type TunnelRole = "receiver" | "provider";
 export interface TunnelPeer { address: string; port: number }
@@ -15,8 +14,14 @@ export function createTunnelKey(): Buffer {
   return randomBytes(32);
 }
 
-/** Encrypted two-peer relay. It terminates LINKO's authenticated frame only to validate it,
- * then re-encrypts the plaintext with the same session key before delivering to the other peer. */
+const LKO2_MAGIC = Buffer.from([0x4c, 0x4b, 0x4f, 0x32]); // "LKO2"
+const LKO2_HEADER_LEN = 95;
+
+/**
+ * Zero-Knowledge Encrypted UDP Relay.
+ * Inspects only the unencrypted routing header (Magic + SessionId + Role)
+ * and forwards the authenticated ciphertext directly between paired peers.
+ */
 export class UdpTunnelEndpoint {
   private readonly socket = dgram.createSocket("udp4");
   private readonly sessions = new Map<string, TunnelSession>();
@@ -34,32 +39,44 @@ export class UdpTunnelEndpoint {
 
   start(): void {
     this.socket.on("message", (wire, remote) => {
-      const sessionEnd = wire.indexOf(0);
-      if (sessionEnd <= 0 || sessionEnd > 128) return;
-      const roleCode = wire[sessionEnd + 1];
-      const senderRole: TunnelRole = roleCode === 0 ? "receiver" : roleCode === 1 ? "provider" : (() => { throw new Error("invalid_tunnel_role"); })();
-      const sessionId = wire.subarray(0, sessionEnd).toString("utf8");
-      const session = this.sessions.get(sessionId);
-      if (!session) return;
+      // 1. Check for LKO2 Wire Framing (95-byte header)
+      if (wire.length >= LKO2_HEADER_LEN && wire.subarray(0, 4).equals(LKO2_MAGIC)) {
+        const sessionId = wire.subarray(5, 41).toString("ascii");
+        const senderRoleByte = wire[73]; // 1 = PROVIDER, 2 = RECEIVER
+        const senderRole: TunnelRole = senderRoleByte === 2 ? "receiver" : senderRoleByte === 1 ? "provider" : "receiver";
 
-      try {
-        const plaintext = decryptPacket(session.key, wire.subarray(sessionEnd + 2));
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+
         const peer = { address: remote.address, port: remote.port };
         if (senderRole === "receiver") session.receiver = peer;
         else session.provider = peer;
 
-        const targetRole: TunnelRole = senderRole === "receiver" ? "provider" : "receiver";
-        const target = targetRole === "receiver" ? session.receiver : session.provider;
-        if (!target || (senderRole === "receiver" ? !session.provider : !session.receiver)) return;
+        const target = senderRole === "receiver" ? session.provider : session.receiver;
+        if (!target) return;
 
-        const frame = encryptPacket(session.key, plaintext);
-        const header = Buffer.concat([
-          Buffer.from(session.id), Buffer.from([0]), Buffer.from([targetRole === "receiver" ? 0 : 1])
-        ]);
-        this.socket.send(Buffer.concat([header, frame]), target.port, target.address);
-      } catch {
-        // Drop malformed, expired, or unauthenticated datagrams.
+        // Zero-knowledge forwarding: pass through exact authenticated wire datagram
+        this.socket.send(wire, target.port, target.address);
+        return;
       }
+
+      // 2. Fallback: Legacy framing with null-delimiter
+      const sessionEnd = wire.indexOf(0);
+      if (sessionEnd <= 0 || sessionEnd > 128) return;
+      const roleCode = wire[sessionEnd + 1];
+      const senderRole: TunnelRole = roleCode === 0 ? "receiver" : roleCode === 1 ? "provider" : "receiver";
+      const sessionId = wire.subarray(0, sessionEnd).toString("utf8");
+      const session = this.sessions.get(sessionId);
+      if (!session) return;
+
+      const peer = { address: remote.address, port: remote.port };
+      if (senderRole === "receiver") session.receiver = peer;
+      else session.provider = peer;
+
+      const target = senderRole === "receiver" ? session.provider : session.receiver;
+      if (!target) return;
+
+      this.socket.send(wire, target.port, target.address);
     });
     this.socket.bind(this.bindPort);
   }

@@ -9,5 +9,6 @@
         "linkshare",
         "pkey",
         "privkey"
-    ]
+    ],
+    "java.configuration.updateBuildConfiguration": "automatic"
 }

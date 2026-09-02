@@ -84,8 +84,13 @@ def audit_android_routes_and_manifest():
     print("=" * 65)
     
     # Check AndroidManifest.xml
-    manifest_path = "android/app/src/main/AndroidManifest.xml"
-    if os.path.exists(manifest_path):
+    manifest_paths = [
+        "app/src/main/AndroidManifest.xml",
+        "android/app/src/main/AndroidManifest.xml",
+        os.path.join(os.path.dirname(__file__), "../app/src/main/AndroidManifest.xml")
+    ]
+    manifest_path = next((p for p in manifest_paths if os.path.exists(p)), None)
+    if manifest_path:
         with open(manifest_path, "r", encoding="utf-8") as f:
             content = f.read()
         assert "android.permission.INTERNET" in content, "Missing INTERNET permission"
@@ -98,8 +103,13 @@ def audit_android_routes_and_manifest():
         return False
 
     # Check LinkoApp.kt routes
-    app_path = "android/app/src/main/java/com/linkshare/app/ui/screens/LinkoApp.kt"
-    if os.path.exists(app_path):
+    app_paths = [
+        "app/src/main/java/com/linkshare/app/ui/screens/LinkoApp.kt",
+        "android/app/src/main/java/com/linkshare/app/ui/screens/LinkoApp.kt",
+        os.path.join(os.path.dirname(__file__), "../app/src/main/java/com/linkshare/app/ui/screens/LinkoApp.kt")
+    ]
+    app_path = next((p for p in app_paths if os.path.exists(p)), None)
+    if app_path:
         with open(app_path, "r", encoding="utf-8") as f:
             app_content = f.read()
         assert "NavHost" in app_content, "Missing NavHost"

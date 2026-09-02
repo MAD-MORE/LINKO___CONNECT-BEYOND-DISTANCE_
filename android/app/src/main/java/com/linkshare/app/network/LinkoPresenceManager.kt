@@ -74,13 +74,15 @@ class LinkoPresenceManager(
         publish(LinkoPresencePhase.Offline, "LINKO is offline")
     }
 
-    private fun hasInternet(): Boolean = runCatching {
-        val cm = connectivity ?: return@runCatching false
-        val network = cm.activeNetwork ?: return@runCatching false
-        val capabilities = cm.getNetworkCapabilities(network) ?: return@runCatching false
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }.getOrDefault(false)
+    private fun hasInternet(): Boolean {
+        return runCatching {
+            val cm = connectivity ?: return@runCatching false
+            val network = cm.activeNetwork ?: return@runCatching false
+            val capabilities = cm.getNetworkCapabilities(network) ?: return@runCatching false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }.getOrDefault(false)
+    }
 
     private fun publish(phase: LinkoPresencePhase, detail: String) {
         _state.update { it.copy(phase = phase, detail = detail) }

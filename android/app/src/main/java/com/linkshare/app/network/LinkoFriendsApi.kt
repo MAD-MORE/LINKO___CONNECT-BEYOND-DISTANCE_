@@ -36,26 +36,28 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
-    suspend fun search(query: String): List<FriendSearchResult> = withContext(Dispatchers.IO) {
-        val clean = query.trim()
-        if (clean.length < 2) return@withContext emptyList()
+    suspend fun search(query: String): List<FriendSearchResult> {
+        return withContext(Dispatchers.IO) {
+            val clean = query.trim()
+            if (clean.length < 2) return@withContext emptyList()
 
-        runCatching {
-            val response = callRpcRaw("linko_search_friends", JSONObject().put("p_query", clean))
-            val array = if (response.startsWith("[")) JSONArray(response) else JSONArray()
-            buildList {
-                for (i in 0 until array.length()) {
-                    val item = array.optJSONObject(i) ?: continue
-                    add(parseFriend(item))
+            runCatching {
+                val response = callRpcRaw("linko_search_friends", JSONObject().put("p_query", clean))
+                val array = if (response.startsWith("[")) JSONArray(response) else JSONArray()
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val item = array.optJSONObject(i) ?: continue
+                        add(parseFriend(item))
+                    }
                 }
-            }
-        }.getOrElse {
-            val json = get("/search?q=" + java.net.URLEncoder.encode(clean, "UTF-8"))
-            val array = json.optJSONArray("results") ?: JSONArray()
-            buildList {
-                for (i in 0 until array.length()) {
-                    val item = array.optJSONObject(i) ?: continue
-                    add(parseFriend(item))
+            }.getOrElse {
+                val json = get("/search?q=" + java.net.URLEncoder.encode(clean, "UTF-8"))
+                val array = json.optJSONArray("results") ?: JSONArray()
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val item = array.optJSONObject(i) ?: continue
+                        add(parseFriend(item))
+                    }
                 }
             }
         }
@@ -111,24 +113,24 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
         }
     }
 
-    suspend fun removeFriend(userId: String): Boolean = withContext(Dispatchers.IO) {
-        val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: return@withContext false
-        val clean = userId.trim()
-        val url = "${BuildConfig.LINKO_SUPABASE_URL}/rest/v1/friend_requests?or=(and(sender_id.eq.$clean),and(receiver_id.eq.$clean))"
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "DELETE"
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Accept", "application/json")
-        }
-        try {
-            connection.responseCode in 200..299
-        } catch (_: Exception) {
-            false
-        } finally {
-            connection.disconnect()
+    suspend fun removeFriend(userId: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            val token = accessTokenProvider()?.takeIf { it.isNotBlank() } ?: return@withContext false
+            val clean = userId.trim()
+            val url = "${BuildConfig.LINKO_SUPABASE_URL}/rest/v1/friend_requests?or=(and(sender_id.eq.$clean),and(receiver_id.eq.$clean))"
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "DELETE"
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Accept", "application/json")
+            }
+            try {
+                connection.responseCode in 200..299
+            } finally {
+                connection.disconnect()
+            }
         }
     }
 

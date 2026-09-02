@@ -171,7 +171,7 @@ fun RealFriendProfileScreen(onRequestSent: () -> Unit, onConnected: () -> Unit) 
                         }
                         busy = true
                         message = null
-                        LinkoEngineBridge.connectToFriend(selected.userId)
+                        LinkoEngineBridge.connectToFriend(selected.userId, selected.displayName, selected.linkoId)
                     }
                     "none" -> {
                         busy = true

@@ -66,5 +66,6 @@ node_modules/
 backend/node_modules/
 relay/node_modules/
 
-# Relay build output
+# Relay and Backend build output
 relay/dist/
+backend/dist/

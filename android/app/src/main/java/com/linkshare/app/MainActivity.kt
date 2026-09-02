@@ -69,6 +69,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("EXTRA_REQUEST_ID")?.let { requestId ->
+            Log.i(TAG, "Opened via notification with request ID: $requestId")
+        }
+    }
+
     override fun onPause() {
         runCatching { LinkoRealtimeManager.setForeground(false) }
         super.onPause()

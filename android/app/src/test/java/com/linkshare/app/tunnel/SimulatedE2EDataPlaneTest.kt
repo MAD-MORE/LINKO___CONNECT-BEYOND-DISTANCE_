@@ -117,10 +117,72 @@ class SimulatedE2EDataPlaneTest {
         }
         assertTrue("Client must receive Pong response from Provider", receivedPong)
 
+        // 6. Test DNS Query Forwarding & Local Synthesis Fallback
+        val dnsQueryPacket = buildIpv4UdpDnsQuery(
+            srcIp = byteArrayOf(10, 48, 0, 2),
+            dstIp = byteArrayOf(1, 1, 1, 1),
+            srcPort = 54321,
+            domain = "google.com"
+        )
+        clientTunnel.send(dnsQueryPacket, EncryptedDatagramTunnel.PacketType.DATA)
+
+        var receivedDnsReply: ByteArray? = null
+        for (i in 0 until 30) {
+            val rx = clientTunnel.receive(300)
+            if (rx != null && rx.type == EncryptedDatagramTunnel.PacketType.DATA) {
+                receivedDnsReply = rx.payload
+                break
+            }
+        }
+        assertNotNull("Client should receive DNS response from Provider", receivedDnsReply)
+        val dnsReply = receivedDnsReply!!
+        assertEquals("DNS reply protocol must be UDP (17)", 17, dnsReply[9].toInt() and 0xff)
+
         // Teardown
         clientTunnel.close()
         providerRunner.stop()
         testScope.cancel()
+    }
+
+    private fun buildIpv4UdpDnsQuery(srcIp: ByteArray, dstIp: ByteArray, srcPort: Int, domain: String): ByteArray {
+        val outDns = java.io.ByteArrayOutputStream()
+        outDns.write(0x12); outDns.write(0x34) // Transaction ID
+        outDns.write(0x01); outDns.write(0x00) // Flags: Standard query
+        outDns.write(0x00); outDns.write(0x01) // QDCOUNT = 1
+        outDns.write(0x00); outDns.write(0x00) // ANCOUNT = 0
+        outDns.write(0x00); outDns.write(0x00) // NSCOUNT = 0
+        outDns.write(0x00); outDns.write(0x00) // ARCOUNT = 0
+
+        // Domain labels
+        for (part in domain.split(".")) {
+            val bytes = part.toByteArray(Charsets.US_ASCII)
+            outDns.write(bytes.size)
+            outDns.write(bytes)
+        }
+        outDns.write(0x00) // Root label
+        outDns.write(0x00); outDns.write(0x01) // QTYPE = A (1)
+        outDns.write(0x00); outDns.write(0x01) // QCLASS = IN (1)
+        val dnsPayload = outDns.toByteArray()
+
+        val udpLen = 8 + dnsPayload.size
+        val totalLength = 20 + udpLen
+        val packet = ByteArray(totalLength)
+        packet[0] = 0x45
+        packet[2] = (totalLength ushr 8).toByte(); packet[3] = totalLength.toByte()
+        packet[8] = 64; packet[9] = 17 // UDP
+        System.arraycopy(srcIp, 0, packet, 12, 4)
+        System.arraycopy(dstIp, 0, packet, 16, 4)
+
+        // UDP Header
+        packet[20] = (srcPort ushr 8).toByte(); packet[21] = srcPort.toByte()
+        packet[22] = 0; packet[23] = 53 // Dst Port 53
+        packet[24] = (udpLen ushr 8).toByte(); packet[25] = udpLen.toByte()
+        System.arraycopy(dnsPayload, 0, packet, 28, dnsPayload.size)
+
+        val ipChecksum = checksum(packet, 0, 20)
+        packet[10] = (ipChecksum ushr 8).toByte()
+        packet[11] = ipChecksum.toByte()
+        return packet
     }
 
     private fun buildIpv4IcmpEchoRequest(srcIp: ByteArray, dstIp: ByteArray, identifier: Int, seq: Int, payload: ByteArray): ByteArray {

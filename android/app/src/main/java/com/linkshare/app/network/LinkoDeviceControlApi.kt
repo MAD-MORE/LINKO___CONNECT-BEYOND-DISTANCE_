@@ -23,32 +23,35 @@ class LinkoDeviceControlApi(
     private val identity: LinkoDeviceIdentity = LinkoDeviceIdentity(),
     private val baseUrl: String = BuildConfig.LINKO_SUPABASE_URL,
 ) {
-    suspend fun ensureRegistered(): DeviceRegistration = withContext(Dispatchers.IO) {
-        val existingId = auth.currentDeviceId()
-        val access = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-        if (!existingId.isNullOrBlank() && access != null) {
-            return@withContext DeviceRegistration(existingId, access, auth.currentUserId())
-        }
-        val token = access ?: run {
-            val refreshed = auth.refreshSession()
-            if (!refreshed.success) throw LinkoNetworkException("device_auth_required")
-            auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-                ?: throw LinkoNetworkException("device_auth_required")
-        }
-        val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
-            ?: auth.refreshAccountIdentity().userId
-            ?: throw LinkoNetworkException("auth_user_missing")
+    suspend fun ensureRegistered(): DeviceRegistration {
+        return withContext(Dispatchers.IO) {
+            val existingId = auth.currentDeviceId()
+            val access = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+            if (!existingId.isNullOrBlank() && access != null) {
+                return@withContext DeviceRegistration(existingId, access, auth.currentUserId())
+            }
+            val token = access ?: run {
+                val refreshed = auth.refreshSession()
+                if (!refreshed.success) throw LinkoNetworkException("device_auth_required")
+                auth.currentAccessToken()?.takeIf { it.isNotBlank() }
+                    ?: throw LinkoNetworkException("device_auth_required")
+            }
+            val userId = auth.currentUserId()?.takeIf { it.isNotBlank() }
+                ?: auth.refreshAccountIdentity().userId
+                ?: throw LinkoNetworkException("auth_user_missing")
 
-        val body = JSONObject()
-            .put("p_public_key", identity.publicKeyBase64())
-            .put("p_name", "LINKO ${Build.MANUFACTURER} ${Build.MODEL}".trim())
-            .put("p_roles", JSONArray().put("provider").put("receiver"))
+            val body = JSONObject()
+                .put("p_public_key", identity.publicKeyBase64())
+                .put("p_name", "LINKO ${Build.MANUFACTURER} ${Build.MODEL}".trim())
+                .put("p_roles", JSONArray().put("provider").put("receiver"))
 
-        val response = rpc("linko_register_device", body, token)
-        val device = response.optJSONObject("device") ?: throw LinkoNetworkException("device_registration_invalid")
-        val deviceId = device.optString("id").takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_id_missing")
-        auth.saveLinkoSession(deviceId, token, userId)
-        DeviceRegistration(deviceId, token, userId)
+            val response = rpc("linko_register_device", body, token)
+            val deviceId = response.optString("id").takeIf { it.isNotBlank() }
+                ?: response.optString("device_id").takeIf { it.isNotBlank() }
+                ?: throw LinkoNetworkException("invalid_device_registration_payload")
+            auth.saveDeviceId(deviceId)
+            DeviceRegistration(deviceId, token, userId)
+        }
     }
 
     suspend fun touchPresence(): PresenceResult = withContext(Dispatchers.IO) {

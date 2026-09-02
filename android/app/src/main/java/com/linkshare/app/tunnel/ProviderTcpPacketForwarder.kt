@@ -10,12 +10,31 @@ import java.util.concurrent.Executors
 /** Provider-side IPv4 TCP proxy with bounded per-flow state. */
 class ProviderTcpPacketForwarder : Closeable {
     private data class FlowKey(val src: String, val srcPort: Int, val dst: String, val dstPort: Int)
-    private data class Flow(val key: FlowKey, val socket: Socket, var serverSeq: Long, var clientSeq: Long)
+    private data class Flow(
+        val key: FlowKey,
+        val socket: Socket,
+        var serverSeq: Long,
+        var clientSeq: Long,
+        var lastActiveAt: Long = System.currentTimeMillis()
+    )
 
     private val random = SecureRandom()
     private val flows = ConcurrentHashMap<FlowKey, Flow>()
     private val executor = Executors.newCachedThreadPool()
+    private val cleaner = Executors.newSingleThreadScheduledExecutor()
     private val responseQueue = ArrayDeque<ByteArray>()
+
+    init {
+        // Periodically sweep and close idle or broken flows (every 30 seconds)
+        cleaner.scheduleWithFixedDelay({
+            val now = System.currentTimeMillis()
+            flows.forEach { (key, flow) ->
+                if (now - flow.lastActiveAt > IDLE_FLOW_TIMEOUT_MS || flow.socket.isClosed) {
+                    closeFlow(key)
+                }
+            }
+        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS)
+    }
 
     fun forward(packet: ByteArray, timeoutMs: Int = 5_000): List<ByteArray> {
         val tcp = TcpCodec.parse(packet) ?: return emptyList()
@@ -31,6 +50,7 @@ class ProviderTcpPacketForwarder : Closeable {
             if (flows.containsKey(key)) return emptyList()
             return try {
                 val socket = Socket()
+                socket.soTimeout = 15_000
                 socket.connect(InetSocketAddress(tcp.dstHost, tcp.dstPort), timeoutMs)
                 val flow = Flow(key, socket, random.nextInt().toLong() and 0xffffffffL, (tcp.seq + 1) and 0xffffffffL)
                 flows[key] = flow
@@ -42,6 +62,8 @@ class ProviderTcpPacketForwarder : Closeable {
         }
 
         val flow = flows[key] ?: return emptyList()
+        flow.lastActiveAt = System.currentTimeMillis()
+
         if (tcp.fin) {
             closeFlow(key)
             return listOf(TcpCodec.segment(tcp.dstHost, tcp.dstPort, tcp.srcHost, tcp.srcPort, flow.serverSeq, (tcp.seq + 1) and 0xffffffffL, fin = true, ackFlag = true))
@@ -67,13 +89,16 @@ class ProviderTcpPacketForwarder : Closeable {
                 val count = flow.socket.getInputStream().read(buffer)
                 if (count < 0) break
                 if (count == 0) continue
+                flow.lastActiveAt = System.currentTimeMillis()
                 synchronized(responseQueue) {
                     responseQueue.add(TcpCodec.segment(flow.key.dst, flow.key.dstPort, flow.key.src, flow.key.srcPort, flow.serverSeq, flow.clientSeq, payload = buffer.copyOf(count), push = true, ackFlag = true))
                 }
                 flow.serverSeq = (flow.serverSeq + count) and 0xffffffffL
             }
         } catch (_: Exception) {
-            // Closed flows simply disappear on the next cleanup pass.
+            // Closed flows disappear cleanly
+        } finally {
+            closeFlow(flow.key)
         }
     }
 
@@ -81,14 +106,20 @@ class ProviderTcpPacketForwarder : Closeable {
         buildList { repeat(minOf(maxPackets, responseQueue.size)) { add(responseQueue.removeFirst()) } }
     }
 
-    private fun closeFlow(key: FlowKey) { flows.remove(key)?.socket?.close() }
+    private fun closeFlow(key: FlowKey) {
+        flows.remove(key)?.let { runCatching { it.socket.close() } }
+    }
 
     override fun close() {
+        cleaner.shutdownNow()
         flows.keys.toList().forEach(::closeFlow)
         executor.shutdownNow()
     }
 
-    companion object { private const val MAX_PAYLOAD = 16 * 1024 }
+    companion object {
+        private const val MAX_PAYLOAD = 16 * 1024
+        private const val IDLE_FLOW_TIMEOUT_MS = 60_000L
+    }
 }
 
 private data class TcpSegment(
@@ -117,21 +148,65 @@ private object TcpCodec {
         )
     }
 
-    fun segment(srcHost: String, srcPort: Int, dstHost: String, dstPort: Int, seq: Long, ackNumber: Long, syn: Boolean = false, ackFlag: Boolean = false, fin: Boolean = false, rst: Boolean = false, push: Boolean = false, payload: ByteArray = ByteArray(0)): ByteArray {
-        val total = 40 + payload.size
+    fun segment(
+        srcHost: String,
+        srcPort: Int,
+        dstHost: String,
+        dstPort: Int,
+        seq: Long,
+        ackNumber: Long,
+        syn: Boolean = false,
+        ackFlag: Boolean = false,
+        fin: Boolean = false,
+        rst: Boolean = false,
+        push: Boolean = false,
+        payload: ByteArray = ByteArray(0)
+    ): ByteArray {
+        // When SYN is sent, include MSS Option (Kind=2, Len=4, MSS=1320) to prevent carrier MTU fragmentation
+        val tcpHeaderLen = if (syn) 24 else 20
+        val total = 20 + tcpHeaderLen + payload.size
         val out = ByteArray(total)
+
+        // IPv4 Header (20 bytes)
         out[0] = 0x45
         write16(out, 2, total); out[8] = 64; out[9] = 6
         System.arraycopy(java.net.InetAddress.getByName(srcHost).address, 0, out, 12, 4)
         System.arraycopy(java.net.InetAddress.getByName(dstHost).address, 0, out, 16, 4)
+
+        // TCP Header
         write16(out, 20, srcPort); write16(out, 22, dstPort)
         write32(out, 24, seq); write32(out, 28, ackNumber)
-        write16(out, 32, (5 shl 12) or (if (fin) 1 else 0) or (if (syn) 2 else 0) or (if (rst) 4 else 0) or (if (push) 8 else 0) or (if (ackFlag) 16 else 0))
-        write16(out, 34, 65535); System.arraycopy(payload, 0, out, 40, payload.size)
+
+        val dataOffsetWords = tcpHeaderLen / 4
+        val flags = (dataOffsetWords shl 12) or
+            (if (fin) 1 else 0) or
+            (if (syn) 2 else 0) or
+            (if (rst) 4 else 0) or
+            (if (push) 8 else 0) or
+            (if (ackFlag) 16 else 0)
+        write16(out, 32, flags)
+        write16(out, 34, 65535) // Window size (64KB)
+
+        if (syn) {
+            // TCP MSS Option (Kind 2, Length 4, MSS 1320 bytes = 0x0528)
+            out[40] = 2.toByte()
+            out[41] = 4.toByte()
+            out[42] = 0x05.toByte()
+            out[43] = 0x28.toByte()
+            System.arraycopy(payload, 0, out, 44, payload.size)
+        } else {
+            System.arraycopy(payload, 0, out, 40, payload.size)
+        }
+
+        // Checksums
         write16(out, 10, checksum(out, 0, 20))
-        val pseudo = ByteArray(12 + 20 + payload.size)
-        System.arraycopy(out, 12, pseudo, 0, 8); pseudo[9] = 6; write16(pseudo, 10, 20 + payload.size); System.arraycopy(out, 20, pseudo, 12, 20 + payload.size)
+        val pseudo = ByteArray(12 + tcpHeaderLen + payload.size)
+        System.arraycopy(out, 12, pseudo, 0, 8)
+        pseudo[9] = 6
+        write16(pseudo, 10, tcpHeaderLen + payload.size)
+        System.arraycopy(out, 20, pseudo, 12, tcpHeaderLen + payload.size)
         write16(out, 36, checksum(pseudo, 0, pseudo.size))
+
         return out
     }
 

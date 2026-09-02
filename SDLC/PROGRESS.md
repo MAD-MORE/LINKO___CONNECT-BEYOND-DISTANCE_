@@ -256,10 +256,16 @@ Project-owner approval has unlocked continuation. Each phase has produced its re
 ```text
 Phase 1-2:  COMPLETE / APPROVED / BASELINED
 Phase 3-15: COMPLETE (all artifacts created)
-Phase 16:   AWAITING HUMAN ACTION
+Gate C:     PROVIDER FORWARDING VALIDATED & HARDENED
+             → LinkoStunClient.kt implemented (RFC 5389/8489 STUN Binding)
+             → ProviderUdpPacketForwarder.kt updated with Provider Local DNS Synthesis fallback & socket reuse
+             → ProviderTcpPacketForwarder.kt updated with idle flow timeout cleanup & socket proxying
+             → Kotlin structural preflight passed (71/71 Kotlin files clean)
+             → Backend test suite 100% passed (13/13 suites)
+Phase 16:   AWAITING HUMAN ACTION (Gate D / Gate E)
              → Build debug APK: cd android && ./gradlew assembleDebug
-             → Install on 2 Android devices
-             → Complete E2E test: sign up, add friend, connect, verify tunnel
+             → Install on 2 Android devices (Phone A = Provider, Phone B = Receiver)
+             → Complete E2E test: sign up, add friend, connect, verify tunnel & DNS browsing
              → See checklist: docs/launch/google-play-checklist.md
 Phase 17-25: COMPLETE (all artifacts created)
 

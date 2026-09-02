@@ -30,6 +30,7 @@ import kotlin.math.sin
 
 @Composable
 fun StartupSplashScreen(
+    statusMessage: String? = null,
     failed: Boolean = false,
     onRetry: () -> Unit = {},
     onContinueOffline: () -> Unit = {},
@@ -70,24 +71,7 @@ fun StartupSplashScreen(
         label = "waveRadius"
     )
 
-    // Animated status messages cycling
-    var stepIndex by remember { mutableStateOf(0) }
-    val stepMessages = listOf(
-        "Initializing Secure Cryptographic Keys…",
-        "Connecting to Supabase Mesh Cloud…",
-        "Synchronizing Realtime Peer Network…",
-        "Preparing Ultra-Low Latency Tunnel…",
-        "System Ready • Entering LINKO"
-    )
-
-    LaunchedEffect(failed) {
-        if (!failed) {
-            while (true) {
-                delay(600)
-                stepIndex = (stepIndex + 1) % stepMessages.size
-            }
-        }
-    }
+    val currentStatus = statusMessage ?: "Preparing database & secure connections…"
 
     Box(
         modifier = Modifier
@@ -261,15 +245,15 @@ fun StartupSplashScreen(
                     PulsatingDotsRow()
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = stepMessages[stepIndex],
-                        color = TextSub,
+                        text = currentStatus,
+                        color = TextPrimary,
                         fontSize = 12.sp,
                         fontFamily = JetBrainsMono,
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Putting everything in place…",
+                        text = "Preparing secure database & connections…",
                         color = TextMuted,
                         fontSize = 10.sp,
                         fontFamily = JetBrainsMono
