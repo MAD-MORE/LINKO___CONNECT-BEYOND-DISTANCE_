@@ -413,7 +413,7 @@ object DirectP2pNegotiator {
         CandidateType.PRFLX -> 110
     }
 
-    private fun gatherCandidates(socket: DatagramSocket, deadline: Long, generation: Int): List<IceCandidate> {
+    private suspend fun gatherCandidates(socket: DatagramSocket, deadline: Long, generation: Int): List<IceCandidate> {
         val result = mutableListOf<IceCandidate>()
         var sequence = 1L
         val interfaces = runCatching { NetworkInterface.getNetworkInterfaces().toList() }.getOrDefault(emptyList())
