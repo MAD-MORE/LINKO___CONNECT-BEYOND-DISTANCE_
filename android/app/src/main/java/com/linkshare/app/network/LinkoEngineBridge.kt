@@ -2,6 +2,7 @@ package com.linkshare.app.network
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.tunnel.TunnelCoordinator
@@ -19,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Coordinates LINKO control plane and direct-P2P data plane. */
 object LinkoEngineBridge {
+    private const val TAG = "LINKO_ENGINE"
     private const val PRESENCE_POLL_MS = 10_000L
     private const val PRESENCE_STALE_MS = 180_000L
     private var api: LinkoDeviceControlApi? = null
@@ -29,6 +31,7 @@ object LinkoEngineBridge {
     private var lastFriendUserId: String? = null
     private val presenceJobs = ConcurrentHashMap<String, Job>()
     private val presenceFlows = ConcurrentHashMap<String, MutableStateFlow<LinkoFriendPresence>>()
+    private val providerStartsInFlight = ConcurrentHashMap.newKeySet<String>()
     private val _connection = MutableStateFlow(LinkoEngineConnectionState())
     val connection: StateFlow<LinkoEngineConnectionState> = _connection.asStateFlow()
 
@@ -41,6 +44,7 @@ object LinkoEngineBridge {
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel(); connectionJob = null
         presenceJobs.values.forEach { it.cancel() }; presenceJobs.clear(); presenceFlows.clear()
+        providerStartsInFlight.clear()
         lastFriendUserId = null
         publish("idle", "Ready")
     }
@@ -182,26 +186,63 @@ object LinkoEngineBridge {
         if (appContext == null) return onState("engine_not_initialized")
         setPeerInfo(peerName ?: "LINKO Friend", peerId, true)
         scope?.launch {
-            runCatching { api?.pendingProviderRequests()?.firstOrNull() }
-                .onSuccess { request ->
-                    if (request == null) onState("no_pending_request")
-                    else runCatching { api?.transition(request.id, "approved") }
-                        .onSuccess {
-                            _connection.update { it.copy(sessionId = request.id) }
-                            onState("approved")
-                            startApprovedProviderSession(request.id)
-                        }
-                        .onFailure { onState(it.message ?: "approval_failed") }
+            var requestId: String? = null
+            try {
+                val request = api?.pendingProviderRequests()?.firstOrNull()
+                if (request == null) {
+                    onState("no_pending_request")
+                    return@launch
                 }
-                .onFailure { onState(it.message ?: "request_lookup_failed") }
+                requestId = request.id
+                if (!providerStartsInFlight.add(request.id)) {
+                    Log.i(TAG, "Provider start already in flight session=${request.id}")
+                    onState("starting")
+                    return@launch
+                }
+                val transition = runCatching { api?.transition(request.id, "approved") }
+                if (transition.isFailure) {
+                    providerStartsInFlight.remove(request.id)
+                    onState(transition.exceptionOrNull()?.message ?: "approval_failed")
+                    return@launch
+                }
+                _connection.update { it.copy(sessionId = request.id, isProvider = true) }
+                onState("approved")
+                startApprovedProviderSession(request.id, onState)
+            } catch (error: Throwable) {
+                requestId?.let(providerStartsInFlight::remove)
+                Log.e(TAG, "ACCEPT_FLOW_CRASH_CONTAINED session=${requestId ?: "unknown"}", error)
+                onState("accept_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
+            }
         } ?: onState("engine_scope_unavailable")
     }
 
-    private fun startApprovedProviderSession(sessionId: String, onState: (String) -> Unit = {}) {
-        val context = appContext ?: return onState("engine_not_initialized")
-        if (sessionId.isBlank()) return onState("invalid_session_id")
-        context.startForegroundService(Intent(context, LinkoProviderService::class.java).setAction(LinkoProviderService.ACTION_START_APPROVED).putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId))
-        onState("starting")
+    private fun startApprovedProviderSession(sessionId: String, onState: (String) -> Unit) {
+        val context = appContext
+        if (context == null) {
+            providerStartsInFlight.remove(sessionId)
+            onState("engine_not_initialized")
+            return
+        }
+        if (sessionId.isBlank()) {
+            providerStartsInFlight.remove(sessionId)
+            onState("invalid_session_id")
+            return
+        }
+        runCatching {
+            Log.i(TAG, "PROVIDER_START_REQUEST session=$sessionId")
+            context.startForegroundService(Intent(context, LinkoProviderService::class.java).setAction(LinkoProviderService.ACTION_START_APPROVED).putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId))
+        }.onSuccess {
+            onState("starting")
+            Log.i(TAG, "PROVIDER_START_ACCEPTED session=$sessionId")
+        }.onFailure { error ->
+            providerStartsInFlight.remove(sessionId)
+            Log.e(TAG, "PROVIDER_START_REJECTED session=$sessionId", error)
+            onState("provider_service_start_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
+        }
+    }
+
+    fun markProviderStartFinished(sessionId: String) {
+        providerStartsInFlight.remove(sessionId)
     }
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
@@ -211,7 +252,7 @@ object LinkoEngineBridge {
                 .onSuccess { request ->
                     if (request == null) onState("no_pending_request")
                     else runCatching { api?.transition(request.id, "denied") }
-                        .onSuccess { onState("denied") }
+                        .onSuccess { providerStartsInFlight.remove(request.id); onState("denied") }
                         .onFailure { onState(it.message ?: "decline_failed") }
                 }
                 .onFailure { onState(it.message ?: "request_lookup_failed") }
@@ -224,6 +265,7 @@ object LinkoEngineBridge {
         connectionJob = null
         lastFriendUserId?.let(::stopWatchingFriendPresence)
         lastFriendUserId = null
+        providerStartsInFlight.clear()
         publish("idle", "Disconnected · tunnel closed")
     }
 
