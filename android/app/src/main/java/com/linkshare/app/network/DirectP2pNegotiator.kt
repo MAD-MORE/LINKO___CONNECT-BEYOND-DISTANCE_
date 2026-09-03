@@ -118,7 +118,7 @@ object DirectP2pNegotiator {
                         if (inbound == null) continue
 
                         val observedPeer = inbound.source
-                        Log.i(TAG, "P2P_CHECK_RECEIVED source=${observedPeer.hostString}:${observedPeer.port} type=${inbound.packet.type}")
+                        Log.i(TAG, "P2P_CHECK_RECEIVED source=${observedPeer.hostString}:${observedPeer.port} type=${inbound.type}")
                         val observedTunnel = EncryptedDatagramTunnel(
                             socket = socket,
                             peer = observedPeer,
@@ -127,9 +127,9 @@ object DirectP2pNegotiator {
                             sessionKey = sessionKey,
                         )
 
-                        when (inbound.packet.type) {
+                        when (inbound.type) {
                             EncryptedDatagramTunnel.PacketType.PING -> {
-                                val timestamp = inbound.packet.payload.toLongOrNull() ?: System.currentTimeMillis()
+                                val timestamp = inbound.payload.toLongOrNull() ?: System.currentTimeMillis()
                                 observedTunnel.sendPong(timestamp)
                                 observedTunnel.sendPing()
                                 val confirmation = observedTunnel.receive(CHECK_RECEIVE_TIMEOUT_MS)
