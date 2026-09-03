@@ -1,6 +1,9 @@
 name: LINKO Observability Patch Runner
 
 on:
+  push:
+    branches:
+      - feature/connection-production-final
   workflow_run:
     workflows: ["LINKO Android CI"]
     types: [completed]
@@ -9,49 +12,68 @@ permissions:
   contents: write
 
 jobs:
-  patch:
-    if: github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'feature/connection-production-final'
+  patch-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/connection-production-final'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR branch
+      - name: Checkout feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: feature/connection-production-final
           fetch-depth: 0
-
-      - name: Apply source transformations when present
+      - name: Apply source transformations
         shell: bash
         run: |
           set -euo pipefail
-          changed=0
-          if [ -f tools/apply_connection_observability.py ]; then
-            python3 tools/apply_connection_observability.py
-            changed=1
-          fi
-          if [ -f tools/apply_direct_p2p_hardening.py ]; then
-            python3 tools/apply_direct_p2p_hardening.py
-            changed=1
-          fi
-          echo "changed=$changed" >> "$GITHUB_ENV"
-
-      - name: Remove temporary patch infrastructure
+          [ -f tools/apply_connection_observability.py ] && python3 tools/apply_connection_observability.py || true
+          [ -f tools/apply_direct_p2p_hardening.py ] && python3 tools/apply_direct_p2p_hardening.py || true
+      - name: Remove patch infrastructure
         shell: bash
         run: |
           rm -f tools/apply_connection_observability.py
           rm -f tools/apply_direct_p2p_hardening.py
           rm -f .github/workflows/apply-connection-observability.yml
           rm -f tools/connection-observability-trigger.txt
-
-      - name: Commit source changes
+      - name: Commit generated source changes
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add android tools .github/workflows
-          if git diff --cached --quiet; then
-            echo "No generated changes"
-            exit 0
-          fi
+          if git diff --cached --quiet; then exit 0; fi
           git commit -m "[linko-observability-patched] Wire real connection diagnostics into LINKO"
-          git push origin HEAD:${{ github.event.workflow_run.head_branch }}
+          git push origin HEAD:feature/connection-production-final
+
+  patch-workflow-run:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'feature/connection-production-final'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/connection-production-final
+          fetch-depth: 0
+      - name: Apply remaining source transformations
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f tools/apply_connection_observability.py ] && python3 tools/apply_connection_observability.py || true
+          [ -f tools/apply_direct_p2p_hardening.py ] && python3 tools/apply_direct_p2p_hardening.py || true
+      - name: Remove patch infrastructure
+        shell: bash
+        run: |
+          rm -f tools/apply_connection_observability.py
+          rm -f tools/apply_direct_p2p_hardening.py
+          rm -f .github/workflows/apply-connection-observability.yml
+          rm -f tools/connection-observability-trigger.txt
+      - name: Commit generated source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android tools .github/workflows
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "[linko-observability-patched] Wire real connection diagnostics into LINKO"
+          git push origin HEAD:feature/connection-production-final
