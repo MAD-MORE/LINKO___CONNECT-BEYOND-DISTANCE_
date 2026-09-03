@@ -19,6 +19,7 @@ import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Direct-only ICE-style UDP negotiation.
@@ -155,8 +156,6 @@ object DirectP2pNegotiator {
                     }
                     if (incomingGeneration >= 0) remoteGeneration = incomingGeneration
                     val sequence = signal.payload.optLong("seq", 0L)
-                    if (sequence > 0 && sequence <= highestRemoteSequence) return
-                    if (sequence > highestRemoteSequence) highestRemoteSequence = sequence
                     if (signal.payload.optBoolean("endOfCandidates", false)) return
                     val host = signal.payload.optString("candidate").trim()
                     val port = signal.payload.optInt("port", -1)
@@ -168,6 +167,9 @@ object DirectP2pNegotiator {
                         else -> return
                     }
                     val id = signal.payload.optString("candidateId").ifBlank { "legacy-${address.hostAddress}:$port" }
+                    // Realtime delivery is not guaranteed to preserve candidate order.
+                    // Candidate identity, not a global sequence watermark, is the dedupe key.
+                    if (remoteCandidates.containsKey(id)) return
                     remoteCandidates[id] = IceCandidate(id, signal.payload.optString("foundation", id), type, address, port,
                         signal.payload.optInt("priority", candidatePriority(type)), incomingGeneration, sequence)
                 }

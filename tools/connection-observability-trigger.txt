@@ -1,1 +1,0 @@
-This marker triggers the existing main-branch PR workflow. The workflow applies tools/apply_connection_observability.py, commits the generated source changes, and this marker is removed during cleanup.

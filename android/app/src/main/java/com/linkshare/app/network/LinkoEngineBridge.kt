@@ -91,6 +91,16 @@ object LinkoEngineBridge {
 
     fun reportTunnelState(state: String, detail: String? = null) = publish(state, detail)
 
+    fun reportConnectionDiagnostic(
+        stage: ConnectionStage,
+        event: String,
+        message: String,
+        severity: ConnectionSeverity = ConnectionSeverity.INFO,
+        metadata: Map<String, String> = emptyMap(),
+    ) {
+        LinkoConnectionDiagnostics.record(stage, event, message, severity, _connection.value.sessionId, metadata)
+    }
+
     private fun handleRealtimeEvent(event: LinkoRealtimeEvent) {
         when (event) {
             is LinkoRealtimeEvent.SessionStateChanged -> {
@@ -184,6 +194,7 @@ object LinkoEngineBridge {
         lastFriendUserId = userId
         setPeerInfo(friendName, friendId, false)
         watchFriendPresence(userId)
+        LinkoConnectionDiagnostics.begin(peerName = friendName)
         val generation = beginNewConnection()
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
 
@@ -288,6 +299,7 @@ object LinkoEngineBridge {
         if (providerId.isBlank()) return publishAndNotify("provider_not_selected", onState)
         val control = api ?: return publishAndNotify("engine_not_initialized", onState)
         val generation = beginNewConnection()
+        LinkoConnectionDiagnostics.begin(peerName = _connection.value.peerDisplayName)
         val engineScope = scope ?: return publishAndNotify("engine_scope_unavailable", onState)
 
         connectionJob = engineScope.launch {
@@ -470,8 +482,9 @@ object LinkoEngineBridge {
         }
         val message = error.message?.takeIf { it.isNotBlank() } ?: "connection_failed"
         Log.e(TAG, "ENGINE_CONNECTION_FAILED generation=$generation session=${sessionId ?: "none"} reason=$message", error)
+        LinkoConnectionDiagnostics.fail(message, sessionId)
         terminateReceiverForFailure(sessionId, generation)
-        publishAndNotify(normalizeFailureState(message), onState)
+        publishAndNotify(normalizeFailureState(message), onState, message)
     }
 
     private fun normalizeFailureState(message: String): String = when {
@@ -507,8 +520,8 @@ object LinkoEngineBridge {
         }
     }
 
-    private fun publishAndNotify(state: String, onState: (String) -> Unit) {
-        publish(state)
+    private fun publishAndNotify(state: String, onState: (String) -> Unit, detail: String? = null) {
+        publish(state, detail)
         notifyOnMain(onState, state)
     }
 
@@ -567,6 +580,20 @@ object LinkoEngineBridge {
                 error = if (phase == LinkoConnectionPhase.Failed) message else null,
             )
         }
+
+        val severity = when {
+            phase == LinkoConnectionPhase.Failed -> ConnectionSeverity.ERROR
+            phase == LinkoConnectionPhase.Connected -> ConnectionSeverity.SUCCESS
+            state == "signaling_retry" -> ConnectionSeverity.WARNING
+            else -> ConnectionSeverity.INFO
+        }
+        LinkoConnectionDiagnostics.record(
+            stage = LinkoConnectionDiagnostics.stageForState(state),
+            event = state.uppercase(),
+            message = message,
+            severity = severity,
+            sessionId = _connection.value.sessionId,
+        )
     }
 
     private val _events = MutableStateFlow<LinkoEngineEvent?>(null)
