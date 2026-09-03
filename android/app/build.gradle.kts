@@ -20,8 +20,6 @@ android {
     }
 
     signingConfigs {
-        // The debug signing configuration is owned by Android Gradle Plugin.
-        // Release signing is supplied only through CI/local environment secrets.
         create("linkoDev") {
             val keystorePath = System.getenv("LINKO_KEYSTORE_PATH") ?: "linko-dev.keystore"
             storeFile = rootProject.file(keystorePath)
@@ -75,7 +73,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation(platform("io.github.jan-tennert.supabase:bom:3.7.0")); implementation("io.github.jan-tennert.supabase:realtime-kt")
     implementation("io.github.jan-tennert.supabase:auth-kt"); implementation("io.ktor:ktor-client-android:3.5.1")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06"); implementation("com.zaneschepke:hevtunnel:1.0.1")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.zaneschepke:hevtunnel:1.0.1")
+    implementation("com.wireguard.android:tunnel:1.0.20260315")
     debugImplementation("androidx.compose.ui:ui-tooling"); debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2"); testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
