@@ -6,6 +6,7 @@ import android.util.Base64
 import com.linkshare.app.BuildConfig
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.auth.LinkoDeviceIdentity
+import com.linkshare.app.tunnel.LinkoWireGuardIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -13,20 +14,20 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * Permanent LINKO control-plane client communicating directly with Supabase via authenticated PostgreSQL RPCs.
- * Supabase carries authentication, session state and signaling only; it never carries data-plane traffic.
- */
+/** Permanent LINKO control-plane client. Supabase carries control/signaling, never data traffic. */
 class LinkoDeviceControlApi(
     private val context: Context,
     private val auth: LinkoAuth = LinkoAuth(context.applicationContext),
     private val identity: LinkoDeviceIdentity = LinkoDeviceIdentity(),
     private val baseUrl: String = BuildConfig.LINKO_SUPABASE_URL,
 ) {
+    private val wireGuardIdentity = LinkoWireGuardIdentity(context.applicationContext)
+
     suspend fun ensureRegistered(): DeviceRegistration = withContext(Dispatchers.IO) {
         val existingId = auth.currentDeviceId()
         val access = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
         if (!existingId.isNullOrBlank() && access != null) {
+            registerWireGuardKey(existingId, access)
             return@withContext DeviceRegistration(existingId, access, auth.currentUserId())
         }
         val token = access ?: run {
@@ -44,9 +45,23 @@ class LinkoDeviceControlApi(
         val response = rpc("linko_register_device", body, token)
         val deviceId = response.optString("id").takeIf { it.isNotBlank() }
             ?: response.optString("device_id").takeIf { it.isNotBlank() }
+            ?: response.optJSONObject("device")?.optString("id")?.takeIf { it.isNotBlank() }
             ?: throw LinkoNetworkException("invalid_device_registration_payload")
         auth.saveDeviceId(deviceId)
+        registerWireGuardKey(deviceId, token)
         DeviceRegistration(deviceId, token, userId)
+    }
+
+    private suspend fun registerWireGuardKey(deviceId: String, token: String) {
+        rpc(
+            "linko_set_wireguard_public_key",
+            JSONObject().put("p_device_id", deviceId).put("p_wireguard_public_key", wireGuardIdentity.publicKeyBase64()),
+            token,
+        )
+    }
+
+    suspend fun wireGuardIdentity(): WireGuardIdentityInfo = withContext(Dispatchers.IO) {
+        WireGuardIdentityInfo(wireGuardIdentity.publicKeyBase64(), wireGuardIdentity.privateKeyBase64())
     }
 
     suspend fun touchPresence(): PresenceResult = withContext(Dispatchers.IO) {
@@ -64,11 +79,7 @@ class LinkoDeviceControlApi(
 
     suspend fun requestSession(providerDeviceId: String): DeviceSession = withContext(Dispatchers.IO) {
         val receiver = auth.currentDeviceId()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
-        val json = rpc(
-            "linko_create_session",
-            JSONObject().put("p_receiver_device_id", receiver).put("p_provider_device_id", providerDeviceId),
-            authToken(),
-        )
+        val json = rpc("linko_create_session", JSONObject().put("p_receiver_device_id", receiver).put("p_provider_device_id", providerDeviceId), authToken())
         DeviceSession(json.optString("id"), json.optString("state", "requested"), json.optLong("expiresAt", 0L))
     }
 
@@ -86,16 +97,25 @@ class LinkoDeviceControlApi(
         val json = rpc("linko_tunnel_config", JSONObject().put("p_session_id", sessionId), authToken())
         val keyB64 = json.optString("key").trim()
         if (keyB64.isBlank()) throw LinkoNetworkException("invalid_tunnel_key")
-        val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }
-            .getOrElse { throw LinkoNetworkException("invalid_tunnel_key") }
+        val key = runCatching { Base64.decode(keyB64, Base64.DEFAULT) }.getOrElse { throw LinkoNetworkException("invalid_tunnel_key") }
         if (key.size != 32) throw LinkoNetworkException("invalid_tunnel_key_length")
         val role = json.optString("role").trim().lowercase()
         if (role != "provider" && role != "receiver") throw LinkoNetworkException("invalid_tunnel_role")
         val transport = json.optString("transport", "direct_udp").trim().lowercase()
-        if (transport != "direct_udp") throw LinkoNetworkException("unsupported_direct_transport")
+        if (transport != "direct_udp" && transport != "wireguard_udp") throw LinkoNetworkException("unsupported_direct_transport")
         val expiresAt = json.optLong("expiresAt", 0L)
         if (expiresAt <= System.currentTimeMillis()) throw LinkoNetworkException("tunnel_config_expired")
-        TunnelConfig(sessionId, key, role, expiresAt, transport)
+        TunnelConfig(
+            sessionId = sessionId,
+            key = key,
+            role = role,
+            expiresAt = expiresAt,
+            transport = transport,
+            wireGuardPublicKey = json.optString("wireguardPublicKey").takeIf { it.isNotBlank() },
+            peerWireGuardPublicKey = json.optString("peerWireguardPublicKey").takeIf { it.isNotBlank() },
+            wireGuardAddress = json.optString("wireguardAddress").takeIf { it.isNotBlank() },
+            peerWireGuardAddress = json.optString("peerWireguardAddress").takeIf { it.isNotBlank() },
+        )
     }
 
     suspend fun pendingProviderRequests(): List<ProviderRequest> = withContext(Dispatchers.IO) {
@@ -109,20 +129,14 @@ class LinkoDeviceControlApi(
         }
     }
 
-    private fun authToken(): String = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
-        ?: throw LinkoNetworkException("device_auth_required")
+    private fun authToken(): String = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
 
     private fun rpc(function: String, body: JSONObject = JSONObject(), token: String): JSONObject {
         require(baseUrl.startsWith("https://")) { "control_plane_https_required" }
         val connection = (URL(baseUrl.trimEnd('/') + "/rest/v1/rpc/" + function).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 12_000
-            readTimeout = 15_000
-            doOutput = true
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY)
-            setRequestProperty("Authorization", "Bearer $token")
+            requestMethod = "POST"; connectTimeout = 12_000; readTimeout = 15_000; doOutput = true
+            setRequestProperty("Accept", "application/json"); setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("apikey", BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY); setRequestProperty("Authorization", "Bearer $token")
         }
         return try {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
@@ -131,15 +145,11 @@ class LinkoDeviceControlApi(
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val parsed = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrNull()
-                val message = parsed?.optString("message").orEmpty()
-                    .ifBlank { parsed?.optString("error").orEmpty() }
-                    .ifBlank { "http_$status" }
+                val message = parsed?.optString("message").orEmpty().ifBlank { parsed?.optString("error").orEmpty() }.ifBlank { "http_$status" }
                 throw LinkoNetworkException(message, status)
             }
             if (text.trim().startsWith("{")) JSONObject(text) else JSONObject().put("result", text)
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 }
 
@@ -147,10 +157,15 @@ data class DeviceRegistration(val deviceId: String, val token: String, val userI
 data class PresenceResult(val deviceId: String, val lastSeenAt: Long)
 data class ProviderDevice(val deviceId: String, val online: Boolean, val lastSeenAt: Long)
 data class DeviceSession(val id: String, val state: String, val expiresAt: Long)
+data class WireGuardIdentityInfo(val publicKey: String, val privateKey: String)
 data class TunnelConfig(
     val sessionId: String,
     val key: ByteArray,
     val role: String,
     val expiresAt: Long,
     val transport: String = "direct_udp",
+    val wireGuardPublicKey: String? = null,
+    val peerWireGuardPublicKey: String? = null,
+    val wireGuardAddress: String? = null,
+    val peerWireGuardAddress: String? = null,
 )
