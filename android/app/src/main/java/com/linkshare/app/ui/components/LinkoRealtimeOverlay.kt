@@ -147,7 +147,6 @@ fun LinkoRealtimeOverlay() {
                                 scope.launch {
                                     LinkoEngineBridge.approvePendingProviderRequest(peerName = requesterPeerName) { state ->
                                         if (state == "approved") {
-                                            LinkoEngineBridge.startApprovedProviderSession()
                                             connectionSessionId = null
                                             requesterPeerName = null
                                             processingConnection = false
