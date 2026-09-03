@@ -19,15 +19,28 @@ class EncryptedDatagramTunnel(
     private val peer: InetSocketAddress,
     val sessionId: String,
     val role: Role,
-    sessionKey: ByteArray
+    sessionKey: ByteArray,
 ) : AutoCloseable {
     enum class Role(val code: Byte) { PROVIDER(1), RECEIVER(2) }
     enum class PacketType(val code: Byte) { DATA(1), PING(2), PONG(3), HANDSHAKE(4), CLOSE(5) }
-    data class ReceivedPacket(val type: PacketType, val sequenceNumber: Long, val payload: ByteArray)
 
-    private val key = SecretKeySpec(sessionKey.copyOf().also { require(it.size == 32) { "LINKO session key must be exactly 32 bytes" } }, "AES")
+    data class ReceivedPacket(
+        val type: PacketType,
+        val sequenceNumber: Long,
+        val payload: ByteArray,
+        val source: InetSocketAddress,
+    )
+
+    private val key = SecretKeySpec(
+        sessionKey.copyOf().also {
+            require(it.size == 32) { "LINKO session key must be exactly 32 bytes" }
+        },
+        "AES",
+    )
     private val keyHash = MessageDigest.getInstance("SHA-256").digest(sessionKey)
-    private val sessionBytes = sessionId.toByteArray(Charsets.US_ASCII).also { require(it.size == SESSION_ID_LEN) { "Session ID must be 36 ASCII characters" } }
+    private val sessionBytes = sessionId.toByteArray(Charsets.US_ASCII).also {
+        require(it.size == SESSION_ID_LEN) { "Session ID must be 36 ASCII characters" }
+    }
     private val random = SecureRandom()
     private val sendSequence = AtomicLong(1)
     private val receivedSequences = LinkedHashSet<Long>(REPLAY_WINDOW)
@@ -46,7 +59,9 @@ class EncryptedDatagramTunnel(
     }
 
     fun send(plaintext: ByteArray, type: PacketType = PacketType.DATA) {
-        require(plaintext.size <= MAX_PAYLOAD) { "Payload exceeds maximum allowable size (${plaintext.size} > $MAX_PAYLOAD)" }
+        require(plaintext.size <= MAX_PAYLOAD) {
+            "Payload exceeds maximum allowable size (${plaintext.size} > $MAX_PAYLOAD)"
+        }
         val seq = sendSequence.getAndIncrement()
         val nonce = ByteArray(NONCE_LEN).also(random::nextBytes)
         val aad = ByteBuffer.allocate(HEADER_NO_NONCE_LEN).order(ByteOrder.BIG_ENDIAN).apply {
@@ -63,15 +78,23 @@ class EncryptedDatagramTunnel(
         socket.send(DatagramPacket(wire, wire.size, peer))
     }
 
-    fun receive(timeoutMs: Int = 1000): ReceivedPacket? {
+    fun receive(timeoutMs: Int = 1000): ReceivedPacket? = receiveInternal(timeoutMs, true)
+
+    /** Negotiation-only receive: authenticate first, then learn the actual source endpoint. */
+    fun receiveAny(timeoutMs: Int = 1000): ReceivedPacket? = receiveInternal(timeoutMs, false)
+
+    private fun receiveInternal(timeoutMs: Int, enforcePeer: Boolean): ReceivedPacket? {
         socket.soTimeout = timeoutMs
         val rawBuffer = ByteArray(MAX_FRAME_LEN)
         val packet = DatagramPacket(rawBuffer, rawBuffer.size)
-        try { socket.receive(packet) } catch (_: java.net.SocketTimeoutException) { return null }
+        try {
+            socket.receive(packet)
+        } catch (_: java.net.SocketTimeoutException) {
+            return null
+        }
 
-        // Session authentication prevents forged packets, while endpoint binding prevents
-        // accepting authenticated traffic from a stale or unexpected candidate once selected.
-        if (packet.address != peer.address || packet.port != peer.port) return null
+        val source = InetSocketAddress(packet.address, packet.port)
+        if (enforcePeer && (packet.address != peer.address || packet.port != peer.port)) return null
         if (packet.length < HEADER_LEN + TAG_LEN_BYTES) return null
 
         val buffer = ByteBuffer.wrap(rawBuffer, 0, packet.length).order(ByteOrder.BIG_ENDIAN)
@@ -82,13 +105,16 @@ class EncryptedDatagramTunnel(
         if (!rxSession.contentEquals(sessionBytes)) return null
         val rxKeyHash = ByteArray(KEY_HASH_LEN); buffer.get(rxKeyHash)
         if (!rxKeyHash.contentEquals(keyHash)) return null
+
         val senderRoleCode = buffer.get()
         val expectedPeerRole = if (role == Role.RECEIVER) Role.PROVIDER else Role.RECEIVER
         if (senderRoleCode != expectedPeerRole.code) return null
+
         val typeCode = buffer.get()
         val type = PacketType.values().firstOrNull { it.code == typeCode } ?: return null
-        val seq = buffer.getLong()
-        if (seq <= 0L) return null
+        val sequence = buffer.getLong()
+        if (sequence <= 0L) return null
+
         val nonce = ByteArray(NONCE_LEN); buffer.get(nonce)
         val ciphertextLen = packet.length - HEADER_LEN
         if (ciphertextLen < TAG_LEN_BYTES) return null
@@ -100,14 +126,24 @@ class EncryptedDatagramTunnel(
                 updateAAD(rawBuffer.copyOfRange(0, HEADER_NO_NONCE_LEN))
                 doFinal(ciphertext)
             }
-        } catch (_: Exception) { return null }
+        } catch (_: Exception) {
+            return null
+        }
 
-        if (!acceptAuthenticatedSequence(seq)) return null
-        return ReceivedPacket(type, seq, plaintext)
+        if (!acceptAuthenticatedSequence(sequence)) return null
+        return ReceivedPacket(type, sequence, plaintext, source)
     }
 
-    fun sendPing(timestampMs: Long = System.currentTimeMillis()) = send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(timestampMs).array(), PacketType.PING)
-    fun sendPong(echoTimestamp: Long) = send(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(echoTimestamp).array(), PacketType.PONG)
+    fun sendPing(timestampMs: Long = System.currentTimeMillis()) = send(
+        ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(timestampMs).array(),
+        PacketType.PING,
+    )
+
+    fun sendPong(echoTimestamp: Long) = send(
+        ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(echoTimestamp).array(),
+        PacketType.PONG,
+    )
+
     fun sendClose() { runCatching { send(ByteArray(0), PacketType.CLOSE) } }
 
     override fun close() {
