@@ -5,14 +5,18 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.linkshare.app.network.ConnectionStage
+import com.linkshare.app.network.LinkoConnectionDiagnostics
 
-/** Unified LINKO visual ring: every engine state uses the globe/node radar. */
+/** Unified LINKO visual ring. Its status label follows the real transport stage. */
 @Composable
 fun Ring(
     color: Color,
@@ -22,6 +26,23 @@ fun Ring(
     label: String? = null,
     onClick: (() -> Unit)? = null,
 ) {
+    val diagnostics by LinkoConnectionDiagnostics.snapshot.collectAsState()
+    val diagnosticLabel = when (diagnostics.stage) {
+        ConnectionStage.REQUESTING -> "REQUESTING"
+        ConnectionStage.APPROVING -> "APPROVED"
+        ConnectionStage.SIGNALING -> "SIGNALING"
+        ConnectionStage.SDP_NEGOTIATION -> "SDP"
+        ConnectionStage.ICE_GATHERING -> "ICE GATHERING"
+        ConnectionStage.ICE_CHECKING -> "ICE CHECKING"
+        ConnectionStage.NOMINATING -> "NOMINATING"
+        ConnectionStage.HANDSHAKE -> "HANDSHAKE"
+        ConnectionStage.TUNNEL_STARTING -> "TUNNEL"
+        ConnectionStage.PACKET_FLOW -> "PACKET FLOW"
+        ConnectionStage.CONNECTED -> "CONNECTED"
+        ConnectionStage.FAILED -> "FAILED"
+    }
+    val effectiveLabel = if (diagnostics.headline != "Ready" || diagnostics.stage != ConnectionStage.REQUESTING) diagnosticLabel else label
+
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
@@ -40,7 +61,7 @@ fun Ring(
         GlobeRadar(
             color = color,
             size = size,
-            label = label,
+            label = effectiveLabel,
         )
     }
 }
