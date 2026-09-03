@@ -132,7 +132,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { if (it == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
-                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { LinkoEngineBridge.startApprovedProviderSession { if (it == "starting") nav.navigate(Screen.ProviderSharingActive.route) } } }
+                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.ProviderSharingActive.route) { ProviderSharingActiveScreen({ nav.navigate(Screen.ProviderLiveUsage.route) }, { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.ProviderLiveUsage.route) { ProviderLiveUsageScreen { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.ConnectionLost.route) { ConnectionLostScreen({ nav.navigate(Screen.Reconnecting.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
