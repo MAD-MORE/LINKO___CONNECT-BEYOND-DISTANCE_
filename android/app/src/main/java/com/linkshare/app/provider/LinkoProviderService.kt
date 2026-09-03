@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -189,6 +190,7 @@ class LinkoProviderService : Service() {
                     notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
                     Log.i(TAG, "TUNNEL_STARTED session=$requestId peer=${negotiated.peer}")
                     Log.i(TAG, "SESSION_CONNECTED session=$requestId")
+                    LinkoEngineBridge.markProviderStartFinished(requestId)
                 } catch (error: Exception) {
                     runCatching { socket.close() }
                     throw error
@@ -208,6 +210,7 @@ class LinkoProviderService : Service() {
             runCatching { api.transition(sessionId, "failed") }
                 .onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$sessionId reason=${it.message}", it) }
             stopRunner(sessionId)
+            LinkoEngineBridge.markProviderStartFinished(sessionId)
             LinkoEngineBridge.reportTunnelState("failed", reason)
             Log.e(TAG, "SESSION_FAILED session=$sessionId reason=$reason")
             notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection Failed", reason.replace('_', ' ')))
@@ -218,6 +221,7 @@ class LinkoProviderService : Service() {
         scope.launch {
             notificationManager().cancel(requestId.hashCode())
             stopRunner(requestId)
+            LinkoEngineBridge.markProviderStartFinished(requestId)
             runCatching { api.transition(requestId, "denied") }
             notificationManager().notify(NOTIFICATION_ID, serviceNotification("Provider Ready", "The request was declined"))
         }
@@ -256,9 +260,14 @@ class LinkoProviderService : Service() {
         api = LinkoDeviceControlApi(this, auth)
         acquireLocks(); createChannel()
         try {
-            startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is active and ready for connection requests"))
+            val notification = serviceNotification("Provider Ready", "LINKO is active and ready for connection requests")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
             foregroundReady = true
-            Log.i(TAG, "PROVIDER_FOREGROUND_READY api=${android.os.Build.VERSION.SDK_INT}")
+            Log.i(TAG, "PROVIDER_FOREGROUND_READY api=${android.os.Build.VERSION.SDK_INT} type=dataSync")
         } catch (error: Throwable) {
             foregroundReady = false
             Log.e(TAG, "PROVIDER_SERVICE_START_FAILED foreground promotion failed", error)
@@ -317,7 +326,7 @@ class LinkoProviderService : Service() {
         private const val NOTIFICATION_ID = 7001
         private const val TUNNEL_CONFIG_RETRIES = 5
         private const val TUNNEL_CONFIG_RETRY_MS = 1_000L
-        fun start(context: Context, dataCapMb: Long = 0L) { context.startForegroundService(Intent(context, LinkoProviderService::class.java).apply { if (dataCapMb > 0) putExtra(EXTRA_DATA_CAP_MB, dataCapMb) }) }
-        fun stop(context: Context) { context.stopService(Intent(context, LinkoProviderService::class.java)) }
+        fun start(context: Context, dataCapMb: Long = 0L) { runCatching { context.startForegroundService(Intent(context, LinkoProviderService::class.java).apply { if (dataCapMb > 0) putExtra(EXTRA_DATA_CAP_MB, dataCapMb) }) }.onFailure { Log.e(TAG, "PROVIDER_SERVICE_START_FAILED action=start", it) } }
+        fun stop(context: Context) { runCatching { context.stopService(Intent(context, LinkoProviderService::class.java)) }.onFailure { Log.w(TAG, "Provider stop failed: ${it.message}") } }
     }
 }
