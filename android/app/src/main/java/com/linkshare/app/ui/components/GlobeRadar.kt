@@ -30,11 +30,41 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+/**
+ * LINKO globe/radar with a real connection-flow treatment.
+ *
+ * SYNCING/WAITING are treated as the initiator flow (energy leaves this device).
+ * SHARING is treated as the provider flow (incoming energy converges into this device).
+ * The flow is intentionally state/label driven rather than timer-driven: the caller
+ * keeps the animation alive for as long as the real connection phase is active.
+ */
 @Composable
 fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
     val transition = rememberInfiniteTransition(label = "globe_radar")
-    val rotation by transition.animateFloat(-180f, 180f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart), label = "globe_rotation")
-    val sweep by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart), label = "radar_sweep")
+    val rotation by transition.animateFloat(
+        -180f, 180f,
+        infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
+        label = "globe_rotation"
+    )
+    val sweep by transition.animateFloat(
+        0f, 360f,
+        infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
+        label = "radar_sweep"
+    )
+    val flow by transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(760, easing = LinearEasing), RepeatMode.Restart),
+        label = "connection_flow"
+    )
+    val fastSpin by transition.animateFloat(
+        0f, 360f,
+        infiniteRepeatable(tween(620, easing = LinearEasing), RepeatMode.Restart),
+        label = "fast_connection_spin"
+    )
+
+    val outgoing = label == "SYNCING" || label == "WAITING"
+    val incoming = label == "SHARING"
+    val flowing = outgoing || incoming
 
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
         Canvas(Modifier.size(size)) {
@@ -44,7 +74,7 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
             val center = Offset(cx, cy)
             val gridStroke = 1.1.dp.toPx()
 
-            drawCircle(color.copy(alpha = 0.045f), radius * 1.08f, center)
+            drawCircle(color.copy(alpha = if (flowing) 0.075f else 0.045f), radius * 1.08f, center)
             drawCircle(color.copy(alpha = 0.10f), radius, center, style = Stroke(1.5.dp.toPx()))
             drawCircle(color.copy(alpha = 0.20f), radius * 0.94f, center, style = Stroke(0.8.dp.toPx()))
 
@@ -95,25 +125,69 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                 if (index % 2 == 0) drawLine(color.copy(alpha = 0.18f), center, Offset(nx, ny), 0.7.dp.toPx(), StrokeCap.Round)
             }
 
-            val sweepRad = Math.toRadians(sweep.toDouble())
-            val sx = cx + radius * cos(sweepRad).toFloat()
-            val sy = cy + radius * sin(sweepRad).toFloat()
-            drawLine(color.copy(alpha = 0.10f), center, Offset(sx, sy), 11.dp.toPx(), StrokeCap.Round)
-            drawLine(color.copy(alpha = 0.88f), center, Offset(sx, sy), 2.2.dp.toPx(), StrokeCap.Round)
-            drawCircle(color.copy(alpha = 0.30f), 6.dp.toPx(), Offset(sx, sy))
-            drawCircle(color, 2.4.dp.toPx(), Offset(sx, sy))
+            if (flowing) {
+                val segmentCount = 9
+                val segmentSweep = 25f
+                repeat(segmentCount) { index ->
+                    val start = fastSpin + index * (360f / segmentCount)
+                    drawArc(
+                        color.copy(alpha = 0.90f),
+                        startAngle = start,
+                        sweepAngle = segmentSweep,
+                        useCenter = false,
+                        topLeft = Offset(cx - radius * 1.035f, cy - radius * 1.035f),
+                        size = Size(radius * 2.07f, radius * 2.07f),
+                        style = Stroke(2.8.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
 
-            drawArc(
-                color = color.copy(alpha = 0.60f),
-                startAngle = rotation - 48f,
-                sweepAngle = 105f,
-                useCenter = false,
-                topLeft = Offset(cx - radius, cy - radius),
-                size = Size(radius * 2f, radius * 2f),
-                style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round)
-            )
+                // Particles leave the initiator and converge into the receiving/provider ring.
+                val particles = arrayOf(
+                    0.00f to 0.00f, 0.18f to 0.52f, 0.42f to 0.91f, 0.67f to 0.33f,
+                    0.84f to 0.76f, 0.30f to 0.16f, 0.56f to 0.58f, 0.95f to 0.46f,
+                    0.12f to 0.78f, 0.73f to 0.07f
+                )
+                particles.forEachIndexed { index, particle ->
+                    val angle = particle.second * (Math.PI * 2.0) + index * 0.37
+                    val local = (flow + particle.first).let { value ->
+                        (value - kotlin.math.floor(value.toDouble()).toFloat())
+                    }
+                    val distance = if (outgoing) {
+                        radius * (0.12f + local * 0.92f)
+                    } else {
+                        radius * (1.02f - local * 0.90f)
+                    }
+                    val tailDistance = if (outgoing) distance - radius * 0.11f else distance + radius * 0.11f
+                    val px = cx + cos(angle).toFloat() * distance
+                    val py = cy + sin(angle).toFloat() * distance
+                    val tx = cx + cos(angle).toFloat() * tailDistance
+                    val ty = cy + sin(angle).toFloat() * tailDistance
+                    drawLine(color.copy(alpha = 0.28f), Offset(tx, ty), Offset(px, py), 3.5.dp.toPx(), StrokeCap.Round)
+                    drawCircle(color.copy(alpha = 0.92f), 2.5.dp.toPx(), Offset(px, py))
+                }
+            } else {
+                val sweepRad = Math.toRadians(sweep.toDouble())
+                val sx = cx + radius * cos(sweepRad).toFloat()
+                val sy = cy + radius * sin(sweepRad).toFloat()
+                drawLine(color.copy(alpha = 0.10f), center, Offset(sx, sy), 11.dp.toPx(), StrokeCap.Round)
+                drawLine(color.copy(alpha = 0.88f), center, Offset(sx, sy), 2.2.dp.toPx(), StrokeCap.Round)
+                drawCircle(color.copy(alpha = 0.30f), 6.dp.toPx(), Offset(sx, sy))
+                drawCircle(color, 2.4.dp.toPx(), Offset(sx, sy))
+
+                drawArc(
+                    color = color.copy(alpha = 0.60f),
+                    startAngle = rotation - 48f,
+                    sweepAngle = 105f,
+                    useCenter = false,
+                    topLeft = Offset(cx - radius, cy - radius),
+                    size = Size(radius * 2f, radius * 2f),
+                    style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
         }
 
-        label?.let { Text(it, color = color, fontSize = 9.5.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
+        label?.let {
+            Text(it, color = color, fontSize = 9.5.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        }
     }
 }
