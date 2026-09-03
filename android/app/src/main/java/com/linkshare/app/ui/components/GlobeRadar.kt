@@ -32,11 +32,8 @@ import kotlin.math.sqrt
 
 /**
  * LINKO globe/radar with a real connection-flow treatment.
- *
- * SYNCING/WAITING are treated as the initiator flow (energy leaves this device).
- * SHARING is treated as the provider flow (incoming energy converges into this device).
- * The flow is intentionally state/label driven rather than timer-driven: the caller
- * keeps the animation alive for as long as the real connection phase is active.
+ * Active transport stages animate the same network-flow treatment instead of
+ * relying on a fake timer; the caller supplies the current real stage label.
  */
 @Composable
 fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
@@ -62,9 +59,14 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
         label = "fast_connection_spin"
     )
 
-    val outgoing = label == "SYNCING" || label == "WAITING"
+    val outgoing = label == "SYNCING" || label == "WAITING" ||
+        label == "REQUESTING" || label == "APPROVED" || label == "SIGNALING" ||
+        label == "SDP" || label == "ICE GATHERING" || label == "ICE CHECKING" ||
+        label == "NOMINATING" || label == "HANDSHAKE" || label == "TUNNEL"
     val incoming = label == "SHARING"
-    val flowing = outgoing || incoming
+    val packetFlow = label == "PACKET FLOW"
+    val connected = label == "CONNECTED" || label == "LIVE" || label == "ONLINE"
+    val flowing = outgoing || incoming || packetFlow
 
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
         Canvas(Modifier.size(size)) {
@@ -74,7 +76,7 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
             val center = Offset(cx, cy)
             val gridStroke = 1.1.dp.toPx()
 
-            drawCircle(color.copy(alpha = if (flowing) 0.075f else 0.045f), radius * 1.08f, center)
+            drawCircle(color.copy(alpha = if (flowing) 0.075f else if (connected) 0.065f else 0.045f), radius * 1.08f, center)
             drawCircle(color.copy(alpha = 0.10f), radius, center, style = Stroke(1.5.dp.toPx()))
             drawCircle(color.copy(alpha = 0.20f), radius * 0.94f, center, style = Stroke(0.8.dp.toPx()))
 
@@ -141,7 +143,6 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                     )
                 }
 
-                // Particles leave the initiator and converge into the receiving/provider ring.
                 val particles = arrayOf(
                     0.00f to 0.00f, 0.18f to 0.52f, 0.42f to 0.91f, 0.67f to 0.33f,
                     0.84f to 0.76f, 0.30f to 0.16f, 0.56f to 0.58f, 0.95f to 0.46f,
@@ -152,10 +153,9 @@ fun GlobeRadar(color: Color, size: Dp = 190.dp, label: String? = "ONLINE") {
                     val local = (flow + particle.first).let { value ->
                         (value - kotlin.math.floor(value.toDouble()).toFloat())
                     }
-                    val distance = if (outgoing) {
-                        radius * (0.12f + local * 0.92f)
-                    } else {
-                        radius * (1.02f - local * 0.90f)
+                    val distance = when {
+                        outgoing -> radius * (0.12f + local * 0.92f)
+                        else -> radius * (1.02f - local * 0.90f)
                     }
                     val tailDistance = if (outgoing) distance - radius * 0.11f else distance + radius * 0.11f
                     val px = cx + cos(angle).toFloat() * distance
