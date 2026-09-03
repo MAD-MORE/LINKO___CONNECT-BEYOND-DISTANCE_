@@ -19,21 +19,26 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
 
-      - name: Apply diagnostics transformation when present
+      - name: Apply source transformations when present
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f tools/apply_connection_observability.py ]; then
-            echo "Observability patcher already consumed; nothing to do."
-            exit 0
+          changed=0
+          if [ -f tools/apply_connection_observability.py ]; then
+            python3 tools/apply_connection_observability.py
+            changed=1
           fi
-          python3 tools/apply_connection_observability.py
+          if [ -f tools/apply_direct_p2p_hardening.py ]; then
+            python3 tools/apply_direct_p2p_hardening.py
+            changed=1
+          fi
+          echo "changed=$changed" >> "$GITHUB_ENV"
 
       - name: Remove temporary patch infrastructure
-        if: hashFiles('tools/apply_connection_observability.py') != ''
         shell: bash
         run: |
           rm -f tools/apply_connection_observability.py
+          rm -f tools/apply_direct_p2p_hardening.py
           rm -f .github/workflows/apply-connection-observability.yml
           rm -f tools/connection-observability-trigger.txt
 
