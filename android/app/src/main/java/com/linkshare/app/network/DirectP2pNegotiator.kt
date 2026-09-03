@@ -19,7 +19,6 @@ import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Direct-only ICE-style UDP negotiation.
@@ -74,10 +73,19 @@ object DirectP2pNegotiator {
 
         val localCandidates = gatherCandidates(socket, deadline, generation)
         if (localCandidates.isEmpty()) {
+            LinkoConnectionDiagnostics.fail("NO_LOCAL_UDP_CANDIDATE", sessionId)
             socket.close()
             throw LinkoNetworkException("NO_LOCAL_UDP_CANDIDATE")
         }
         Log.i(TAG, "ICE_GATHERED session=$sessionId generation=$generation candidates=${localCandidates.size} port=${socket.localPort}")
+        LinkoConnectionDiagnostics.record(
+            ConnectionStage.ICE_GATHERING,
+            "ICE_GATHERED",
+            "Gathered ${localCandidates.size} local UDP candidates",
+            ConnectionSeverity.SUCCESS,
+            sessionId,
+            mapOf("localCandidates" to localCandidates.size.toString()),
+        )
 
         val seenSignals = ConcurrentHashMap.newKeySet<String>()
         val remoteCandidates = ConcurrentHashMap<String, IceCandidate>()
@@ -88,7 +96,6 @@ object DirectP2pNegotiator {
         val selectedPeer = arrayOfNulls<InetSocketAddress>(1)
         val receiverPaused = AtomicBoolean(false)
         var remoteGeneration: Int? = null
-        var highestRemoteSequence = -1L
         var lastFailure = "DIRECT_CHECK_TIMEOUT"
 
         suspend fun sendOffer() {
@@ -136,6 +143,13 @@ object DirectP2pNegotiator {
                         if (remoteGeneration != null && incomingGeneration < remoteGeneration!!) return
                         remoteGeneration = incomingGeneration
                         Log.i(TAG, "ICE_REMOTE_GENERATION session=$sessionId local=$generation remote=$incomingGeneration kind=${signal.kind}")
+                        LinkoConnectionDiagnostics.record(
+                            ConnectionStage.SDP_NEGOTIATION,
+                            "ICE_REMOTE_GENERATION",
+                            "Remote ICE generation ${incomingGeneration} accepted",
+                            ConnectionSeverity.SUCCESS,
+                            sessionId,
+                        )
                     }
                     if (signal.kind == SignalKind.OFFER) {
                         runCatching {
@@ -152,7 +166,6 @@ object DirectP2pNegotiator {
                         if (incomingGeneration < remoteGeneration!!) return
                         remoteCandidates.clear()
                         launchedPairs.clear()
-                        highestRemoteSequence = -1L
                     }
                     if (incomingGeneration >= 0) remoteGeneration = incomingGeneration
                     val sequence = signal.payload.optLong("seq", 0L)
@@ -172,11 +185,26 @@ object DirectP2pNegotiator {
                     if (remoteCandidates.containsKey(id)) return
                     remoteCandidates[id] = IceCandidate(id, signal.payload.optString("foundation", id), type, address, port,
                         signal.payload.optInt("priority", candidatePriority(type)), incomingGeneration, sequence)
+                    LinkoConnectionDiagnostics.record(
+                        ConnectionStage.ICE_GATHERING,
+                        "ICE_REMOTE_CANDIDATE",
+                        "Received remote ${type.name.lowercase()} candidate",
+                        ConnectionSeverity.INFO,
+                        sessionId,
+                        mapOf("localCandidates" to localCandidates.size.toString(), "remoteCandidates" to remoteCandidates.size.toString()),
+                    )
                 }
             }
         }
 
         sendOffer(); sendLocalCandidates()
+        LinkoConnectionDiagnostics.record(
+            ConnectionStage.ICE_CHECKING,
+            "ICE_CHECKING_READY",
+            "Starting direct UDP connectivity checks",
+            ConnectionSeverity.INFO,
+            sessionId,
+        )
 
         try {
             coroutineScope {
@@ -204,6 +232,18 @@ object DirectP2pNegotiator {
                                     val rtt = (System.currentTimeMillis() - pending.sentAt).coerceAtLeast(1L)
                                     successfulPairs[pending.pair.key] = Success(pending.pair.copy(endpoint = received.source), rtt, System.currentTimeMillis())
                                     Log.i(TAG, "ICE_CHECK_SUCCEEDED pair=${pending.pair.key} source=${received.source} rtt=${rtt}ms")
+                                    LinkoConnectionDiagnostics.record(
+                                        ConnectionStage.ICE_CHECKING,
+                                        "ICE_CHECK_SUCCEEDED",
+                                        "UDP connectivity check succeeded (${rtt} ms)",
+                                        ConnectionSeverity.SUCCESS,
+                                        sessionId,
+                                        mapOf(
+                                            "localCandidates" to localCandidates.size.toString(),
+                                            "remoteCandidates" to remoteCandidates.size.toString(),
+                                            "successfulChecks" to successfulPairs.size.toString(),
+                                        ),
+                                    )
                                 }
                                 EncryptedDatagramTunnel.PacketType.HANDSHAKE -> {
                                     val payload = decodePayload(received.payload) ?: continue
@@ -212,14 +252,17 @@ object DirectP2pNegotiator {
                                             val senderGeneration = payload.optInt("generation", -1)
                                             if (controlling) continue
                                             Log.i(TAG, "ICE_NOMINATION_RECEIVED localGeneration=$generation remoteGeneration=${remoteGeneration ?: -1} senderGeneration=$senderGeneration")
+                                            LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_RECEIVED", "Remote selected a validated direct path", ConnectionSeverity.INFO, sessionId)
                                             if (remoteGeneration == null || senderGeneration != remoteGeneration) {
                                                 Log.w(TAG, "ICE_NOMINATION_REJECTED reason=GENERATION_MISMATCH localGeneration=$generation remoteGeneration=${remoteGeneration ?: -1} senderGeneration=$senderGeneration")
+                                                LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_REJECTED", "Rejected nomination because ICE generation did not match", ConnectionSeverity.WARNING, sessionId)
                                                 continue
                                             }
                                             val endpoint = received.source
                                             val matches = successfulPairs.values.any { it.pair.endpoint == endpoint }
                                             if (!matches) {
                                                 Log.w(TAG, "ICE_NOMINATION_REJECTED reason=UNVALIDATED_ENDPOINT endpoint=$endpoint")
+                                                LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_REJECTED", "Rejected nomination because endpoint was not validated", ConnectionSeverity.WARNING, sessionId)
                                                 continue
                                             }
                                             runCatching {
@@ -231,13 +274,16 @@ object DirectP2pNegotiator {
                                                     EncryptedDatagramTunnel.PacketType.HANDSHAKE)
                                                 selectedPeer[0] = endpoint
                                                 Log.i(TAG, "ICE_NOMINATION_ACK_SENT endpoint=$endpoint remoteGeneration=$senderGeneration")
+                                                LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_ACK_SENT", "Direct path nomination acknowledged", ConnectionSeverity.SUCCESS, sessionId)
                                             }.onFailure { lastFailure = "NOMINATION_ACK_SEND_FAILED" }
                                         }
                                         "final_ready" -> {
                                             val senderGeneration = payload.optInt("generation", -1)
                                             Log.i(TAG, "ICE_FINAL_READY_RECEIVED localGeneration=$generation remoteGeneration=${remoteGeneration ?: -1} senderGeneration=$senderGeneration")
+                                            LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "ICE_FINAL_READY_RECEIVED", "Final direct handshake received", ConnectionSeverity.INFO, sessionId)
                                             if (remoteGeneration == null || senderGeneration != remoteGeneration) {
                                                 Log.w(TAG, "ICE_FINAL_READY_REJECTED reason=GENERATION_MISMATCH localGeneration=$generation remoteGeneration=${remoteGeneration ?: -1} senderGeneration=$senderGeneration")
+                                                LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "ICE_FINAL_READY_REJECTED", "Rejected final handshake because ICE generation did not match", ConnectionSeverity.WARNING, sessionId)
                                                 continue
                                             }
                                             runCatching {
@@ -250,6 +296,7 @@ object DirectP2pNegotiator {
                                                 selectedPeer[0] = received.source
                                                 selected.set(true)
                                                 Log.i(TAG, "ICE_FINAL_READY_ACK_SENT endpoint=${received.source}")
+                                                LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "ICE_FINAL_READY_ACK_SENT", "Final direct handshake acknowledged", ConnectionSeverity.SUCCESS, sessionId)
                                             }.onFailure { lastFailure = "FINAL_HANDSHAKE_ACK_FAILED" }
                                         }
                                     }
@@ -264,10 +311,21 @@ object DirectP2pNegotiator {
                 }
 
                 while (isActive && !selected.get() && System.currentTimeMillis() < deadline) {
-                    buildPairs(localCandidates, remoteCandidates.values.sortedWith(compareByDescending<IceCandidate> { it.priority }.thenBy { it.id }))
-                        .sortedByDescending { it.score }.take(MAX_PAIR_CHECKS).forEach { pair ->
-                            if (launchedPairs.add(pair.key)) launchCheckWorker(this, pair, socket, sessionId, sessionKey, role, generation, deadline, pendingChecks)
-                        }
+                    val pairs = buildPairs(localCandidates, remoteCandidates.values.sortedWith(compareByDescending<IceCandidate> { it.priority }.thenBy { it.id }))
+                        .sortedByDescending { it.score }.take(MAX_PAIR_CHECKS)
+                    if (pairs.isNotEmpty()) {
+                        LinkoConnectionDiagnostics.record(
+                            ConnectionStage.ICE_CHECKING,
+                            "ICE_PAIR_CHECKS_STARTED",
+                            "Checking ${pairs.size} candidate pairs",
+                            ConnectionSeverity.INFO,
+                            sessionId,
+                            mapOf("localCandidates" to localCandidates.size.toString(), "remoteCandidates" to remoteCandidates.size.toString()),
+                        )
+                    }
+                    pairs.forEach { pair ->
+                        if (launchedPairs.add(pair.key)) launchCheckWorker(this, pair, socket, sessionId, sessionKey, role, generation, deadline, pendingChecks)
+                    }
                     if (controlling && successfulPairs.isNotEmpty()) {
                         val firstSuccessAt = successfulPairs.values.minOf { it.firstSeenAt }
                         if (System.currentTimeMillis() - firstSuccessAt >= FIRST_SUCCESS_GRACE_MS) {
@@ -275,7 +333,9 @@ object DirectP2pNegotiator {
                             for (success in candidates) {
                                 if (System.currentTimeMillis() >= deadline) break
                                 receiverPaused.set(true)
-                                val nominationOk = try { nominate(success, UUID.randomUUID().toString(), socket, sessionId, sessionKey, role, generation, deadline) } finally { receiverPaused.set(false) }
+                                val nominationId = UUID.randomUUID().toString()
+                                LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_STARTED", "Selecting the best validated direct path", ConnectionSeverity.INFO, sessionId)
+                                val nominationOk = try { nominate(success, nominationId, socket, sessionId, sessionKey, role, generation, deadline) } finally { receiverPaused.set(false) }
                                 if (!nominationOk) continue
                                 receiverPaused.set(true)
                                 val finalOk = try { completeFinalHandshake(socket, success.pair.endpoint, sessionId, sessionKey, role, generation, deadline, success.pair.local.id, success.pair.remote.id) } finally { receiverPaused.set(false) }
@@ -296,6 +356,7 @@ object DirectP2pNegotiator {
         val peer = selectedPeer[0]
         if (selected.get() && peer != null) {
             Log.i(TAG, "ICE_CONNECTED session=$sessionId generation=$generation peer=$peer")
+            LinkoConnectionDiagnostics.record(ConnectionStage.CONNECTED, "ICE_CONNECTED", "Direct peer path verified", ConnectionSeverity.SUCCESS, sessionId)
             Result(socket, peer)
         } else {
             socket.close()
@@ -305,6 +366,15 @@ object DirectP2pNegotiator {
                 else -> "NOMINATION_FAILED"
             }
             Log.e(TAG, "ICE_FAILED session=$sessionId generation=$generation reason=$reason local=${localCandidates.size} remote=${remoteCandidates.size} successful=${successfulPairs.size}")
+            LinkoConnectionDiagnostics.fail(
+                reason,
+                sessionId,
+                mapOf(
+                    "localCandidates" to localCandidates.size.toString(),
+                    "remoteCandidates" to remoteCandidates.size.toString(),
+                    "successfulChecks" to successfulPairs.size.toString(),
+                ),
+            )
             throw LinkoNetworkException(reason)
         }
     }
@@ -317,6 +387,13 @@ object DirectP2pNegotiator {
                 if (System.currentTimeMillis() >= deadline) return@launch
                 val transaction = UUID.randomUUID().toString()
                 pendingChecks[transaction] = PendingCheck(transaction, pair, System.currentTimeMillis())
+                LinkoConnectionDiagnostics.record(
+                    ConnectionStage.ICE_CHECKING,
+                    "ICE_CHECK_ATTEMPT",
+                    "Checking candidate pair ${pair.key} (attempt ${attempt + 1}/$CHECK_RETRIES)",
+                    ConnectionSeverity.INFO,
+                    sessionId,
+                )
                 try {
                     EncryptedDatagramTunnel(socket, pair.endpoint, sessionId, role, sessionKey).send(
                         jsonBytes(JSONObject().put("ice", 2).put("check", true).put("transaction", transaction)
@@ -346,10 +423,12 @@ object DirectP2pNegotiator {
                 if (ack.optString("kind") != "nomination_ack") continue
                 if (ack.optString("nominationId") != nominationId) continue
                 Log.i(TAG, "ICE_NOMINATION_ACK_RECEIVED nominationId=$nominationId")
+                LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_ACK_RECEIVED", "Direct path nomination was acknowledged", ConnectionSeverity.SUCCESS, sessionId)
                 return true
             }
         }
         Log.w(TAG, "ICE_NOMINATION_FAILED nominationId=$nominationId endpoint=${success.pair.endpoint}")
+        LinkoConnectionDiagnostics.record(ConnectionStage.NOMINATING, "ICE_NOMINATION_FAILED", "Direct path nomination was not acknowledged", ConnectionSeverity.ERROR, sessionId)
         return false
     }
 
@@ -370,10 +449,12 @@ object DirectP2pNegotiator {
                 if (ack.optString("kind") != "final_ready_ack") continue
                 if (ack.optString("nonce") != nonce) continue
                 Log.i(TAG, "ICE_FINAL_READY_ACK_RECEIVED nonce=$nonce peer=${received.source}")
+                LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "ICE_FINAL_READY_ACK_RECEIVED", "Final direct handshake confirmed", ConnectionSeverity.SUCCESS, sessionId)
                 return true
             }
         }
         Log.w(TAG, "ICE_FINAL_HANDSHAKE_FAILED peer=$peer")
+        LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "ICE_FINAL_HANDSHAKE_FAILED", "Final direct handshake was not acknowledged", ConnectionSeverity.ERROR, sessionId)
         return false
     }
 
