@@ -2,6 +2,7 @@ package com.linkshare.app.network
 
 import com.linkshare.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -17,7 +18,7 @@ class LinkoSignalingClient(
         SignalingTicket(
             sessionId = response.optString("sessionId", sessionId),
             deviceId = response.optString("deviceId"),
-            expiresAtEpochMillis = response.optLong("expiresAt", System.currentTimeMillis() + 300_000L)
+            expiresAtEpochMillis = response.optLong("expiresAt", System.currentTimeMillis() + 300_000L),
         )
     }
 
@@ -27,21 +28,37 @@ class LinkoSignalingClient(
             JSONObject()
                 .put("p_session_id", sessionId)
                 .put("p_kind", kind.wireValue)
-                .put("p_payload", payload)
+                .put("p_payload", payload),
         )
         SignalEnvelope.fromJson(response)
     }
 
+    /**
+     * Polls the database-backed signaling queue. Realtime is intentionally not required for the
+     * direct path; this RPC poll is the reliable fallback when a Realtime websocket is unavailable.
+     */
     suspend fun receive(sessionId: String): List<SignalEnvelope> = withContext(Dispatchers.IO) {
-        val response = rpc("linko_receive_signals", JSONObject().put("p_session_id", sessionId), connectTimeoutMs = 2_500, readTimeoutMs = 1_500)
-        val result = response.optJSONArray("signals") ?: org.json.JSONArray()
-        buildList(result.length()) {
-            for (i in 0 until result.length()) {
-                result.optJSONObject(i)?.let { json ->
-                    add(SignalEnvelope.fromJson(json))
+        var lastError: Throwable? = null
+        repeat(RECEIVE_ATTEMPTS) { attempt ->
+            try {
+                val response = rpc(
+                    "linko_receive_signals",
+                    JSONObject().put("p_session_id", sessionId),
+                    connectTimeoutMs = 3_500,
+                    readTimeoutMs = 1_800,
+                )
+                val result = response.optJSONArray("signals") ?: org.json.JSONArray()
+                return@withContext buildList(result.length()) {
+                    for (i in 0 until result.length()) {
+                        result.optJSONObject(i)?.let { json -> add(SignalEnvelope.fromJson(json)) }
+                    }
                 }
+            } catch (error: Throwable) {
+                lastError = error
+                if (attempt + 1 < RECEIVE_ATTEMPTS) delay(RECEIVE_RETRY_DELAYS_MS[attempt])
             }
         }
+        throw lastError ?: LinkoSignalingException(-1, "signaling_receive_failed")
     }
 
     private fun rpc(
@@ -73,6 +90,11 @@ class LinkoSignalingClient(
         } finally {
             connection.disconnect()
         }
+    }
+
+    private companion object {
+        const val RECEIVE_ATTEMPTS = 3
+        val RECEIVE_RETRY_DELAYS_MS = longArrayOf(80L, 180L)
     }
 }
 
