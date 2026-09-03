@@ -65,7 +65,7 @@ object LinkoConnectionDiagnostics {
         _snapshot.value = previous.copy(
             sessionId = sessionId ?: previous.sessionId,
             stage = stage,
-            progress = stage.progress.coerceIn(0f, 1f),
+            progress = if (stage == ConnectionStage.FAILED) previous.progress else stage.progress.coerceIn(0f, 1f),
             headline = message,
             failureReason = failure,
             localCandidates = localCandidates,
