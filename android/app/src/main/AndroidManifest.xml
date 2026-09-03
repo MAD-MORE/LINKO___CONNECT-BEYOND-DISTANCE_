@@ -40,7 +40,7 @@
         <service
             android:name=".provider.LinkoProviderService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|connectedDevice" />
+            android:foregroundServiceType="dataSync" />
         <service
             android:name=".vpn.LinkShareVpnService"
             android:exported="false"
