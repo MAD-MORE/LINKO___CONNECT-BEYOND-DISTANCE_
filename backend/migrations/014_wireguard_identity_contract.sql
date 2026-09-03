@@ -1,6 +1,9 @@
 -- LINKO WireGuard identity contract.
 -- Each Android installation owns its WireGuard private key locally.
 -- Supabase stores only the public key and exposes it to the authenticated session peers.
+-- The current production data plane remains LINKO's authenticated direct UDP transport.
+-- WireGuard identity/config metadata is registered and exchanged, but is not selected as the
+-- active transport until the provider-side packet forwarding engine is ready.
 
 ALTER TABLE public.devices
     ADD COLUMN IF NOT EXISTS wireguard_public_key TEXT;
@@ -93,7 +96,7 @@ BEGIN
     'port', NULL,
     'key', encode(v_session.tunnel_key, 'base64'),
     'role', v_role,
-    'transport', 'wireguard_udp',
+    'transport', 'direct_udp',
     'relay', false,
     'wireguardPublicKey', v_local_wg_key,
     'peerWireguardPublicKey', v_peer_wg_key,
@@ -108,3 +111,5 @@ REVOKE ALL ON FUNCTION public.linko_set_wireguard_public_key(UUID, TEXT) FROM PU
 GRANT EXECUTE ON FUNCTION public.linko_set_wireguard_public_key(UUID, TEXT) TO authenticated;
 REVOKE ALL ON FUNCTION public.linko_tunnel_config(UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.linko_tunnel_config(UUID) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
