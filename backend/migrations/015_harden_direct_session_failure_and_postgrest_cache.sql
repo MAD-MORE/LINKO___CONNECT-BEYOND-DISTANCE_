@@ -1,4 +1,4 @@
--- LINKO migration 015: direct-session failure state and PostgREST cache refresh.
+-- LINKO migration 015: direct-session terminal states and PostgREST cache refresh.
 -- Supabase remains the control plane; data-plane traffic stays direct UDP/P2P.
 
 CREATE OR REPLACE FUNCTION public.linko_transition_session(p_session_id UUID, p_state TEXT)
@@ -23,7 +23,7 @@ BEGIN
   IF r.id IS NULL OR p.id IS NULL THEN RAISE EXCEPTION 'session_devices_invalid'; END IF;
   IF r.user_id <> uid AND p.user_id <> uid THEN RAISE EXCEPTION 'session_party_required'; END IF;
 
-  IF s.expires_at <= NOW() AND current_state NOT IN ('revoked','expired','denied','failed') THEN
+  IF s.expires_at <= NOW() AND current_state NOT IN ('revoked','expired','denied','failed','disconnected') THEN
     UPDATE public.sessions SET state='expired' WHERE id=p_session_id RETURNING * INTO s;
     RAISE EXCEPTION 'session_expired';
   END IF;
@@ -50,12 +50,18 @@ BEGIN
       IF current_state NOT IN ('signaling','connected') THEN RAISE EXCEPTION 'invalid_transition'; END IF;
       UPDATE public.sessions SET state='connected' WHERE id=p_session_id RETURNING * INTO s;
     WHEN 'failed' THEN
-      IF current_state IN ('denied','revoked','expired') THEN
+      IF current_state IN ('denied','revoked','expired','disconnected') THEN
         RETURN jsonb_build_object('id',s.id,'state',s.state,'expiresAt',EXTRACT(EPOCH FROM s.expires_at)*1000);
       END IF;
       UPDATE public.sessions SET state='failed' WHERE id=p_session_id RETURNING * INTO s;
+    WHEN 'disconnected' THEN
+      IF current_state IN ('denied','revoked','expired','failed','disconnected') THEN
+        RETURN jsonb_build_object('id',s.id,'state',s.state,'expiresAt',EXTRACT(EPOCH FROM s.expires_at)*1000);
+      END IF;
+      IF current_state NOT IN ('requested','approved','signaling','connected') THEN RAISE EXCEPTION 'invalid_transition'; END IF;
+      UPDATE public.sessions SET state='disconnected' WHERE id=p_session_id RETURNING * INTO s;
     WHEN 'revoked' THEN
-      IF current_state NOT IN ('approved','signaling','connected','failed') THEN RAISE EXCEPTION 'invalid_transition'; END IF;
+      IF current_state NOT IN ('approved','signaling','connected','failed','disconnected') THEN RAISE EXCEPTION 'invalid_transition'; END IF;
       UPDATE public.sessions SET state='revoked', revoked_at=NOW() WHERE id=p_session_id RETURNING * INTO s;
     ELSE
       RAISE EXCEPTION 'invalid_session_state_transition';
