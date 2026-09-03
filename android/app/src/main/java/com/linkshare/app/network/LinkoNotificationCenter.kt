@@ -167,15 +167,24 @@ object LinkoNotificationCenter {
                 )
             )
 
-            is LinkoRealtimeEvent.IncomingConnectionRequest -> add(
-                LinkoNotification(
-                    id = "connection-request:${event.sessionId}",
-                    title = "Incoming Connection Request",
-                    message = "A trusted friend is asking to use your internet connection.",
-                    kind = LinkoNotification.Kind.CONNECTION,
-                    requestId = event.sessionId,
+            is LinkoRealtimeEvent.IncomingConnectionRequest -> {
+                val name = event.peerName?.takeIf { it.isNotBlank() } ?: "A trusted friend"
+                add(
+                    LinkoNotification(
+                        id = "connection-request:${event.sessionId}",
+                        title = "Incoming Connection Request",
+                        message = "$name wants to use your LINKO Internet connection.",
+                        kind = LinkoNotification.Kind.CONNECTION,
+                        requestId = event.sessionId,
+                        actorName = name,
+                    )
                 )
-            )
+                postSimpleNotification(
+                    "Incoming LINKO Connection",
+                    "$name wants to connect to your Internet.",
+                    BASE_NOTIFICATION_ID + event.sessionId.hashCode().absoluteValueSafe(),
+                )
+            }
 
             is LinkoRealtimeEvent.SessionStateChanged -> {
                 val state = event.state ?: return
@@ -188,15 +197,25 @@ object LinkoNotificationCenter {
                     "expired" -> "LINKO connection session expired."
                     else -> "Connection state changed to $state."
                 }
+                val kind = when (state) {
+                    "connected", "direct_verified" -> LinkoNotification.Kind.CONNECTION_CONNECTED
+                    "provider_connection_failed", "failed", "denied", "expired", "revoked", "disconnected" -> LinkoNotification.Kind.CONNECTION_FAILED
+                    else -> LinkoNotification.Kind.CONNECTION
+                }
                 add(
                     LinkoNotification(
                         id = "session:${event.sessionId ?: state}:$state",
-                        title = "Connection Update",
+                        title = if (kind == LinkoNotification.Kind.CONNECTION_CONNECTED) "LINKO Connected" else "Connection Update",
                         message = message,
-                        kind = LinkoNotification.Kind.CONNECTION,
+                        kind = kind,
                         requestId = event.sessionId,
                     )
                 )
+                if (state == "connected" || state == "direct_verified") {
+                    postSimpleNotification("LINKO Connected", message, BASE_NOTIFICATION_ID + 60)
+                } else if (state == "provider_connection_failed" || state == "failed" || state == "denied" || state == "expired" || state == "revoked" || state == "disconnected") {
+                    postSimpleNotification("LINKO Connection Update", message, BASE_NOTIFICATION_ID + 61)
+                }
             }
 
             else -> Unit
