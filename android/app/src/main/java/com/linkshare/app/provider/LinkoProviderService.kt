@@ -31,6 +31,7 @@ import com.linkshare.app.tunnel.FullIpProviderTransportAdapter
 import com.linkshare.app.tunnel.ProviderTunnelRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -48,6 +49,7 @@ class LinkoProviderService : Service() {
     private val seen = mutableSetOf<String>()
     private val runners = ConcurrentHashMap<String, ProviderTunnelRunner>()
     private val startingSessions = ConcurrentHashMap.newKeySet<String>()
+    private val startupJobs = ConcurrentHashMap<String, Job>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -83,6 +85,7 @@ class LinkoProviderService : Service() {
             }
         }
         runCatching { cm.registerNetworkCallback(request, networkCallback!!) }
+            .onFailure { Log.w(TAG, "Provider network callback registration failed: ${it.message}") }
     }
 
     private fun hasActiveInternet(): Boolean {
@@ -112,61 +115,77 @@ class LinkoProviderService : Service() {
     }
 
     private fun accept(requestId: String) {
+        val id = requestId.trim()
+        if (id.isBlank()) return
         scope.launch {
-            Log.i(TAG, "ACCEPT_REQUEST session=$requestId")
-            notificationManager().cancel(requestId.hashCode())
+            Log.i(TAG, "ACCEPT_REQUEST session=$id")
+            notificationManager().cancel(id.hashCode())
             if (!hasActiveInternet()) {
-                failSession(requestId, "provider_internet_unavailable")
+                failSession(id, "provider_internet_unavailable")
                 return@launch
             }
-            runCatching { api.transition(requestId, "approved") }
+            val state = runCatching { api.session(id).state.trim().lowercase() }.getOrNull()
+            if (state in TERMINAL_STATES || state == "connected") {
+                Log.i(TAG, "Ignoring accept for terminal/connected session=$id state=$state")
+                return@launch
+            }
+            runCatching { api.transition(id, "approved") }
                 .onSuccess {
-                    Log.i(TAG, "SESSION_APPROVED session=$requestId")
-                    startApproved(requestId)
+                    Log.i(TAG, "SESSION_APPROVED session=$id")
+                    startApproved(id)
                 }
-                .onFailure { error -> failSession(requestId, error.message ?: "approval_failed", error) }
+                .onFailure { error -> failSession(id, error.message ?: "approval_failed", error) }
         }
     }
 
     private fun startApproved(requestId: String) {
-        if (requestId.isBlank()) return
-        if (runners.containsKey(requestId)) {
-            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$requestId")
+        val id = requestId.trim()
+        if (id.isBlank()) return
+        if (runners.containsKey(id)) {
+            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$id")
             return
         }
-        if (!startingSessions.add(requestId)) {
-            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$requestId startup_already_in_progress")
+        if (!startingSessions.add(id)) {
+            Log.i(TAG, "PROVIDER_SERVICE_ALREADY_RUNNING session=$id startup_already_in_progress")
             return
         }
 
-        scope.launch {
-            Log.i(TAG, "PROVIDER_SERVICE_START session=$requestId")
+        val job = scope.launch {
+            Log.i(TAG, "PROVIDER_SERVICE_START session=$id")
             try {
-                notificationManager().cancel(requestId.hashCode())
+                notificationManager().cancel(id.hashCode())
                 if (!hasActiveInternet()) throw LinkoNetworkException("provider_internet_unavailable")
 
-                var config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
+                var config = runCatching { api.tunnelConfig(id) }.getOrNull()
                 if (config == null) {
                     repeat(TUNNEL_CONFIG_RETRIES) {
+                        currentCoroutineContext().ensureActive()
                         delay(TUNNEL_CONFIG_RETRY_MS)
-                        config = runCatching { api.tunnelConfig(requestId) }.getOrNull()
+                        config = runCatching { api.tunnelConfig(id) }.getOrNull()
                     }
                 }
                 val activeConfig = config ?: throw LinkoNetworkException("tunnel_config_unavailable")
                 Log.i(TAG, "TUNNEL_CONFIG_LOADED session=${activeConfig.sessionId} transport=${activeConfig.transport}")
-                if (activeConfig.sessionId != requestId) throw LinkoNetworkException("session_id_mismatch")
+                if (activeConfig.sessionId != id) throw LinkoNetworkException("session_id_mismatch")
                 if (activeConfig.transport != "direct_udp") throw LinkoNetworkException("unsupported_direct_transport")
                 if (activeConfig.role != "provider") throw LinkoNetworkException("invalid_provider_role")
                 if (activeConfig.key.size != 32) throw LinkoNetworkException("invalid_tunnel_key")
 
+                val currentState = api.session(id).state.trim().lowercase()
+                if (currentState in TERMINAL_STATES || currentState == "connected") {
+                    Log.i(TAG, "Provider startup aborted because session is terminal/connected session=$id state=$currentState")
+                    return@launch
+                }
+
                 val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() } ?: throw LinkoNetworkException("device_auth_required")
                 api.transition(activeConfig.sessionId, "signaling")
-                Log.i(TAG, "SESSION_SIGNALING session=$requestId")
+                Log.i(TAG, "SESSION_SIGNALING session=$id")
                 val socket = runCatching { DatagramSocket(0) }.getOrElse { throw LinkoNetworkException("udp_socket_creation_failed: ${it.message}") }
                 try {
-                    Log.i(TAG, "UDP_SOCKET_CREATED session=$requestId port=${socket.localPort}")
+                    currentCoroutineContext().ensureActive()
+                    Log.i(TAG, "UDP_SOCKET_CREATED session=$id port=${socket.localPort}")
                     LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
-                    Log.i(TAG, "P2P_NEGOTIATION_STARTED session=$requestId")
+                    Log.i(TAG, "P2P_NEGOTIATION_STARTED session=$id")
                     val negotiated = DirectP2pNegotiator.establish(
                         sessionId = activeConfig.sessionId,
                         sessionKey = activeConfig.key,
@@ -174,7 +193,7 @@ class LinkoProviderService : Service() {
                         signaling = LinkoSignalingClient(accessToken = token),
                         socket = socket,
                     )
-                    Log.i(TAG, "UDP_CHECK_SUCCEEDED session=$requestId peer=${negotiated.peer}")
+                    currentCoroutineContext().ensureActive()
                     val runner = ProviderTunnelRunner(
                         socket = negotiated.socket,
                         endpoint = negotiated.peer,
@@ -184,31 +203,44 @@ class LinkoProviderService : Service() {
                         adapter = FullIpProviderTransportAdapter(),
                         onClosed = { reason -> handleRunnerClosed(activeConfig.sessionId, reason) },
                     )
-                    runners[requestId] = runner
+                    if (!startingSessions.contains(id)) {
+                        runCatching { runner.stop() }
+                        throw LinkoNetworkException("provider_start_cancelled")
+                    }
+                    runners[id] = runner
                     runner.start()
                     api.transition(activeConfig.sessionId, "connected")
                     LinkoEngineBridge.reportTunnelState("connected", "Direct connection established; Provider is sharing Internet")
                     notificationManager().notify(NOTIFICATION_ID, serviceNotification("Sharing Active", "Direct encrypted connection is live"))
-                    Log.i(TAG, "TUNNEL_STARTED session=$requestId peer=${negotiated.peer}")
-                    Log.i(TAG, "SESSION_CONNECTED session=$requestId")
-                    LinkoEngineBridge.markProviderStartFinished(requestId)
+                    Log.i(TAG, "TUNNEL_STARTED session=$id peer=${negotiated.peer}")
+                    Log.i(TAG, "SESSION_CONNECTED session=$id")
+                    LinkoEngineBridge.markProviderStartFinished(id)
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    runCatching { socket.close() }
+                    throw error
                 } catch (error: Exception) {
                     runCatching { socket.close() }
                     throw error
                 }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                Log.i(TAG, "Provider startup cancelled session=$id")
+                throw error
             } catch (error: Exception) {
-                failSession(requestId, error.message ?: "direct_connection_failed", error)
+                failSession(id, error.message ?: "direct_connection_failed", error)
             } finally {
-                startingSessions.remove(requestId)
+                startingSessions.remove(id)
+                startupJobs.remove(id)
             }
         }
+        startupJobs[id] = job
     }
 
     private fun handleRunnerClosed(sessionId: String, reason: String) {
         runners.remove(sessionId)
         startingSessions.remove(sessionId)
+        startupJobs.remove(sessionId)?.cancel()
         scope.launch {
-            val state = runCatching { api.session(sessionId).state }.getOrNull()
+            val state = runCatching { api.session(sessionId).state.trim().lowercase() }.getOrNull()
             if (state in TERMINAL_STATES) return@launch
             runCatching { api.transition(sessionId, "disconnected") }
                 .onFailure { Log.w(TAG, "Failed to publish provider disconnect session=$sessionId: ${it.message}") }
@@ -220,25 +252,37 @@ class LinkoProviderService : Service() {
     }
 
     private fun failSession(sessionId: String, reason: String, error: Throwable? = null) {
-        if (error != null) Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason", error)
-        else Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason")
+        val id = sessionId.trim()
+        if (id.isBlank()) return
+        if (error != null) Log.e(TAG, "TUNNEL_FAILED session=$id reason=$reason", error)
+        else Log.e(TAG, "TUNNEL_FAILED session=$id reason=$reason")
+        startupJobs.remove(id)?.cancel()
+        startingSessions.remove(id)
         scope.launch {
-            runCatching { api.transition(sessionId, "failed") }
-                .onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$sessionId reason=$reason", it) }
-            stopRunner(sessionId)
-            LinkoEngineBridge.markProviderStartFinished(sessionId)
+            runCatching {
+                val state = api.session(id).state.trim().lowercase()
+                if (state !in TERMINAL_STATES && state != "connected") api.transition(id, "failed")
+            }.onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$id reason=$reason", it) }
+            stopRunner(id)
+            LinkoEngineBridge.markProviderStartFinished(id)
             LinkoEngineBridge.reportTunnelState("failed", reason)
-            Log.e(TAG, "SESSION_FAILED session=$sessionId reason=$reason")
+            Log.e(TAG, "SESSION_FAILED session=$id reason=$reason")
             notificationManager().notify(NOTIFICATION_ID, serviceNotification("Connection Failed", reason.replace('_', ' ')))
         }
     }
 
     private fun decline(requestId: String) {
+        val id = requestId.trim()
+        if (id.isBlank()) return
         scope.launch {
-            notificationManager().cancel(requestId.hashCode())
-            stopRunner(requestId)
-            LinkoEngineBridge.markProviderStartFinished(requestId)
-            runCatching { api.transition(requestId, "denied") }
+            notificationManager().cancel(id.hashCode())
+            stopRunner(id)
+            startupJobs.remove(id)?.cancel()
+            LinkoEngineBridge.markProviderStartFinished(id)
+            runCatching {
+                val state = api.session(id).state.trim().lowercase()
+                if (state !in TERMINAL_STATES && state != "connected") api.transition(id, "denied")
+            }
             notificationManager().notify(NOTIFICATION_ID, serviceNotification("Provider Ready", "The request was declined"))
         }
     }
@@ -267,7 +311,12 @@ class LinkoProviderService : Service() {
     private fun serviceNotification(title: String, text: String): Notification = Notification.Builder(this, CHANNEL_ID).setSmallIcon(R.drawable.ic_launcher).setContentTitle(title).setContentText(text).setContentIntent(PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).setOngoing(true).build()
     private fun createChannel() { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) notificationManager().createNotificationChannel(NotificationChannel(CHANNEL_ID, "LINKO Provider", NotificationManager.IMPORTANCE_HIGH)) }
     private fun notificationManager() = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private fun stopRunner(sessionId: String) { startingSessions.remove(sessionId); runners.remove(sessionId)?.stop() }
+
+    private fun stopRunner(sessionId: String) {
+        startupJobs.remove(sessionId)?.cancel()
+        startingSessions.remove(sessionId)
+        runners.remove(sessionId)?.stop()
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -317,11 +366,14 @@ class LinkoProviderService : Service() {
     override fun onDestroy() {
         isRunning = false
         runCatching { networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(it) } }
+        startupJobs.values.toList().forEach { it.cancel() }
+        startupJobs.clear()
         releaseLocks(); runners.values.toList().forEach { it.stop() }; runners.clear(); startingSessions.clear(); scope.cancel(); super.onDestroy()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.e(TAG, "PROVIDER_SERVICE_TIMEOUT startId=$startId fgsType=$fgsType")
+        startupJobs.values.toList().forEach { it.cancel() }
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf(startId)
     }
