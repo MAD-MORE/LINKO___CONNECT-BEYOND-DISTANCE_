@@ -2,11 +2,14 @@ package com.linkshare.app.network
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +45,11 @@ data class LinkoNotification(
         FRIEND_DECLINED,
         FRIEND_REMOVED,
         CONNECTION,
+        FRIEND_ONLINE,
+        FRIEND_OFFLINE,
+        CONNECTION_CONNECTED,
+        CONNECTION_FAILED,
+        REALTIME_ERROR,
     }
 }
 
@@ -53,6 +61,8 @@ object LinkoNotificationCenter {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _notifications = MutableStateFlow<List<LinkoNotification>>(emptyList())
+    private val knownFriends = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val lastPresence = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     val notifications: StateFlow<List<LinkoNotification>> = _notifications.asStateFlow()
 
     @Volatile private var started = false
@@ -66,6 +76,7 @@ object LinkoNotificationCenter {
             appContext = context.applicationContext
             ensureChannel()
             scope.launch {
+                refreshFriendCache()
                 LinkoRealtimeManager.events.collect { event -> handle(event) }
             }
         }
@@ -144,6 +155,8 @@ object LinkoNotificationCenter {
                 postSimpleNotification("Friend Request Declined", "Your LINKO friend request was declined.")
             }
 
+            is LinkoRealtimeEvent.PresenceChanged -> handlePresence(event.presence)
+
             is LinkoRealtimeEvent.FriendRemoved -> add(
                 LinkoNotification(
                     id = "friend-removed:${event.requestId}",
@@ -190,6 +203,41 @@ object LinkoNotificationCenter {
         }
     }
 
+    private suspend fun handlePresence(presence: LinkoPresence) {
+        val auth = appContext?.let { LinkoAuth(it) }
+        if (presence.userId == auth?.currentUserId()) return
+        if (!knownFriends.containsKey(presence.userId)) refreshFriendCache()
+        val friendName = knownFriends[presence.userId] ?: return
+        val wasOnline = lastPresence.put(presence.userId, presence.online)
+        if (wasOnline == null || wasOnline == presence.online) return
+        val kind = if (presence.online) LinkoNotification.Kind.FRIEND_ONLINE else LinkoNotification.Kind.FRIEND_OFFLINE
+        val title = if (presence.online) "Your Friend Is Online" else "Your Friend Is Offline"
+        val message = if (presence.online) "$friendName is now online on LINKO." else "$friendName is now offline on LINKO."
+        add(LinkoNotification(
+            id = "presence:${presence.userId}:${if (presence.online) "online" else "offline"}",
+            title = title,
+            message = message,
+            kind = kind,
+            actorUserId = presence.userId,
+            actorName = friendName,
+        ))
+        postSimpleNotification(title, message, BASE_NOTIFICATION_ID + presence.userId.hashCode().absoluteValueSafe())
+    }
+
+    private suspend fun refreshFriendCache() {
+        runCatching {
+            val array = LinkoFriendsApiHolder.api.friends().optJSONArray("friends") ?: return
+            val active = HashSet<String>()
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val userId = item.optString("user_id").takeIf { it.isNotBlank() } ?: continue
+                active += userId
+                knownFriends[userId] = item.optString("display_name").ifBlank { "LINKO Friend" }
+            }
+            knownFriends.keys.retainAll(active)
+        }
+    }
+
     private suspend fun findRequest(requestId: String): JSONObject? {
         return runCatching {
             val array = LinkoFriendsApiHolder.api.requests().optJSONArray("requests") ?: return null
@@ -203,6 +251,7 @@ object LinkoNotificationCenter {
 
     private fun postFriendRequestNotification(requestId: String, senderName: String) {
         val context = appContext ?: return
+        if (!notificationsAllowed(context)) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notificationId = BASE_NOTIFICATION_ID + requestId.hashCode().absoluteValueSafe()
 
@@ -241,12 +290,13 @@ object LinkoNotificationCenter {
             .also { manager.notify(notificationId, it) }
     }
 
-    private fun postSimpleNotification(title: String, message: String) {
+    private fun postSimpleNotification(title: String, message: String, notificationId: Int = BASE_NOTIFICATION_ID) {
         val context = appContext ?: return
+        if (!notificationsAllowed(context)) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pending = PendingIntent.getActivity(context, BASE_NOTIFICATION_ID, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        manager.notify(BASE_NOTIFICATION_ID, NotificationCompat.Builder(context, CHANNEL_ID)
+        val pending = PendingIntent.getActivity(context, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        manager.notify(notificationId, NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
             .setContentText(message)
@@ -255,6 +305,10 @@ object LinkoNotificationCenter {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build())
     }
+
+    private fun notificationsAllowed(context: Context): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun broadcastPending(context: Context, intent: Intent, requestCode: Int): PendingIntent =
         PendingIntent.getBroadcast(
