@@ -182,6 +182,7 @@ class LinkoProviderService : Service() {
                         sessionKey = activeConfig.key,
                         scope = scope,
                         adapter = FullIpProviderTransportAdapter(),
+                        onClosed = { reason -> handleRunnerClosed(activeConfig.sessionId, reason) },
                     )
                     runners[requestId] = runner
                     runner.start()
@@ -203,12 +204,27 @@ class LinkoProviderService : Service() {
         }
     }
 
+    private fun handleRunnerClosed(sessionId: String, reason: String) {
+        runners.remove(sessionId)
+        startingSessions.remove(sessionId)
+        scope.launch {
+            val state = runCatching { api.session(sessionId).state }.getOrNull()
+            if (state in TERMINAL_STATES) return@launch
+            runCatching { api.transition(sessionId, "disconnected") }
+                .onFailure { Log.w(TAG, "Failed to publish provider disconnect session=$sessionId: ${it.message}") }
+            LinkoEngineBridge.markProviderStartFinished(sessionId)
+            LinkoEngineBridge.reportTunnelState("stopped", "Direct peer closed the connection")
+            notificationManager().notify(NOTIFICATION_ID, serviceNotification("Provider Ready", "The direct connection has ended"))
+            Log.i(TAG, "SESSION_DISCONNECTED session=$sessionId reason=$reason")
+        }
+    }
+
     private fun failSession(sessionId: String, reason: String, error: Throwable? = null) {
         if (error != null) Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason", error)
         else Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason")
         scope.launch {
             runCatching { api.transition(sessionId, "failed") }
-                .onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$sessionId reason=${it.message}", it) }
+                .onFailure { Log.e(TAG, "SESSION_FAILED state update failed session=$sessionId reason=$reason", it) }
             stopRunner(sessionId)
             LinkoEngineBridge.markProviderStartFinished(sessionId)
             LinkoEngineBridge.reportTunnelState("failed", reason)
@@ -314,6 +330,7 @@ class LinkoProviderService : Service() {
 
     companion object {
         private const val TAG = "LINKO_PROVIDER_SERVICE"
+        private val TERMINAL_STATES = setOf("denied", "revoked", "expired", "failed", "disconnected")
         var isRunning: Boolean = false; private set
         var dataCapBytes: Long = 0L
         const val ACTION_ACCEPT = "com.linkshare.app.provider.ACCEPT"
