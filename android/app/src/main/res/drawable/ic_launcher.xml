@@ -4,22 +4,103 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Frosted-glass rounded app surface -->
     <path
-        android:fillColor="#101417"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#081A2A"
+        android:pathData="M18,0 L90,0 Q108,0 108,18 L108,90 Q108,108 90,108 L18,108 Q0,108 0,90 L0,18 Q0,0 18,0 Z" />
     <path
-        android:strokeColor="#66BFB5"
-        android:strokeWidth="6"
+        android:fillColor="#183B56"
+        android:alpha="0.55"
+        android:pathData="M18,4 L90,4 Q104,4 104,18 L104,90 Q104,104 90,104 L18,104 Q4,104 4,90 L4,18 Q4,4 18,4 Z" />
+
+    <!-- Soft glass highlight -->
+    <path
+        android:strokeColor="#BFEFFF"
+        android:strokeAlpha="0.28"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M20,7 L88,7 Q101,7 101,20" />
+
+    <!-- Frozen luminous globe -->
+    <path
+        android:fillColor="#9DEBFF"
+        android:fillAlpha="0.12"
+        android:pathData="M54,20 A34,34 0,1 0,54,88 A34,34 0,1 0,54,20 Z" />
+    <path
+        android:strokeColor="#D8FAFF"
+        android:strokeAlpha="0.9"
+        android:strokeWidth="3"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,20 A34,34 0,1 0,54,88 A34,34 0,1 0,54,20 Z" />
+
+    <!-- Globe latitude glass lines -->
+    <path
+        android:strokeColor="#8BE7FF"
+        android:strokeAlpha="0.72"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M25,42 C39,50 69,50 83,42" />
+    <path
+        android:strokeColor="#8BE7FF"
+        android:strokeAlpha="0.72"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M25,66 C39,58 69,58 83,66" />
+    <path
+        android:strokeColor="#D8FAFF"
+        android:strokeAlpha="0.62"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M22,54 C38,47 70,47 86,54 C70,61 38,61 22,54 Z" />
+
+    <!-- Globe longitude glass lines -->
+    <path
+        android:strokeColor="#A5EEFF"
+        android:strokeAlpha="0.78"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,20 C38,31 38,77 54,88" />
+    <path
+        android:strokeColor="#A5EEFF"
+        android:strokeAlpha="0.78"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,20 C70,31 70,77 54,88" />
+    <path
+        android:strokeColor="#E9FCFF"
+        android:strokeAlpha="0.7"
+        android:strokeWidth="2"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,21 L54,87" />
+
+    <!-- Internet connection arc -->
+    <path
+        android:strokeColor="#73E8FF"
+        android:strokeAlpha="0.95"
+        android:strokeWidth="3"
         android:strokeLineCap="round"
         android:fillColor="@android:color/transparent"
-        android:pathData="M24,57 C37,35 72,35 84,57" />
+        android:pathData="M24,77 C34,91 73,96 87,73" />
+
+    <!-- Connected network nodes -->
     <path
-        android:strokeColor="#E2A15F"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
-        android:fillColor="@android:color/transparent"
-        android:pathData="M24,57 C37,80 72,80 84,57" />
+        android:fillColor="#E9FCFF"
+        android:pathData="M24,77 m-4,0 a4,4 0,1 0,8 0 a4,4 0,1 0,-8 0" />
     <path
-        android:fillColor="#F7F2E8"
-        android:pathData="M25,51 m-7,0 a7,7 0,1,0 14,0 a7,7 0,1,0 -14,0 M83,51 m-7,0 a7,7 0,1,0 14,0 a7,7 0,1,0 -14,0" />
+        android:fillColor="#78E8FF"
+        android:pathData="M87,73 m-4,0 a4,4 0,1 0,8 0 a4,4 0,1 0,-8 0" />
+    <path
+        android:fillColor="#C7F7FF"
+        android:pathData="M54,20 m-3,0 a3,3 0,1 0,6 0 a3,3 0,1 0,-6 0" />
+
+    <!-- Small frozen sparkles -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9"
+        android:pathData="M86,27 l2,4 4,2 -4,2 -2,4 -2,-4 -4,-2 4,-2 z" />
+    <path
+        android:fillColor="#C9F8FF"
+        android:fillAlpha="0.8"
+        android:pathData="M24,30 l1.5,3 3,1.5 -3,1.5 -1.5,3 -1.5,-3 -3,-1.5 3,-1.5 z" />
 </vector>
