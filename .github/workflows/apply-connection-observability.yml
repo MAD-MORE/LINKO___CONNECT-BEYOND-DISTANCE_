@@ -1,22 +1,24 @@
 name: Apply Connection Observability
 
 on:
-  push:
+  pull_request:
+    types: [opened, synchronize]
     branches:
-      - feature/production-connection-observability
+      - main
+      - master
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: "!contains(github.event.head_commit.message, '[linko-observability-patched]')"
+    if: "!contains(github.event.pull_request.head.sha, '') && github.event.pull_request.head.repo.full_name == github.repository"
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
+      - name: Checkout source branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       - name: Apply production connection diagnostics
@@ -32,4 +34,4 @@ jobs:
             exit 0
           fi
           git commit -m "[linko-observability-patched] Wire real connection diagnostics into LINKO"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
