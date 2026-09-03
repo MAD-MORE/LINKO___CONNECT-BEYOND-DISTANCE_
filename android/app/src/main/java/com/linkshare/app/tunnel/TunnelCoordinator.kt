@@ -4,11 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.linkshare.app.vpn.LinkShareVpnService
 
 class TunnelCoordinator(private val context: Context) {
-    /** Starts the receiver VPN; the service performs direct P2P candidate negotiation itself. */
+    /**
+     * Starts the receiver VPN. The Connect action originates from LINKO's foreground UI, so use
+     * the service start path directly; the VpnService promotes itself to foreground immediately.
+     * This avoids a startForegroundService lifecycle race before the receiver can publish its
+     * direct UDP candidates.
+     */
     fun startDirectVpnTunnel(sessionId: String, sessionKey: ByteArray) {
         require(sessionId.isNotBlank()) { "sessionId is required" }
         require(sessionKey.size == 32) { "sessionKey must be 32 bytes" }
@@ -18,11 +22,8 @@ class TunnelCoordinator(private val context: Context) {
             .putExtra(LinkShareVpnService.EXTRA_ROLE, LinkShareVpnService.ROLE_RECEIVER)
             .putExtra(LinkShareVpnService.EXTRA_SESSION_KEY, sessionKey.copyOf())
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ContextCompat.startForegroundService(context, intent)
-        } else {
-            context.startService(intent)
-        }
+        Log.i(TAG, "START_RECEIVER_VPN session=$sessionId api=${Build.VERSION.SDK_INT}")
+        context.startService(intent)
     }
 
     /** Legacy endpoint-based entry point retained for source compatibility; direct mode rejects server endpoints. */
