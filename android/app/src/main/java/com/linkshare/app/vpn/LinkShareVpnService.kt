@@ -87,7 +87,7 @@ class LinkShareVpnService : VpnService() {
         }
 
         running.set(false)
-        LinkoEngineBridge.reportTunnelState("direct_discovering", "Discovering direct peer candidates")
+        LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
         executor.execute { establishDirectTransport(sessionId, sessionKey, socket, intent) }
         return START_STICKY
     }
