@@ -34,6 +34,8 @@ import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 import com.linkshare.app.ui.theme.Yellow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @Composable
@@ -105,6 +107,25 @@ fun LinkoRealtimeOverlay() {
         }
     }
 
+    // Fallback for when Supabase Realtime is delayed/disconnected: the backend remains authoritative.
+    // Polling the pending-provider RPC makes connection requests visible even when the realtime event was missed.
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            runCatching { LinkoEngineBridge.getPendingProviderRequests().firstOrNull() }
+                .onSuccess { request ->
+                    if (request != null && request.id.isNotBlank() && !processingConnection) {
+                        connectionSessionId = request.id
+                        requesterPeerName = null
+                        statusText = null
+                    } else if (request == null && connectionSessionId != null && !processingConnection) {
+                        connectionSessionId = null
+                        requesterPeerName = null
+                    }
+                }
+            delay(2_000L)
+        }
+    }
+
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
         // Status & Celebration Notification Banner
         if (statusText != null) {
@@ -153,7 +174,7 @@ fun LinkoRealtimeOverlay() {
                                             processingConnection = false
                                             isCelebration = true
                                             statusText = "APPROVED • ESTABLISHING DIRECT TUNNEL"
-                                        } else if (state.contains("failed") || state.contains("error")) {
+                                        } else if (state.contains("failed") || state.contains("error") || state == "no_pending_request") {
                                             processingConnection = false
                                             statusText = state
                                         }
