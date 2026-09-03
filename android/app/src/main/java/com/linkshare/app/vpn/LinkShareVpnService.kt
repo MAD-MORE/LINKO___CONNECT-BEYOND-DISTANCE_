@@ -36,6 +36,7 @@ class LinkShareVpnService : VpnService() {
     private var tunnelInterface: ParcelFileDescriptor? = null
     private var transport: EncryptedDatagramTunnel? = null
     private val running = AtomicBoolean(false)
+    private val terminalFailure = AtomicBoolean(false)
     private val executor = Executors.newFixedThreadPool(3)
     private var scheduler: ScheduledExecutorService? = null
     private val router = IpPacketRouter()
@@ -45,6 +46,7 @@ class LinkShareVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    @Volatile private var activeSessionId: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -70,11 +72,14 @@ class LinkShareVpnService : VpnService() {
         }
 
         stopTunnel()
+        activeSessionId = sessionId
+        terminalFailure.set(false)
         acquireLocks()
 
         val socket = runCatching { DatagramSocket(0) }.getOrElse {
             Log.e(TAG, "Could not create direct UDP socket", it)
             releaseLocks()
+            failSession(sessionId, "udp_socket_creation_failed")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -82,6 +87,7 @@ class LinkShareVpnService : VpnService() {
             Log.e(TAG, "Failed to protect direct UDP socket from VPN routing loop")
             socket.close()
             releaseLocks()
+            failSession(sessionId, "udp_socket_protection_failed")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -160,6 +166,7 @@ class LinkShareVpnService : VpnService() {
     }
 
     private fun failSession(sessionId: String, reason: String) {
+        if (!terminalFailure.compareAndSet(false, true)) return
         runCatching {
             runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "failed") }
         }.onFailure { Log.w(TAG, "Failed to publish terminal session state session=$sessionId: ${it.message}") }
@@ -209,7 +216,12 @@ class LinkShareVpnService : VpnService() {
                     LinkoEngineBridge.updateTrafficStats(bytesDown.get(), bytesUp.get())
                 }
             }
-        } catch (e: Exception) { if (running.get()) { Log.w(TAG, "VPN outbound loop terminated: ${e.message}"); stopTunnel() } }
+        } catch (e: Exception) {
+            if (running.get() && !terminalFailure.get()) {
+                Log.w(TAG, "VPN outbound loop terminated: ${e.message}")
+                activeSessionId?.let { failSession(it, "vpn_outbound_loop_failed") }
+            }
+        }
     }
 
     private fun inboundLoop() {
@@ -237,18 +249,27 @@ class LinkShareVpnService : VpnService() {
                                     val sentAt = if (rx.payload.size >= 8) ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long else System.currentTimeMillis()
                                     transport?.sendPong(sentAt)
                                 }
-                                EncryptedDatagramTunnel.PacketType.CLOSE -> { stopTunnel(); return }
+                                EncryptedDatagramTunnel.PacketType.CLOSE -> {
+                                    stopTunnel()
+                                    return
+                                }
                                 else -> Unit
                             }
                         }
                     } catch (_: java.net.SocketTimeoutException) { }
                 }
             }
-        } catch (e: Exception) { if (running.get()) { Log.w(TAG, "VPN inbound loop terminated: ${e.message}"); stopTunnel() } }
+        } catch (e: Exception) {
+            if (running.get() && !terminalFailure.get()) {
+                Log.w(TAG, "VPN inbound loop terminated: ${e.message}")
+                activeSessionId?.let { failSession(it, "vpn_inbound_loop_failed") }
+            }
+        }
     }
 
-    private fun stopTunnel(reportStoppedState: Boolean = true, failureReason: String? = null) {
+    private fun stopTunnel(reportStoppedState: Boolean = !terminalFailure.get(), failureReason: String? = null) {
         val wasRunning = running.getAndSet(false)
+        val sessionToDisconnect = activeSessionId
         releaseLocks()
         runCatching {
             networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.unregisterNetworkCallback(it) }
@@ -263,9 +284,14 @@ class LinkShareVpnService : VpnService() {
             updateForegroundNotification("LINKO", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
         }
         if (reportStoppedState) {
+            sessionToDisconnect?.let { sessionId ->
+                runCatching { runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "disconnected") } }
+                    .onFailure { Log.w(TAG, "Failed to publish disconnected session=$sessionId: ${it.message}") }
+            }
             LinkoEngineBridge.reportTunnelState("stopped", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
         }
-        Log.i(TAG, "LINKO VPN tunnel stopped. Uploaded=${bytesUp.get()} bytes, downloaded=${bytesDown.get()} bytes")
+        activeSessionId = null
+        Log.i(TAG, "LINKO VPN tunnel stopped. Uploaded=${bytesUp.get()} bytes, downloaded=${bytesDown.get()}")
     }
 
     private fun createChannel() {
@@ -285,7 +311,7 @@ class LinkShareVpnService : VpnService() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) runCatching { startForeground(NOTIFICATION_ID, serviceNotification(title, text)) }
     }
 
-    override fun onRevoke() { stopTunnel(); super.onRevoke() }
+    override fun onRevoke() { failSession(activeSessionId ?: "", "vpn_permission_revoked") ; super.onRevoke() }
     override fun onDestroy() { stopTunnel(); executor.shutdownNow(); super.onDestroy() }
 
     companion object {
