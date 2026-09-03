@@ -167,6 +167,12 @@ class LinkShareVpnService : VpnService() {
 
     private fun failSession(sessionId: String, reason: String) {
         if (!terminalFailure.compareAndSet(false, true)) return
+        if (sessionId.isBlank()) {
+            LinkoEngineBridge.reportTunnelState("failed", reason)
+            updateForegroundNotification("Connection Failed", reason.replace('_', ' '))
+            stopTunnel(reportStoppedState = false, failureReason = reason)
+            return
+        }
         runCatching {
             runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "failed") }
         }.onFailure { Log.w(TAG, "Failed to publish terminal session state session=$sessionId: ${it.message}") }
@@ -284,7 +290,7 @@ class LinkShareVpnService : VpnService() {
             updateForegroundNotification("LINKO", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
         }
         if (reportStoppedState) {
-            sessionToDisconnect?.let { sessionId ->
+            sessionToDisconnect?.takeIf { it.isNotBlank() }?.let { sessionId ->
                 runCatching { runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "disconnected") } }
                     .onFailure { Log.w(TAG, "Failed to publish disconnected session=$sessionId: ${it.message}") }
             }
@@ -311,7 +317,11 @@ class LinkShareVpnService : VpnService() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) runCatching { startForeground(NOTIFICATION_ID, serviceNotification(title, text)) }
     }
 
-    override fun onRevoke() { failSession(activeSessionId ?: "", "vpn_permission_revoked") ; super.onRevoke() }
+    override fun onRevoke() {
+        activeSessionId?.takeIf { it.isNotBlank() }?.let { failSession(it, "vpn_permission_revoked") }
+        runCatching { super.onRevoke() }
+    }
+
     override fun onDestroy() { stopTunnel(); executor.shutdownNow(); super.onDestroy() }
 
     companion object {
