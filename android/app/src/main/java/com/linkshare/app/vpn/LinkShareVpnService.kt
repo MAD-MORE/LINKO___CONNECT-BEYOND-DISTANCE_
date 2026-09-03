@@ -33,10 +33,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Receiver VPN. Supabase is signaling only; the data path is direct authenticated UDP. */
 class LinkShareVpnService : VpnService() {
-    private var tunnelInterface: ParcelFileDescriptor? = null
-    private var transport: EncryptedDatagramTunnel? = null
+    @Volatile private var tunnelInterface: ParcelFileDescriptor? = null
+    @Volatile private var transport: EncryptedDatagramTunnel? = null
     private val running = AtomicBoolean(false)
     private val terminalFailure = AtomicBoolean(false)
+    private val sessionGeneration = AtomicLong(0L)
     private val executor = Executors.newFixedThreadPool(3)
     private var scheduler: ScheduledExecutorService? = null
     private val router = IpPacketRouter()
@@ -51,13 +52,18 @@ class LinkShareVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForeground(NOTIFICATION_ID, serviceNotification("LINKO", "Preparing direct encrypted tunnel"))
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForeground(NOTIFICATION_ID, serviceNotification("LINKO", "Preparing direct encrypted tunnel"))
+            }
+        } catch (error: Throwable) {
+            Log.e(TAG, "LINKO_VPN_FOREGROUND_START_FAILED", error)
+            stopSelf()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)?.trim()
         val role = intent?.getStringExtra(EXTRA_ROLE)
         val sessionKey = intent?.getByteArrayExtra(EXTRA_SESSION_KEY)
         if (sessionId.isNullOrBlank() || role != ROLE_RECEIVER || sessionKey?.size != 32) {
@@ -71,7 +77,8 @@ class LinkShareVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        stopTunnel()
+        val generation = sessionGeneration.incrementAndGet()
+        stopTunnel(reportStoppedState = false)
         activeSessionId = sessionId
         terminalFailure.set(false)
         acquireLocks()
@@ -79,7 +86,7 @@ class LinkShareVpnService : VpnService() {
         val socket = runCatching { DatagramSocket(0) }.getOrElse {
             Log.e(TAG, "Could not create direct UDP socket", it)
             releaseLocks()
-            failSession(sessionId, "udp_socket_creation_failed")
+            failSession(sessionId, generation, "udp_socket_creation_failed")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -87,19 +94,20 @@ class LinkShareVpnService : VpnService() {
             Log.e(TAG, "Failed to protect direct UDP socket from VPN routing loop")
             socket.close()
             releaseLocks()
-            failSession(sessionId, "udp_socket_protection_failed")
+            failSession(sessionId, generation, "udp_socket_protection_failed")
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
         running.set(false)
         LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
-        executor.execute { establishDirectTransport(sessionId, sessionKey, socket, intent) }
+        executor.execute { establishDirectTransport(sessionId, sessionKey.copyOf(), socket, intent, generation) }
         return START_STICKY
     }
 
-    private fun establishDirectTransport(sessionId: String, sessionKey: ByteArray, socket: DatagramSocket, startupIntent: Intent?) {
+    private fun establishDirectTransport(sessionId: String, sessionKey: ByteArray, socket: DatagramSocket, startupIntent: Intent?, generation: Long) {
         try {
+            assertCurrent(sessionId, generation)
             val auth = LinkoAuth(applicationContext)
             val token = auth.currentAccessToken()?.takeIf { it.isNotBlank() }
                 ?: throw LinkoNetworkException("device_auth_required")
@@ -112,6 +120,7 @@ class LinkShareVpnService : VpnService() {
                     socket = socket,
                 )
             }
+            assertCurrent(sessionId, generation)
 
             LinkoEngineBridge.reportTunnelState("direct_verified", "Authenticated direct path verified")
             val allowedPackages = startupIntent?.getStringArrayListExtra(EXTRA_ALLOWED_PACKAGES) ?: emptyList<String>()
@@ -125,7 +134,9 @@ class LinkShareVpnService : VpnService() {
                 .addDnsServer("8.8.8.8")
                 .setBlocking(true)
             for (pkg in allowedPackages) runCatching { builder.addAllowedApplication(pkg) }
-            tunnelInterface = builder.establish() ?: throw LinkoNetworkException("vpn_interface_establish_failed")
+            val newInterface = builder.establish() ?: throw LinkoNetworkException("vpn_interface_establish_failed")
+            assertCurrent(sessionId, generation)
+            tunnelInterface = newInterface
 
             transport = EncryptedDatagramTunnel(
                 socket = result.socket,
@@ -134,6 +145,7 @@ class LinkShareVpnService : VpnService() {
                 role = EncryptedDatagramTunnel.Role.RECEIVER,
                 sessionKey = sessionKey,
             )
+            assertCurrent(sessionId, generation)
             running.set(true)
             lastPongReceivedAt.set(System.currentTimeMillis())
             runCatching {
@@ -143,36 +155,47 @@ class LinkShareVpnService : VpnService() {
             LinkoEngineBridge.reportTunnelState("direct_established", "Secure direct connection established")
             executor.execute { outboundLoop() }
             executor.execute { inboundLoop() }
-            registerNetworkHandoverCallback(result.socket)
+            registerNetworkHandoverCallback(result.socket, sessionId, generation)
             scheduler = Executors.newSingleThreadScheduledExecutor()
             scheduler?.scheduleWithFixedDelay({
-                if (running.get()) {
+                if (running.get() && isCurrent(sessionId, generation)) {
                     runCatching { transport?.sendPing() }
                     val silentMs = System.currentTimeMillis() - lastPongReceivedAt.get()
-                    if (silentMs > 45_000L) {
+                    if (silentMs > HEARTBEAT_TIMEOUT_MS) {
                         val reason = "Direct peer became unreachable (NAT/network timeout)"
                         Log.w(TAG, "Direct peer heartbeat expired after ${silentMs}ms")
-                        failSession(sessionId, reason)
+                        failSession(sessionId, generation, reason)
                     }
                 }
             }, 3, 15, TimeUnit.SECONDS)
             LinkoEngineBridge.reportTunnelState("connected", "Direct tunnel established; verifying Internet")
             Log.i(TAG, "LINKO direct P2P tunnel established for session=$sessionId to ${result.peer.hostString}:${result.peer.port}")
+        } catch (e: CancellationExceptionLike) {
+            Log.i(TAG, "Ignoring stale LINKO receiver startup session=$sessionId generation=$generation")
+            runCatching { socket.close() }
         } catch (e: Exception) {
+            if (!isCurrent(sessionId, generation)) {
+                runCatching { socket.close() }
+                return
+            }
             Log.e(TAG, "Direct P2P connection failed: ${e.message}", e)
             runCatching { socket.close() }
-            failSession(sessionId, e.message ?: "direct_connection_failed")
+            failSession(sessionId, generation, e.message ?: "direct_connection_failed", e)
         }
     }
 
-    private fun failSession(sessionId: String, reason: String) {
+    private fun assertCurrent(sessionId: String, generation: Long) {
+        if (!isCurrent(sessionId, generation)) throw CancellationExceptionLike()
+    }
+
+    private fun isCurrent(sessionId: String, generation: Long): Boolean =
+        sessionGeneration.get() == generation && activeSessionId == sessionId
+
+    private fun failSession(sessionId: String, generation: Long, reason: String, error: Throwable? = null) {
+        if (!isCurrent(sessionId, generation)) return
         if (!terminalFailure.compareAndSet(false, true)) return
-        if (sessionId.isBlank()) {
-            LinkoEngineBridge.reportTunnelState("failed", reason)
-            updateForegroundNotification("Connection Failed", reason.replace('_', ' '))
-            stopTunnel(reportStoppedState = false, failureReason = reason)
-            return
-        }
+        if (error != null) Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason", error)
+        else Log.e(TAG, "TUNNEL_FAILED session=$sessionId reason=$reason")
         runCatching {
             runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "failed") }
         }.onFailure { Log.w(TAG, "Failed to publish terminal session state session=$sessionId: ${it.message}") }
@@ -182,16 +205,22 @@ class LinkShareVpnService : VpnService() {
         Log.e(TAG, "LINKO_RECEIVER_SESSION_FAILED session=$sessionId reason=$reason")
     }
 
-    private fun registerNetworkHandoverCallback(socket: DatagramSocket) {
+    private fun registerNetworkHandoverCallback(socket: DatagramSocket, sessionId: String, generation: Long) {
         runCatching {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
             val callback = object : android.net.ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: android.net.Network) { protect(socket); runCatching { transport?.sendPing() } }
-                override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) { protect(socket) }
+                override fun onAvailable(network: android.net.Network) {
+                    if (!isCurrent(sessionId, generation)) return
+                    protect(socket)
+                    runCatching { transport?.sendPing() }
+                }
+                override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
+                    if (isCurrent(sessionId, generation)) protect(socket)
+                }
             }
             cm.registerDefaultNetworkCallback(callback)
             networkCallback = callback
-        }
+        }.onFailure { Log.w(TAG, "Could not register network handover callback: ${it.message}") }
     }
 
     private fun acquireLocks() {
@@ -200,11 +229,14 @@ class LinkShareVpnService : VpnService() {
             wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LINKO:VpnWakeLock")?.apply { setReferenceCounted(false); acquire(24 * 60 * 60 * 1000L) }
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "LINKO:VpnWifiLock")?.apply { setReferenceCounted(false); acquire() }
-        }
+        }.onFailure { Log.w(TAG, "Could not acquire locks: ${it.message}") }
     }
 
     private fun releaseLocks() {
-        runCatching { if (wakeLock?.isHeld == true) wakeLock?.release(); wakeLock = null; if (wifiLock?.isHeld == true) wifiLock?.release(); wifiLock = null }
+        runCatching {
+            if (wakeLock?.isHeld == true) wakeLock?.release(); wakeLock = null
+            if (wifiLock?.isHeld == true) wifiLock?.release(); wifiLock = null
+        }
     }
 
     private fun outboundLoop() {
@@ -225,7 +257,7 @@ class LinkShareVpnService : VpnService() {
         } catch (e: Exception) {
             if (running.get() && !terminalFailure.get()) {
                 Log.w(TAG, "VPN outbound loop terminated: ${e.message}")
-                activeSessionId?.let { failSession(it, "vpn_outbound_loop_failed") }
+                activeSessionId?.let { session -> failSession(session, sessionGeneration.get(), "vpn_outbound_loop_failed", e) }
             }
         }
     }
@@ -268,11 +300,12 @@ class LinkShareVpnService : VpnService() {
         } catch (e: Exception) {
             if (running.get() && !terminalFailure.get()) {
                 Log.w(TAG, "VPN inbound loop terminated: ${e.message}")
-                activeSessionId?.let { failSession(it, "vpn_inbound_loop_failed") }
+                activeSessionId?.let { session -> failSession(session, sessionGeneration.get(), "vpn_inbound_loop_failed", e) }
             }
         }
     }
 
+    @Synchronized
     private fun stopTunnel(reportStoppedState: Boolean = !terminalFailure.get(), failureReason: String? = null) {
         val wasRunning = running.getAndSet(false)
         val sessionToDisconnect = activeSessionId
@@ -318,11 +351,19 @@ class LinkShareVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        activeSessionId?.takeIf { it.isNotBlank() }?.let { failSession(it, "vpn_permission_revoked") }
+        activeSessionId?.takeIf { it.isNotBlank() }?.let { failSession(it, sessionGeneration.get(), "vpn_permission_revoked") }
         runCatching { super.onRevoke() }
     }
 
-    override fun onDestroy() { stopTunnel(); executor.shutdownNow(); super.onDestroy() }
+    override fun onDestroy() {
+        sessionGeneration.incrementAndGet()
+        stopTunnel()
+        executor.shutdownNow()
+        super.onDestroy()
+    }
+
+    /** Internal cancellation marker used to distinguish stale startup work from real connection failures. */
+    private class CancellationExceptionLike : RuntimeException()
 
     companion object {
         private const val TAG = "LINKO_VPN_SERVICE"
@@ -336,6 +377,7 @@ class LinkShareVpnService : VpnService() {
         const val EXTRA_ALLOWED_PACKAGES = "linko.allowed.packages"
         const val ROLE_RECEIVER = "receiver"
         private const val RECEIVE_TIMEOUT_MS = 500
+        private const val HEARTBEAT_TIMEOUT_MS = 45_000L
         private const val MAX_IP_PACKET = 64 * 1024
         private const val MAX_TUN_PAYLOAD = 32 * 1024
         private const val TUN_MTU = 1280
