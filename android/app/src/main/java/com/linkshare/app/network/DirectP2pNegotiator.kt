@@ -403,9 +403,11 @@ object DirectP2pNegotiator {
         if (!payload.optBoolean("check", false) || payload.optString("ice") != "2") return
         if (payload.optInt("generation", generation) != generation) return
         val transaction = payload.optString("transaction").ifBlank { return }
-        val localId = payload.optString("localCandidateId")
-        val local = localCandidates.firstOrNull { it.id == localId }
-            ?: localCandidates.firstOrNull { (it.endpoint.address is Inet6Address) == (received.source.address is Inet6Address) }
+        // The sender's localCandidateId identifies the sender's candidate, not ours.
+        // Never look it up in our local candidate list. The datagram source is the
+        // authoritative reflexive endpoint; choose a compatible local interface.
+        val local = localCandidates.firstOrNull { (it.endpoint.address is Inet6Address) == (received.source.address is Inet6Address) }
+            ?: localCandidates.firstOrNull()
             ?: return
         val remote = IceCandidate(
             id = "prflx-${received.source.hostString}:${received.source.port}", foundation = "prflx",
@@ -419,7 +421,7 @@ object DirectP2pNegotiator {
                 jsonBytes(JSONObject().put("ice", "2").put("probe", "2").put("transaction", transaction).put("generation", generation).put("candidateId", local.id)),
                 EncryptedDatagramTunnel.PacketType.PONG,
             )
-        }
+        }.onFailure { Log.w(TAG, "ICE_PONG_SEND_FAILED source=${received.source}: ${it.message}") }
     }
 
     private fun buildPairs(local: List<IceCandidate>, remote: List<IceCandidate>): List<CandidatePair> =
