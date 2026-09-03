@@ -75,7 +75,9 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:auth-kt"); implementation("io.ktor:ktor-client-android:3.5.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.zaneschepke:hevtunnel:1.0.1")
-    implementation("com.wireguard.android:tunnel:1.0.20260315")
+    // 1.0.20260315 is a deleted upstream tag and is not published to Maven Central.
+    // 1.0.20260102 is the published WireGuard Android tunnel artifact.
+    implementation("com.wireguard.android:tunnel:1.0.20260102")
     debugImplementation("androidx.compose.ui:ui-tooling"); debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2"); testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
