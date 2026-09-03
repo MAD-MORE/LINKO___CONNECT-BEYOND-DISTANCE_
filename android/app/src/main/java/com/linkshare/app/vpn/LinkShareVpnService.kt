@@ -132,9 +132,9 @@ class LinkShareVpnService : VpnService() {
                     runCatching { transport?.sendPing() }
                     val silentMs = System.currentTimeMillis() - lastPongReceivedAt.get()
                     if (silentMs > 45_000L) {
+                        val reason = "Direct peer became unreachable (NAT/network timeout)"
                         Log.w(TAG, "Direct peer heartbeat expired after ${silentMs}ms")
-                        LinkoEngineBridge.reportTunnelState("failed", "Direct peer became unreachable (NAT/network timeout)")
-                        stopTunnel()
+                        failSession(sessionId, reason)
                     }
                 }
             }, 3, 15, TimeUnit.SECONDS)
@@ -143,9 +143,20 @@ class LinkShareVpnService : VpnService() {
         } catch (e: Exception) {
             Log.e(TAG, "Direct P2P connection failed: ${e.message}", e)
             runCatching { socket.close() }
-            LinkoEngineBridge.reportTunnelState("failed", e.message ?: "direct_connection_failed")
-            stopTunnel()
+            failSession(sessionId, e.message ?: "direct_connection_failed")
         }
+    }
+
+    private fun failSession(sessionId: String, reason: String) {
+        runCatching {
+            runBlocking {
+                LinkoDeviceControlApi(applicationContext).transition(sessionId, "failed")
+            }
+        }.onFailure { Log.w(TAG, "Failed to publish terminal session state session=$sessionId: ${it.message}") }
+        LinkoEngineBridge.reportTunnelState("failed", reason)
+        updateForegroundNotification("Connection Failed", reason.replace('_', ' '))
+        stopTunnel(reportStoppedState = false, failureReason = reason)
+        Log.e(TAG, "LINKO_RECEIVER_SESSION_FAILED session=$sessionId reason=$reason")
     }
 
     private fun registerNetworkHandoverCallback(socket: DatagramSocket) {
@@ -226,7 +237,11 @@ class LinkShareVpnService : VpnService() {
         } catch (e: Exception) { if (running.get()) { Log.w(TAG, "VPN inbound loop terminated: ${e.message}"); stopTunnel() } }
     }
 
-    private fun stopTunnel() {
+    /**
+     * Stops the local tunnel. Terminal P2P failures must not be rewritten as generic "stopped"
+     * because the UI and peer need to observe the real failure state.
+     */
+    private fun stopTunnel(reportStoppedState: Boolean = true, failureReason: String? = null) {
         val wasRunning = running.getAndSet(false)
         releaseLocks()
         runCatching {
@@ -236,8 +251,14 @@ class LinkShareVpnService : VpnService() {
         scheduler?.shutdownNow(); scheduler = null
         runCatching { transport?.sendClose() }; runCatching { transport?.close() }; transport = null
         runCatching { tunnelInterface?.close() }; tunnelInterface = null
-        updateForegroundNotification("LINKO", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
-        LinkoEngineBridge.reportTunnelState("stopped", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
+        if (failureReason != null) {
+            updateForegroundNotification("Connection Failed", failureReason.replace('_', ' '))
+        } else {
+            updateForegroundNotification("LINKO", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
+        }
+        if (reportStoppedState) {
+            LinkoEngineBridge.reportTunnelState("stopped", if (wasRunning) "Direct tunnel closed" else "Direct connection cancelled")
+        }
         Log.i(TAG, "LINKO VPN tunnel stopped. Uploaded=${bytesUp.get()} bytes, downloaded=${bytesDown.get()} bytes")
     }
 
