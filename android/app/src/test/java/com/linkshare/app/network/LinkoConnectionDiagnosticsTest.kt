@@ -1,18 +1,18 @@
 package com.linkshare.app.network
 
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
 
 class LinkoConnectionDiagnosticsTest {
-    @BeforeTest
+    @Before
     fun setup() {
         LinkoConnectionDiagnostics.reset()
     }
 
-    @AfterTest
+    @After
     fun teardown() {
         LinkoConnectionDiagnostics.reset()
     }
