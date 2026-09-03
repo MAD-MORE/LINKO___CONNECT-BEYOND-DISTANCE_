@@ -3,11 +3,12 @@ package com.linkshare.app.network
 import android.util.Log
 import com.linkshare.app.tunnel.EncryptedDatagramTunnel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetSocketAddress
@@ -47,8 +48,6 @@ object DirectP2pNegotiator {
         Log.i(TAG, "CANDIDATES_LOCAL count=${localCandidates.size} localPort=${socket.localPort}")
         localCandidates.forEach { Log.i(TAG, "CANDIDATE_LOCAL ${it.type} ${it.address.hostAddress}:${it.port}") }
 
-        // Publish every local candidate before starting checks. The same socket is retained for the
-        // entire negotiation so the NAT mapping does not change between STUN discovery and P2P.
         localCandidates.forEach { candidate ->
             runCatching {
                 signaling.send(
@@ -71,115 +70,107 @@ object DirectP2pNegotiator {
         val selected = AtomicBoolean(false)
         var lastFailure = "direct_udp_path_failed"
 
-        // Keep fetching signaling while concurrently punching every advertised endpoint. This is
-        // intentionally more aggressive than sequential ICE checks because both sides need to send
-        // at nearly the same time for many NAT implementations to open a usable mapping.
-        while (System.currentTimeMillis() < deadline && !selected.get()) {
-            val remoteCandidates = runCatching { signaling.receive(sessionId) }
-                .onFailure { lastFailure = "signaling_receive_failed" }
-                .getOrElse { emptyList() }
-                .asSequence()
-                .filter { it.kind == SignalKind.ICE && it.senderDeviceId.isNotBlank() }
-                .mapNotNull { signal ->
-                    val host = signal.payload.optString("candidate").trim()
-                    val port = signal.payload.optInt("port", -1)
-                    if (host.isBlank() || port !in 1..65535) null else {
-                        val endpoint = runCatching { InetSocketAddress(host, port) }.getOrNull()
-                            ?: return@mapNotNull null
-                        CandidateRef(endpoint, signal.payload.optString("type", "unknown"))
+        coroutineScope {
+            while (System.currentTimeMillis() < deadline && !selected.get()) {
+                val remoteCandidates = runCatching { signaling.receive(sessionId) }
+                    .onFailure { lastFailure = "signaling_receive_failed" }
+                    .getOrElse { emptyList() }
+                    .asSequence()
+                    .filter { it.kind == SignalKind.ICE && it.senderDeviceId.isNotBlank() }
+                    .mapNotNull { signal ->
+                        val host = signal.payload.optString("candidate").trim()
+                        val port = signal.payload.optInt("port", -1)
+                        if (host.isBlank() || port !in 1..65535) null else {
+                            val endpoint = runCatching { InetSocketAddress(host, port) }.getOrNull()
+                                ?: return@mapNotNull null
+                            CandidateRef(endpoint, signal.payload.optString("type", "unknown"))
+                        }
                     }
+                    .distinctBy { "${it.endpoint.hostString}:${it.endpoint.port}" }
+                    .sortedByDescending { candidatePriority(it.type) }
+                    .toList()
+
+                if (remoteCandidates.isNotEmpty()) {
+                    Log.i(TAG, "CANDIDATES_REMOTE count=${remoteCandidates.size}")
                 }
-                .distinctBy { "${it.endpoint.hostString}:${it.endpoint.port}" }
-                .sortedByDescending { candidatePriority(it.type) }
-                .toList()
 
-            if (remoteCandidates.isNotEmpty()) {
-                Log.i(TAG, "CANDIDATES_REMOTE count=${remoteCandidates.size}")
-            }
-
-            // Start one punch worker per remote endpoint. Workers share the same socket and stop
-            // as soon as one authenticated peer answers.
-            remoteCandidates.forEach { candidate ->
-                val advertisedKey = "${candidate.endpoint.hostString}:${candidate.endpoint.port}"
-                if (!tried.add(advertisedKey)) return@forEach
-
-                kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-                    val candidateDeadline = minOf(deadline, System.currentTimeMillis() + CANDIDATE_CHECK_WINDOW_MS)
-                    while (isActive && System.currentTimeMillis() < candidateDeadline && !selected.get()) {
-                        try {
-                            val tunnel = EncryptedDatagramTunnel(
-                                socket = socket,
-                                peer = candidate.endpoint,
-                                sessionId = sessionId,
-                                role = role,
-                                sessionKey = sessionKey,
-                            )
-                            tunnel.sendPing()
-                            Log.d(TAG, "P2P_CHECK_SENT advertised=$advertisedKey")
-                            delay(PUNCH_INTERVAL_MS)
-                        } catch (error: Exception) {
-                            lastFailure = error.message ?: "direct_udp_check_failed"
-                            break
+                remoteCandidates.forEach { candidate ->
+                    val advertisedKey = "${candidate.endpoint.hostString}:${candidate.endpoint.port}"
+                    if (!tried.add(advertisedKey)) return@forEach
+                    launch(Dispatchers.IO) {
+                        val candidateDeadline = minOf(
+                            deadline,
+                            System.currentTimeMillis() + CANDIDATE_CHECK_WINDOW_MS,
+                        )
+                        while (isActive && System.currentTimeMillis() < candidateDeadline && !selected.get()) {
+                            try {
+                                EncryptedDatagramTunnel(
+                                    socket = socket,
+                                    peer = candidate.endpoint,
+                                    sessionId = sessionId,
+                                    role = role,
+                                    sessionKey = sessionKey,
+                                ).sendPing()
+                                Log.d(TAG, "P2P_CHECK_SENT advertised=$advertisedKey")
+                                delay(PUNCH_INTERVAL_MS)
+                            } catch (error: Exception) {
+                                lastFailure = error.message ?: "direct_udp_check_failed"
+                                return@launch
+                            }
                         }
                     }
                 }
-            }
 
-            // Receive packets from any endpoint and authenticate them before trusting the source.
-            // This is the crucial NAT-mapped-endpoint discovery step.
-            repeat(RECEIVE_BATCH_PER_ROUND) {
-                if (selected.get() || System.currentTimeMillis() >= deadline) return@repeat
-                try {
-                    val packet = DatagramPacket(ByteArray(EncryptedDatagramTunnel.MAX_FRAME_LEN), EncryptedDatagramTunnel.MAX_FRAME_LEN)
-                    socket.receive(packet)
-                    val source = InetSocketAddress(packet.address, packet.port)
-                    val inbound = EncryptedDatagramTunnel(
-                        socket = socket,
-                        peer = source,
-                        sessionId = sessionId,
-                        role = role,
-                        sessionKey = sessionKey,
-                    ).receiveBuffer(packet)
-                        ?: return@repeat
+                repeat(RECEIVE_BATCH_PER_ROUND) {
+                    if (selected.get() || System.currentTimeMillis() >= deadline) return@repeat
+                    try {
+                        val inbound = EncryptedDatagramTunnel(
+                            socket = socket,
+                            peer = InetSocketAddress("0.0.0.0", 9),
+                            sessionId = sessionId,
+                            role = role,
+                            sessionKey = sessionKey,
+                        ).receiveAny(CHECK_RECEIVE_TIMEOUT_MS)
+                            ?: return@repeat
 
-                    Log.i(TAG, "P2P_CHECK_RECEIVED source=${source.hostString}:${source.port} type=${inbound.type}")
-                    val observedTunnel = EncryptedDatagramTunnel(
-                        socket = socket,
-                        peer = source,
-                        sessionId = sessionId,
-                        role = role,
-                        sessionKey = sessionKey,
-                    )
+                        val source = inbound.source
+                        Log.i(TAG, "P2P_CHECK_RECEIVED source=${source.hostString}:${source.port} type=${inbound.type}")
+                        val observedTunnel = EncryptedDatagramTunnel(
+                            socket = socket,
+                            peer = source,
+                            sessionId = sessionId,
+                            role = role,
+                            sessionKey = sessionKey,
+                        )
 
-                    when (inbound.type) {
-                        EncryptedDatagramTunnel.PacketType.PING -> {
-                            val timestamp = inbound.payload.toLongOrNull() ?: System.currentTimeMillis()
-                            observedTunnel.sendPong(timestamp)
-                            observedTunnel.sendPing()
-                            val confirmation = observedTunnel.receive(CHECK_RECEIVE_TIMEOUT_MS)
-                            if (confirmation?.type == EncryptedDatagramTunnel.PacketType.PONG) {
+                        when (inbound.type) {
+                            EncryptedDatagramTunnel.PacketType.PING -> {
+                                val timestamp = inbound.payload.toLongOrNull() ?: System.currentTimeMillis()
+                                observedTunnel.sendPong(timestamp)
+                                observedTunnel.sendPing()
+                                val confirmation = observedTunnel.receive(CHECK_RECEIVE_TIMEOUT_MS)
+                                if (confirmation?.type == EncryptedDatagramTunnel.PacketType.PONG && selected.compareAndSet(false, true)) {
+                                    selectedPeer[0] = source
+                                    Log.i(TAG, "P2P_PAIR_SELECTED local=${socket.localPort} remote=${source.hostString}:${source.port}")
+                                }
+                            }
+                            EncryptedDatagramTunnel.PacketType.PONG -> {
                                 if (selected.compareAndSet(false, true)) {
                                     selectedPeer[0] = source
                                     Log.i(TAG, "P2P_PAIR_SELECTED local=${socket.localPort} remote=${source.hostString}:${source.port}")
                                 }
                             }
+                            else -> Unit
                         }
-                        EncryptedDatagramTunnel.PacketType.PONG -> {
-                            if (selected.compareAndSet(false, true)) {
-                                selectedPeer[0] = source
-                                Log.i(TAG, "P2P_PAIR_SELECTED local=${socket.localPort} remote=${source.hostString}:${source.port}")
-                            }
-                        }
-                        else -> Unit
+                    } catch (_: java.net.SocketTimeoutException) {
+                        return@repeat
+                    } catch (error: Exception) {
+                        lastFailure = error.message ?: "direct_udp_receive_failed"
                     }
-                } catch (_: java.net.SocketTimeoutException) {
-                    return@repeat
-                } catch (error: Exception) {
-                    lastFailure = error.message ?: "direct_udp_receive_failed"
                 }
-            }
 
-            if (!selected.get()) delay(80L)
+                if (!selected.get()) delay(80L)
+            }
         }
 
         if (selected.get() && selectedPeer[0] != null) {
@@ -187,7 +178,7 @@ object DirectP2pNegotiator {
         }
 
         socket.close()
-        Log.e(TAG, "P2P_NEGOTIATION_TIMEOUT reason=$lastFailure localCandidates=${localCandidates.size} localPort=${socket.localPort}")
+        Log.e(TAG, "P2P_NEGOTIATION_TIMEOUT reason=$lastFailure localCandidates=${localCandidates.size}")
         throw LinkoNetworkException(lastFailure)
     }
 
@@ -214,10 +205,7 @@ object DirectP2pNegotiator {
             NetworkInterface.getNetworkInterfaces()?.toList()?.forEach { iface ->
                 if (!iface.isUp || iface.isLoopback || iface.isVirtual) return@forEach
                 iface.inetAddresses.toList().forEach { address ->
-                    if (address is Inet4Address &&
-                        !address.isLoopbackAddress &&
-                        !address.isLinkLocalAddress
-                    ) {
+                    if (address is Inet4Address && !address.isLoopbackAddress && !address.isLinkLocalAddress) {
                         add(LinkoStunClient.Candidate(address, localPort, "host"))
                     }
                 }
