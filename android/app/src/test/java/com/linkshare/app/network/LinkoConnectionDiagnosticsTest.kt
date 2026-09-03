@@ -36,6 +36,7 @@ class LinkoConnectionDiagnosticsTest {
 
         val snapshot = LinkoConnectionDiagnostics.snapshot.value
         assertEquals(ConnectionStage.FAILED, snapshot.stage)
+        assertEquals(0.55f, snapshot.progress)
         assertEquals("DIRECT_UDP_BLOCKED", snapshot.failureReason)
         assertEquals(4, snapshot.localCandidates)
         assertEquals(3, snapshot.remoteCandidates)
