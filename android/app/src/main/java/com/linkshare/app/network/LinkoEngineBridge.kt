@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
-/** Coordinates LINKO control plane and direct-P2P data plane. */
+/** Coordinates LINKO control plane, realtime session state, and direct-P2P data plane. */
 object LinkoEngineBridge {
     private const val TAG = "LINKO_ENGINE"
     private const val PRESENCE_POLL_MS = 10_000L
@@ -31,6 +31,7 @@ object LinkoEngineBridge {
     private var scope: CoroutineScope? = null
     private var appContext: Context? = null
     private var connectionJob: Job? = null
+    private var realtimeJob: Job? = null
     private var lastFriendUserId: String? = null
     private val presenceJobs = ConcurrentHashMap<String, Job>()
     private val presenceFlows = ConcurrentHashMap<String, MutableStateFlow<LinkoFriendPresence>>()
@@ -46,10 +47,16 @@ object LinkoEngineBridge {
         coordinator = TunnelCoordinator(app)
         scope = CoroutineScope(Dispatchers.IO)
         connectionJob?.cancel(); connectionJob = null
+        realtimeJob?.cancel(); realtimeJob = null
         presenceJobs.values.forEach { it.cancel() }; presenceJobs.clear(); presenceFlows.clear()
         providerStartsInFlight.clear()
         lastFriendUserId = null
         publish("idle", "Ready")
+
+        realtimeJob = scope?.launch {
+            LinkoRealtimeManager.start(app)
+            LinkoRealtimeManager.events.collect { event -> handleRealtimeEvent(event) }
+        }
     }
 
     fun setPeerInfo(displayName: String?, linkoId: String?, isProvider: Boolean = false) {
@@ -61,6 +68,39 @@ object LinkoEngineBridge {
     }
 
     fun reportTunnelState(state: String, detail: String? = null) = publish(state, detail)
+
+    private suspend fun handleRealtimeEvent(event: LinkoRealtimeEvent) {
+        when (event) {
+            is LinkoRealtimeEvent.SessionStateChanged -> {
+                val sessionId = event.sessionId?.takeIf { it.isNotBlank() } ?: return
+                val activeSessionId = _connection.value.sessionId
+                if (activeSessionId != sessionId) return
+                when (event.state?.trim()?.lowercase()) {
+                    "approved" -> publish("requesting", "Request approved; preparing the direct tunnel")
+                    "signaling" -> publish("signaling", "Exchanging direct connection information…")
+                    "connected" -> publish("connected", if (_connection.value.isProvider) "Direct connection established; Provider is sharing Internet" else "Internet sharing verified")
+                    "denied" -> publish("connection_request_denied", "Connection request was declined")
+                    "expired" -> publish("connection_request_expired", "Connection request expired")
+                    "revoked" -> publish("connection_request_revoked", "Connection was revoked")
+                    "failed" -> publish("provider_connection_failed", "Direct connection failed")
+                    "disconnected" -> publish("stopped", "Direct peer disconnected")
+                }
+            }
+            is LinkoRealtimeEvent.TransportError -> {
+                val active = _connection.value.phase
+                if (active != LinkoConnectionPhase.Connected && active != LinkoConnectionPhase.Idle) {
+                    publish("realtime_disconnected", event.message)
+                }
+            }
+            is LinkoRealtimeEvent.IncomingConnectionRequest -> Unit
+            is LinkoRealtimeEvent.FriendRequestReceived -> Unit
+            is LinkoRealtimeEvent.FriendRequestSent -> Unit
+            is LinkoRealtimeEvent.FriendRequestAccepted -> Unit
+            is LinkoRealtimeEvent.FriendRequestDeclined -> Unit
+            is LinkoRealtimeEvent.FriendRemoved -> Unit
+            is LinkoRealtimeEvent.PresenceChanged -> Unit
+        }
+    }
 
     fun watchFriendPresence(friendUserId: String): StateFlow<LinkoFriendPresence> {
         val userId = friendUserId.trim()
@@ -113,7 +153,11 @@ object LinkoEngineBridge {
                 publishAndNotify("requesting", onState)
                 awaitApprovedSession(control, session.id, onState)
                 establish(session.id, onState)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                Log.i(TAG, "Connection job cancelled")
+                throw error
             } catch (error: Exception) {
+                terminateReceiverForFailure(_connection.value.sessionId)
                 publishAndNotify(error.message ?: "connection_failed", onState)
             }
         }
@@ -134,6 +178,7 @@ object LinkoEngineBridge {
                 "failed" -> throw LinkoNetworkException("provider_connection_failed")
                 "expired" -> throw LinkoNetworkException("connection_request_expired")
                 "revoked" -> throw LinkoNetworkException("connection_request_revoked")
+                "disconnected" -> throw LinkoNetworkException("provider_disconnected")
                 else -> { if (attempt > 0 && attempt % 5 == 0) publishAndNotify("waiting_for_provider", onState); delay(1_000L) }
             }
         }
@@ -152,7 +197,7 @@ object LinkoEngineBridge {
         for (attempt in 0 until 40) {
             val current = control.session(sessionId)
             if (current.state == "failed") throw LinkoNetworkException("provider_connection_failed")
-            if (current.state == "denied" || current.state == "expired" || current.state == "revoked") throw LinkoNetworkException("session_${current.state}")
+            if (current.state == "denied" || current.state == "expired" || current.state == "revoked" || current.state == "disconnected") throw LinkoNetworkException("session_${current.state}")
             val config = runCatching { control.tunnelConfig(sessionId) }.getOrNull()
             if (config != null) {
                 if (config.sessionId != sessionId || config.role != "receiver" || config.transport != "direct_udp") throw LinkoNetworkException("invalid_receiver_tunnel_config")
@@ -179,6 +224,9 @@ object LinkoEngineBridge {
                 _connection.update { it.copy(sessionId = session.id) }
                 awaitApprovedSession(control, session.id, onState)
                 establish(session.id, onState)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                Log.i(TAG, "Connection job cancelled")
+                throw error
             } catch (error: Exception) { publishAndNotify(error.message ?: "connection_failed", onState) }
         }
     }
@@ -211,6 +259,9 @@ object LinkoEngineBridge {
                 _connection.update { it.copy(sessionId = request.id, isProvider = true) }
                 notifyOnMain(onState, "approved")
                 startApprovedProviderSession(request.id, onState)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                requestId?.let(providerStartsInFlight::remove)
+                throw error
             } catch (error: Throwable) {
                 requestId?.let(providerStartsInFlight::remove)
                 Log.e(TAG, "ACCEPT_FLOW_CRASH_CONTAINED session=${requestId ?: "unknown"}", error)
@@ -241,6 +292,7 @@ object LinkoEngineBridge {
             providerStartsInFlight.remove(sessionId)
             Log.e(TAG, "PROVIDER_START_REJECTED session=$sessionId", error)
             notifyOnMain(onState, "provider_service_start_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
+            scope?.launch { runCatching { api?.transition(sessionId, "failed") } }
         }
     }
 
@@ -264,12 +316,30 @@ object LinkoEngineBridge {
 
     fun disconnect() {
         connectionJob?.cancel()
+        val sessionId = _connection.value.sessionId
         coordinator?.stopVpnTunnel()
         connectionJob = null
         lastFriendUserId?.let(::stopWatchingFriendPresence)
         lastFriendUserId = null
         providerStartsInFlight.clear()
-        publish("idle", "Disconnected · tunnel closed")
+        if (!sessionId.isNullOrBlank()) {
+            scope?.launch {
+                runCatching { api?.transition(sessionId, "disconnected") }
+                    .onFailure { Log.w(TAG, "Disconnect state update failed session=$sessionId: ${it.message}") }
+            }
+        }
+        _connection.update { it.copy(sessionId = null, isProvider = false, bytesIn = 0L, bytesOut = 0L, latencyMs = 0, phase = LinkoConnectionPhase.Idle, detail = "Disconnected · tunnel closed", error = null) }
+    }
+
+    private fun terminateReceiverForFailure(sessionId: String?) {
+        if (sessionId.isNullOrBlank()) return
+        runCatching { coordinator?.stopVpnTunnel() }
+        scope?.launch {
+            runCatching {
+                val state = api?.session(sessionId)?.state
+                if (state !in setOf("failed", "denied", "expired", "revoked", "disconnected")) api?.transition(sessionId, "failed")
+            }.onFailure { Log.w(TAG, "Failed to publish receiver failure session=$sessionId: ${it.message}") }
+        }
     }
 
     private fun publishAndNotify(state: String, onState: (String) -> Unit) { publish(state); notifyOnMain(onState, state) }
@@ -309,6 +379,12 @@ object LinkoEngineBridge {
             "direct_established" -> "Direct encrypted tunnel established"
             "connected" -> "Internet sharing verified"
             "stopped" -> "Direct tunnel stopped"
+            "connection_request_denied" -> "Connection request was declined"
+            "connection_request_expired" -> "Connection request expired"
+            "connection_request_revoked" -> "Connection was revoked"
+            "provider_connection_failed" -> "Provider could not establish a direct connection"
+            "provider_disconnected" -> "Provider disconnected"
+            "realtime_disconnected" -> "Realtime control connection interrupted"
             else -> state.replace('_', ' ').replaceFirstChar { it.uppercase() }
         }
         _connection.update { it.copy(phase = phase, detail = message, error = if (phase == LinkoConnectionPhase.Failed) message else null) }
