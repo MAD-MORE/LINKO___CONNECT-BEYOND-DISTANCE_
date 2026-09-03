@@ -101,8 +101,8 @@ object LinkoConnectionDiagnostics {
         "approved", "approving" -> ConnectionStage.APPROVING
         "authenticating", "resolving_provider", "signaling", "signaling_retry" -> ConnectionStage.SIGNALING
         "offer", "answer", "sdp", "sdp_offer", "sdp_answer" -> ConnectionStage.SDP_NEGOTIATION
-        "ice_gathering", "ice_gathered", "direct_connecting" -> ConnectionStage.ICE_GATHERING
-        "ice_checking", "connectivity_check" -> ConnectionStage.ICE_CHECKING
+        "ice_gathering", "ice_gathered" -> ConnectionStage.ICE_GATHERING
+        "direct_connecting", "ice_checking", "connectivity_check" -> ConnectionStage.ICE_CHECKING
         "nomination", "nominating", "nomination_ack" -> ConnectionStage.NOMINATING
         "securing", "handshake", "final_ready", "final_handshake" -> ConnectionStage.HANDSHAKE
         "establishing", "tunnel_starting" -> ConnectionStage.TUNNEL_STARTING
