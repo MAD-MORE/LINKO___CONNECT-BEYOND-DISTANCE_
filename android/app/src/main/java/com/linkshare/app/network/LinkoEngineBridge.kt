@@ -2,6 +2,8 @@ package com.linkshare.app.network
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.provider.LinkoProviderService
@@ -23,6 +25,7 @@ object LinkoEngineBridge {
     private const val TAG = "LINKO_ENGINE"
     private const val PRESENCE_POLL_MS = 10_000L
     private const val PRESENCE_STALE_MS = 180_000L
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var api: LinkoDeviceControlApi? = null
     private var coordinator: TunnelCoordinator? = null
     private var scope: CoroutineScope? = null
@@ -183,61 +186,61 @@ object LinkoEngineBridge {
     suspend fun getPendingProviderRequests(): List<ProviderRequest> = runCatching { api?.pendingProviderRequests() }.getOrNull() ?: emptyList()
 
     fun approvePendingProviderRequest(peerName: String? = null, peerId: String? = null, onState: (String) -> Unit = {}) {
-        if (appContext == null) return onState("engine_not_initialized")
+        if (appContext == null) return notifyOnMain(onState, "engine_not_initialized")
         setPeerInfo(peerName ?: "LINKO Friend", peerId, true)
         scope?.launch {
             var requestId: String? = null
             try {
                 val request = api?.pendingProviderRequests()?.firstOrNull()
                 if (request == null) {
-                    onState("no_pending_request")
+                    notifyOnMain(onState, "no_pending_request")
                     return@launch
                 }
                 requestId = request.id
                 if (!providerStartsInFlight.add(request.id)) {
                     Log.i(TAG, "Provider start already in flight session=${request.id}")
-                    onState("starting")
+                    notifyOnMain(onState, "starting")
                     return@launch
                 }
                 val transition = runCatching { api?.transition(request.id, "approved") }
                 if (transition.isFailure) {
                     providerStartsInFlight.remove(request.id)
-                    onState(transition.exceptionOrNull()?.message ?: "approval_failed")
+                    notifyOnMain(onState, transition.exceptionOrNull()?.message ?: "approval_failed")
                     return@launch
                 }
                 _connection.update { it.copy(sessionId = request.id, isProvider = true) }
-                onState("approved")
+                notifyOnMain(onState, "approved")
                 startApprovedProviderSession(request.id, onState)
             } catch (error: Throwable) {
                 requestId?.let(providerStartsInFlight::remove)
                 Log.e(TAG, "ACCEPT_FLOW_CRASH_CONTAINED session=${requestId ?: "unknown"}", error)
-                onState("accept_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
+                notifyOnMain(onState, "accept_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
             }
-        } ?: onState("engine_scope_unavailable")
+        } ?: notifyOnMain(onState, "engine_scope_unavailable")
     }
 
     private fun startApprovedProviderSession(sessionId: String, onState: (String) -> Unit) {
         val context = appContext
         if (context == null) {
             providerStartsInFlight.remove(sessionId)
-            onState("engine_not_initialized")
+            notifyOnMain(onState, "engine_not_initialized")
             return
         }
         if (sessionId.isBlank()) {
             providerStartsInFlight.remove(sessionId)
-            onState("invalid_session_id")
+            notifyOnMain(onState, "invalid_session_id")
             return
         }
         runCatching {
             Log.i(TAG, "PROVIDER_START_REQUEST session=$sessionId")
             context.startForegroundService(Intent(context, LinkoProviderService::class.java).setAction(LinkoProviderService.ACTION_START_APPROVED).putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId))
         }.onSuccess {
-            onState("starting")
+            notifyOnMain(onState, "starting")
             Log.i(TAG, "PROVIDER_START_ACCEPTED session=$sessionId")
         }.onFailure { error ->
             providerStartsInFlight.remove(sessionId)
             Log.e(TAG, "PROVIDER_START_REJECTED session=$sessionId", error)
-            onState("provider_service_start_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
+            notifyOnMain(onState, "provider_service_start_failed:${error.javaClass.simpleName}:${error.message ?: "unknown"}")
         }
     }
 
@@ -246,17 +249,17 @@ object LinkoEngineBridge {
     }
 
     fun denyPendingProviderRequest(onState: (String) -> Unit = {}) {
-        if (appContext == null) return onState("engine_not_initialized")
+        if (appContext == null) return notifyOnMain(onState, "engine_not_initialized")
         scope?.launch {
             runCatching { api?.pendingProviderRequests()?.firstOrNull() }
                 .onSuccess { request ->
-                    if (request == null) onState("no_pending_request")
+                    if (request == null) notifyOnMain(onState, "no_pending_request")
                     else runCatching { api?.transition(request.id, "denied") }
-                        .onSuccess { providerStartsInFlight.remove(request.id); onState("denied") }
-                        .onFailure { onState(it.message ?: "decline_failed") }
+                        .onSuccess { providerStartsInFlight.remove(request.id); notifyOnMain(onState, "denied") }
+                        .onFailure { notifyOnMain(onState, it.message ?: "decline_failed") }
                 }
-                .onFailure { onState(it.message ?: "request_lookup_failed") }
-        } ?: onState("engine_scope_unavailable")
+                .onFailure { notifyOnMain(onState, it.message ?: "request_lookup_failed") }
+        } ?: notifyOnMain(onState, "engine_scope_unavailable")
     }
 
     fun disconnect() {
@@ -269,7 +272,14 @@ object LinkoEngineBridge {
         publish("idle", "Disconnected · tunnel closed")
     }
 
-    private fun publishAndNotify(state: String, onState: (String) -> Unit) { publish(state); onState(state) }
+    private fun publishAndNotify(state: String, onState: (String) -> Unit) { publish(state); notifyOnMain(onState, state) }
+
+    private fun notifyOnMain(onState: (String) -> Unit, state: String) {
+        mainHandler.post {
+            runCatching { onState(state) }
+                .onFailure { error -> Log.e(TAG, "UI_STATE_CALLBACK_FAILED state=$state", error) }
+        }
+    }
 
     private fun publish(state: String, detail: String? = null) {
         val phase = when (state) {
