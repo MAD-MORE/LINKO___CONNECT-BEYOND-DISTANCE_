@@ -39,7 +39,11 @@ fun Ring(
         ConnectionStage.TUNNEL_STARTING -> "TUNNEL"
         ConnectionStage.PACKET_FLOW -> "PACKET FLOW"
         ConnectionStage.CONNECTED -> "CONNECTED"
-        ConnectionStage.FAILED -> "FAILED"
+        ConnectionStage.FAILED -> diagnostics.failureReason
+            ?.uppercase()
+            ?.replace('_', ' ')
+            ?.take(18)
+            ?: "FAILED"
     }
     val effectiveLabel = if (diagnostics.headline != "Ready" || diagnostics.stage != ConnectionStage.REQUESTING) diagnosticLabel else label
 
