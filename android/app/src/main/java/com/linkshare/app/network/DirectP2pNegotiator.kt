@@ -93,11 +93,8 @@ object DirectP2pNegotiator {
         suspend fun sendOffer() {
             runCatching {
                 signaling.send(sessionId, SignalKind.OFFER,
-                    JSONObject()
-                        .put("ice", 2)
-                        .put("iceGeneration", generation)
-                        .put("iceUfrag", localUfrag)
-                        .put("iceTieBreaker", localTieBreaker)
+                    JSONObject().put("ice", 2).put("iceGeneration", generation)
+                        .put("iceUfrag", localUfrag).put("iceTieBreaker", localTieBreaker)
                         .put("controlling", controlling)
                         .put("supports", JSONObject().put("host", true).put("srflx", true).put("relay", false))
                         .put("sentAt", System.currentTimeMillis()))
@@ -108,18 +105,12 @@ object DirectP2pNegotiator {
             localCandidates.forEach { candidate ->
                 runCatching {
                     signaling.send(sessionId, SignalKind.ICE,
-                        JSONObject()
-                            .put("ice", 2)
-                            .put("iceGeneration", generation)
-                            .put("candidateId", candidate.id)
-                            .put("foundation", candidate.foundation)
+                        JSONObject().put("ice", 2).put("iceGeneration", generation)
+                            .put("candidateId", candidate.id).put("foundation", candidate.foundation)
                             .put("candidateType", candidate.type.name.lowercase())
-                            .put("candidate", candidate.address.hostAddress)
-                            .put("port", candidate.port)
-                            .put("protocol", "udp")
-                            .put("priority", candidate.priority)
-                            .put("seq", candidate.sequence)
-                            .put("sentAt", System.currentTimeMillis())
+                            .put("candidate", candidate.address.hostAddress).put("port", candidate.port)
+                            .put("protocol", "udp").put("priority", candidate.priority)
+                            .put("seq", candidate.sequence).put("sentAt", System.currentTimeMillis())
                             .put("type", candidate.type.name.lowercase()))
                 }.onFailure { Log.w(TAG, "ICE_CANDIDATE_SEND_FAILED id=${candidate.id}: ${it.message}") }
             }
@@ -147,13 +138,9 @@ object DirectP2pNegotiator {
                     if (signal.kind == SignalKind.OFFER) {
                         runCatching {
                             signaling.send(sessionId, SignalKind.ANSWER,
-                                JSONObject()
-                                    .put("ice", 2)
-                                    .put("iceGeneration", generation)
-                                    .put("iceUfrag", localUfrag)
-                                    .put("iceTieBreaker", localTieBreaker)
-                                    .put("controlling", controlling)
-                                    .put("answerToGeneration", incomingGeneration))
+                                JSONObject().put("ice", 2).put("iceGeneration", generation)
+                                    .put("iceUfrag", localUfrag).put("iceTieBreaker", localTieBreaker)
+                                    .put("controlling", controlling).put("answerToGeneration", incomingGeneration))
                         }.onFailure { lastFailure = "SIGNALING_ANSWER_FAILED" }
                     }
                 }
@@ -161,16 +148,13 @@ object DirectP2pNegotiator {
                     val incomingGeneration = signal.payload.optInt("iceGeneration", remoteGeneration ?: -1)
                     if (incomingGeneration >= 0 && remoteGeneration != null && incomingGeneration != remoteGeneration) {
                         if (incomingGeneration < remoteGeneration!!) return
-                        remoteCandidates.clear()
-                        launchedPairs.clear()
-                        highestRemoteSequence = -1L
+                        remoteCandidates.clear(); launchedPairs.clear(); highestRemoteSequence = -1L
                     }
                     if (incomingGeneration >= 0) remoteGeneration = incomingGeneration
                     val sequence = signal.payload.optLong("seq", 0L)
                     if (sequence > 0 && sequence <= highestRemoteSequence) return
                     if (sequence > highestRemoteSequence) highestRemoteSequence = sequence
                     if (signal.payload.optBoolean("endOfCandidates", false)) return
-
                     val host = signal.payload.optString("candidate").trim()
                     val port = signal.payload.optInt("port", -1)
                     if (host.isBlank() || port !in 1..65535) return
@@ -181,16 +165,13 @@ object DirectP2pNegotiator {
                         else -> return
                     }
                     val id = signal.payload.optString("candidateId").ifBlank { "legacy-${address.hostAddress}:$port" }
-                    remoteCandidates[id] = IceCandidate(
-                        id, signal.payload.optString("foundation", id), type, address, port,
-                        signal.payload.optInt("priority", candidatePriority(type)), incomingGeneration, sequence,
-                    )
+                    remoteCandidates[id] = IceCandidate(id, signal.payload.optString("foundation", id), type, address, port,
+                        signal.payload.optInt("priority", candidatePriority(type)), incomingGeneration, sequence)
                 }
             }
         }
 
-        sendOffer()
-        sendLocalCandidates()
+        sendOffer(); sendLocalCandidates()
 
         try {
             coroutineScope {
@@ -198,8 +179,7 @@ object DirectP2pNegotiator {
                     while (isActive && !selected.get() && System.currentTimeMillis() < deadline) {
                         runCatching { signaling.receive(sessionId) }
                             .onFailure { lastFailure = if (it is LinkoSignalingException) "SIGNALING_RPC_${it.statusCode}" else "SIGNALING_RECEIVE_TIMEOUT" }
-                            .getOrDefault(emptyList())
-                            .forEach { processSignal(it) }
+                            .getOrDefault(emptyList()).forEach { processSignal(it) }
                         delay(70L)
                     }
                 }
@@ -208,17 +188,13 @@ object DirectP2pNegotiator {
                     while (isActive && !selected.get() && System.currentTimeMillis() < deadline) {
                         if (receiverPaused.get()) { delay(30L); continue }
                         try {
-                            val received = EncryptedDatagramTunnel(
-                                socket, InetSocketAddress("0.0.0.0", 9), sessionId, role, sessionKey,
-                            ).receiveAny(450) ?: continue
+                            val received = EncryptedDatagramTunnel(socket, InetSocketAddress("0.0.0.0", 9), sessionId, role, sessionKey).receiveAny(450) ?: continue
                             when (received.type) {
-                                EncryptedDatagramTunnel.PacketType.PING -> handlePing(
-                                    received, socket, sessionId, sessionKey, role, localCandidates, generation, successfulPairs,
-                                )
+                                EncryptedDatagramTunnel.PacketType.PING -> handlePing(received, socket, sessionId, sessionKey, role, localCandidates, successfulPairs)
                                 EncryptedDatagramTunnel.PacketType.PONG -> {
                                     val payload = decodePayload(received.payload) ?: continue
                                     if (payload.optString("ice").ifBlank { payload.optString("probe") } != "2") continue
-                                    if (payload.optInt("generation", generation) != generation) continue
+                                    if (payload.optInt("generation", -1) != generation) continue
                                     val pending = pendingChecks.remove(payload.optString("transaction")) ?: continue
                                     val rtt = (System.currentTimeMillis() - pending.sentAt).coerceAtLeast(1L)
                                     successfulPairs[pending.pair.key] = Success(pending.pair.copy(endpoint = received.source), rtt, System.currentTimeMillis())
@@ -227,26 +203,23 @@ object DirectP2pNegotiator {
                                 EncryptedDatagramTunnel.PacketType.HANDSHAKE -> {
                                     val payload = decodePayload(received.payload) ?: continue
                                     when (payload.optString("kind")) {
-                                        "nominate" -> if (!controlling && payload.optInt("generation", generation) == generation) {
+                                        "nominate" -> if (!controlling && payload.optInt("generation", -1) == generation) {
                                             val endpoint = received.source
-                                            val localId = payload.optString("localCandidateId")
-                                            val matches = successfulPairs.values.any { it.pair.local.id == localId && it.pair.endpoint == endpoint } || successfulPairs.values.any { it.pair.endpoint == endpoint }
+                                            val matches = successfulPairs.values.any { it.pair.endpoint == endpoint }
                                             if (matches) {
                                                 runCatching {
                                                     EncryptedDatagramTunnel(socket, endpoint, sessionId, role, sessionKey).send(
                                                         jsonBytes(JSONObject().put("kind", "nomination_ack").put("generation", generation).put("nominationId", payload.optString("nominationId"))),
-                                                        EncryptedDatagramTunnel.PacketType.HANDSHAKE,
-                                                    )
+                                                        EncryptedDatagramTunnel.PacketType.HANDSHAKE)
                                                     selectedPeer[0] = endpoint
                                                     Log.i(TAG, "ICE_NOMINATED_BY_REMOTE endpoint=$endpoint")
                                                 }.onFailure { lastFailure = "NOMINATION_ACK_SEND_FAILED" }
                                             }
                                         }
-                                        "final_ready" -> runCatching {
+                                        "final_ready" -> if (payload.optInt("generation", -1) == generation) runCatching {
                                             EncryptedDatagramTunnel(socket, received.source, sessionId, role, sessionKey).send(
                                                 jsonBytes(JSONObject().put("kind", "final_ready_ack").put("generation", generation).put("nonce", payload.optString("nonce"))),
-                                                EncryptedDatagramTunnel.PacketType.HANDSHAKE,
-                                            )
+                                                EncryptedDatagramTunnel.PacketType.HANDSHAKE)
                                             selectedPeer[0] = received.source
                                             selected.set(true)
                                         }.onFailure { lastFailure = "FINAL_HANDSHAKE_ACK_FAILED" }
@@ -255,7 +228,6 @@ object DirectP2pNegotiator {
                                 else -> Unit
                             }
                         } catch (_: java.net.SocketTimeoutException) {
-                            // normal polling timeout
                         } catch (_: Exception) {
                             lastFailure = "DIRECT_RECEIVE_FAILED"
                         }
@@ -263,13 +235,10 @@ object DirectP2pNegotiator {
                 }
 
                 while (isActive && !selected.get() && System.currentTimeMillis() < deadline) {
-                    buildPairs(
-                        localCandidates,
-                        remoteCandidates.values.sortedWith(compareByDescending<IceCandidate> { it.priority }.thenBy { it.id }),
-                    ).sortedByDescending { it.score }.take(MAX_PAIR_CHECKS).forEach { pair ->
-                        if (launchedPairs.add(pair.key)) launchCheckWorker(this, pair, socket, sessionId, sessionKey, role, generation, deadline, pendingChecks)
-                    }
-
+                    buildPairs(localCandidates, remoteCandidates.values.sortedWith(compareByDescending<IceCandidate> { it.priority }.thenBy { it.id }))
+                        .sortedByDescending { it.score }.take(MAX_PAIR_CHECKS).forEach { pair ->
+                            if (launchedPairs.add(pair.key)) launchCheckWorker(this, pair, socket, sessionId, sessionKey, role, generation, deadline, pendingChecks)
+                        }
                     if (controlling && successfulPairs.isNotEmpty()) {
                         val firstSuccessAt = successfulPairs.values.minOf { it.firstSeenAt }
                         if (System.currentTimeMillis() - firstSuccessAt >= FIRST_SUCCESS_GRACE_MS) {
@@ -277,33 +246,22 @@ object DirectP2pNegotiator {
                             for (success in candidates) {
                                 if (System.currentTimeMillis() >= deadline) break
                                 receiverPaused.set(true)
-                                val nominationOk = try {
-                                    nominate(success, UUID.randomUUID().toString(), socket, sessionId, sessionKey, role, generation, deadline)
-                                } finally { receiverPaused.set(false) }
+                                val nominationOk = try { nominate(success, UUID.randomUUID().toString(), socket, sessionId, sessionKey, role, generation, deadline) } finally { receiverPaused.set(false) }
                                 if (!nominationOk) continue
                                 receiverPaused.set(true)
-                                val finalOk = try {
-                                    completeFinalHandshake(socket, success.pair.endpoint, sessionId, sessionKey, role, generation, deadline, success.pair.local.id, success.pair.remote.id)
-                                } finally { receiverPaused.set(false) }
-                                if (finalOk) {
-                                    selectedPeer[0] = success.pair.endpoint
-                                    selected.set(true)
-                                    break
-                                }
+                                val finalOk = try { completeFinalHandshake(socket, success.pair.endpoint, sessionId, sessionKey, role, generation, deadline, success.pair.local.id, success.pair.remote.id) } finally { receiverPaused.set(false) }
+                                if (finalOk) { selectedPeer[0] = success.pair.endpoint; selected.set(true); break }
                             }
                         }
                     }
                     delay(60L)
                 }
-                signalingJob.cancel()
-                receiverJob.cancel()
+                signalingJob.cancel(); receiverJob.cancel()
             }
         } catch (error: kotlinx.coroutines.CancellationException) {
-            socket.close()
-            throw error
+            socket.close(); throw error
         } catch (error: Exception) {
-            socket.close()
-            throw LinkoNetworkException("DIRECT_NEGOTIATION_INTERNAL_FAILURE", (error as? LinkoSignalingException)?.statusCode)
+            socket.close(); throw LinkoNetworkException("DIRECT_NEGOTIATION_INTERNAL_FAILURE", (error as? LinkoSignalingException)?.statusCode)
         }
 
         val peer = selectedPeer[0]
@@ -322,11 +280,9 @@ object DirectP2pNegotiator {
         }
     }
 
-    private fun launchCheckWorker(
-        scope: CoroutineScope, pair: CandidatePair, socket: DatagramSocket, sessionId: String,
-        sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, generation: Int,
-        deadline: Long, pendingChecks: ConcurrentHashMap<String, PendingCheck>,
-    ) {
+    private fun launchCheckWorker(scope: CoroutineScope, pair: CandidatePair, socket: DatagramSocket, sessionId: String,
+        sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, generation: Int, deadline: Long,
+        pendingChecks: ConcurrentHashMap<String, PendingCheck>) {
         scope.launch(Dispatchers.IO) {
             repeat(CHECK_RETRIES) { attempt ->
                 if (System.currentTimeMillis() >= deadline) return@launch
@@ -335,14 +291,9 @@ object DirectP2pNegotiator {
                 try {
                     EncryptedDatagramTunnel(socket, pair.endpoint, sessionId, role, sessionKey).send(
                         jsonBytes(JSONObject().put("ice", 2).put("check", true).put("transaction", transaction)
-                            .put("generation", generation).put("localCandidateId", pair.local.id)
-                            .put("remoteCandidateId", pair.remote.id).put("attempt", attempt + 1)),
-                        EncryptedDatagramTunnel.PacketType.PING,
-                    )
-                } catch (_: Exception) {
-                    pendingChecks.remove(transaction)
-                    return@launch
-                }
+                            .put("generation", generation).put("localCandidateId", pair.local.id).put("remoteCandidateId", pair.remote.id).put("attempt", attempt + 1)),
+                        EncryptedDatagramTunnel.PacketType.PING)
+                } catch (_: Exception) { pendingChecks.remove(transaction); return@launch }
                 delay(CHECK_INTERVAL_MS)
                 if (!pendingChecks.containsKey(transaction)) return@launch
                 pendingChecks.remove(transaction)
@@ -350,13 +301,11 @@ object DirectP2pNegotiator {
         }
     }
 
-    private suspend fun nominate(
-        success: Success, nominationId: String, socket: DatagramSocket, sessionId: String,
-        sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, generation: Int, deadline: Long,
-    ): Boolean {
+    private suspend fun nominate(success: Success, nominationId: String, socket: DatagramSocket, sessionId: String,
+        sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, generation: Int, deadline: Long): Boolean {
         val payload = jsonBytes(JSONObject().put("kind", "nominate").put("generation", generation)
-            .put("nominationId", nominationId).put("localCandidateId", success.pair.local.id)
-            .put("remoteCandidateId", success.pair.remote.id).put("score", success.pair.score).put("rttMs", success.rttMs))
+            .put("nominationId", nominationId).put("localCandidateId", success.pair.local.id).put("remoteCandidateId", success.pair.remote.id)
+            .put("score", success.pair.score).put("rttMs", success.rttMs))
         repeat(NOMINATION_RETRIES) {
             if (System.currentTimeMillis() >= deadline) return false
             if (!runCatching { EncryptedDatagramTunnel(socket, success.pair.endpoint, sessionId, role, sessionKey).send(payload, EncryptedDatagramTunnel.PacketType.HANDSHAKE); true }.getOrDefault(false)) return@repeat
@@ -371,15 +320,12 @@ object DirectP2pNegotiator {
         return false
     }
 
-    private suspend fun completeFinalHandshake(
-        socket: DatagramSocket, endpoint: InetSocketAddress, sessionId: String, sessionKey: ByteArray,
-        role: EncryptedDatagramTunnel.Role, generation: Int, deadline: Long,
-        localCandidateId: String, remoteCandidateId: String,
-    ): Boolean {
+    private suspend fun completeFinalHandshake(socket: DatagramSocket, endpoint: InetSocketAddress, sessionId: String,
+        sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, generation: Int, deadline: Long,
+        localCandidateId: String, remoteCandidateId: String): Boolean {
         val nonce = randomToken(18)
-        val payload = jsonBytes(JSONObject().put("kind", "final_ready").put("generation", generation)
-            .put("nonce", nonce).put("localCandidateId", localCandidateId).put("remoteCandidateId", remoteCandidateId)
-            .put("sentAt", System.currentTimeMillis()))
+        val payload = jsonBytes(JSONObject().put("kind", "final_ready").put("generation", generation).put("nonce", nonce)
+            .put("localCandidateId", localCandidateId).put("remoteCandidateId", remoteCandidateId).put("sentAt", System.currentTimeMillis()))
         repeat(3) {
             if (System.currentTimeMillis() >= deadline) return false
             runCatching { EncryptedDatagramTunnel(socket, endpoint, sessionId, role, sessionKey).send(payload, EncryptedDatagramTunnel.PacketType.HANDSHAKE) }
@@ -394,33 +340,25 @@ object DirectP2pNegotiator {
         return false
     }
 
-    private fun handlePing(
-        received: EncryptedDatagramTunnel.ReceivedPacket, socket: DatagramSocket, sessionId: String,
+    private fun handlePing(received: EncryptedDatagramTunnel.ReceivedPacket, socket: DatagramSocket, sessionId: String,
         sessionKey: ByteArray, role: EncryptedDatagramTunnel.Role, localCandidates: List<IceCandidate>,
-        generation: Int, successfulPairs: ConcurrentHashMap<String, Success>,
-    ) {
+        successfulPairs: ConcurrentHashMap<String, Success>) {
         val payload = decodePayload(received.payload) ?: return
         if (!payload.optBoolean("check", false) || payload.optString("ice") != "2") return
-        if (payload.optInt("generation", generation) != generation) return
+        val requestGeneration = payload.optInt("generation", -1)
+        if (requestGeneration < 0) return
         val transaction = payload.optString("transaction").ifBlank { return }
-        // The sender's localCandidateId identifies the sender's candidate, not ours.
-        // Never look it up in our local candidate list. The datagram source is the
-        // authoritative reflexive endpoint; choose a compatible local interface.
         val local = localCandidates.firstOrNull { (it.endpoint.address is Inet6Address) == (received.source.address is Inet6Address) }
-            ?: localCandidates.firstOrNull()
-            ?: return
-        val remote = IceCandidate(
-            id = "prflx-${received.source.hostString}:${received.source.port}", foundation = "prflx",
-            type = CandidateType.PRFLX, address = received.source.address, port = received.source.port,
-            priority = candidatePriority(CandidateType.PRFLX), generation = generation, sequence = Long.MAX_VALUE,
-        )
+            ?: localCandidates.firstOrNull() ?: return
+        val remote = IceCandidate("prflx-${received.source.hostString}:${received.source.port}", "prflx", CandidateType.PRFLX,
+            received.source.address, received.source.port, candidatePriority(CandidateType.PRFLX), requestGeneration, Long.MAX_VALUE)
         val pair = CandidatePair(local, remote, received.source, pairScore(local, remote))
         successfulPairs.putIfAbsent(pair.key, Success(pair, 0L, System.currentTimeMillis()))
         runCatching {
             EncryptedDatagramTunnel(socket, received.source, sessionId, role, sessionKey).send(
-                jsonBytes(JSONObject().put("ice", "2").put("probe", "2").put("transaction", transaction).put("generation", generation).put("candidateId", local.id)),
-                EncryptedDatagramTunnel.PacketType.PONG,
-            )
+                jsonBytes(JSONObject().put("ice", "2").put("probe", "2").put("transaction", transaction)
+                    .put("generation", requestGeneration).put("candidateId", local.id)),
+                EncryptedDatagramTunnel.PacketType.PONG)
         }.onFailure { Log.w(TAG, "ICE_PONG_SEND_FAILED source=${received.source}: ${it.message}") }
     }
 
@@ -446,11 +384,9 @@ object DirectP2pNegotiator {
         var sequence = 1L
         fun add(address: InetAddress, type: CandidateType, port: Int = localPort) {
             if (address.isLoopbackAddress || address.isLinkLocalAddress || address.isMulticastAddress || address.isAnyLocalAddress) return
-            val candidate = IceCandidate(
-                "${type.name.lowercase()}-${address.hostAddress}:$port",
-                "${type.name.lowercase()}-${address.javaClass.simpleName}-${address.hostAddress.hashCode()}",
-                type, address, port, candidatePriority(type), generation, sequence++,
-            )
+            val candidate = IceCandidate("${type.name.lowercase()}-${address.hostAddress}:$port",
+                "${type.name.lowercase()}-${address.javaClass.simpleName}-${address.hostAddress.hashCode()}", type, address, port,
+                candidatePriority(type), generation, sequence++)
             result.putIfAbsent("${address.hostAddress}:$port", candidate)
         }
         runCatching {
@@ -459,11 +395,9 @@ object DirectP2pNegotiator {
                 iface.inetAddresses.toList().forEach { address -> add(address, CandidateType.HOST) }
             }
         }.onFailure { Log.w(TAG, "HOST_CANDIDATE_GATHER_FAILED: ${it.message}") }
-
         for ((host, port) in LinkoStunClient.DEFAULT_STUN_SERVERS) {
             if (System.currentTimeMillis() >= deadline) break
-            runCatching { LinkoStunClient.discover(socket, host, port, 1_200) }
-                .getOrNull()?.let { add(it.address, CandidateType.SRFLX, it.port) }
+            runCatching { LinkoStunClient.discover(socket, host, port, 1_200) }.getOrNull()?.let { add(it.address, CandidateType.SRFLX, it.port) }
         }
         return result.values.sortedWith(compareByDescending<IceCandidate> { it.priority }.thenBy { it.id })
     }
