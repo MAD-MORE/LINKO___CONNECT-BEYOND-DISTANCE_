@@ -50,6 +50,7 @@ class LinkoProviderService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var foregroundReady = false
 
     private fun acquireLocks() {
         runCatching {
@@ -254,7 +255,17 @@ class LinkoProviderService : Service() {
         auth = LinkoAuth(this)
         api = LinkoDeviceControlApi(this, auth)
         acquireLocks(); createChannel()
-        startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is active and ready for connection requests"))
+        try {
+            startForeground(NOTIFICATION_ID, serviceNotification("Provider Ready", "LINKO is active and ready for connection requests"))
+            foregroundReady = true
+            Log.i(TAG, "PROVIDER_FOREGROUND_READY api=${android.os.Build.VERSION.SDK_INT}")
+        } catch (error: Throwable) {
+            foregroundReady = false
+            Log.e(TAG, "PROVIDER_SERVICE_START_FAILED foreground promotion failed", error)
+            releaseLocks()
+            stopSelf()
+            return
+        }
         registerNetworkCallback(); LinkoRealtimeManager.start(this)
         scope.launch { runCatching { api.ensureRegistered(); api.touchPresence() } }
         scope.launch { listenToRealtime() }
@@ -262,6 +273,10 @@ class LinkoProviderService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!foregroundReady) {
+            Log.e(TAG, "PROVIDER_SERVICE_START_FAILED foreground service is not ready")
+            return START_NOT_STICKY
+        }
         LinkoRealtimeManager.start(this)
         val dataCapMb = intent?.getLongExtra(EXTRA_DATA_CAP_MB, 0L) ?: 0L
         if (dataCapMb > 0) dataCapBytes = dataCapMb * 1024 * 1024
@@ -278,6 +293,12 @@ class LinkoProviderService : Service() {
         isRunning = false
         runCatching { networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.unregisterNetworkCallback(it) } }
         releaseLocks(); runners.values.toList().forEach { it.stop() }; runners.clear(); startingSessions.clear(); scope.cancel(); super.onDestroy()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.e(TAG, "PROVIDER_SERVICE_TIMEOUT startId=$startId fgsType=$fgsType")
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf(startId)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
