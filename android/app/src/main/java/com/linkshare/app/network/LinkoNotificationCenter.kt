@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
+import com.linkshare.app.auth.LinkoAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -105,96 +106,40 @@ object LinkoNotificationCenter {
                     ?: profile?.optString("display_name")?.takeIf { it.isNotBlank() }
                     ?: "A LINKO user"
                 val actorUserId = profile?.optString("user_id")?.takeIf { it.isNotBlank() }
-                add(
-                    LinkoNotification(
-                        id = "friend-request:${event.requestId}",
-                        title = "New Friend Request",
-                        message = "$name wants to be your LINKO friend.",
-                        kind = LinkoNotification.Kind.FRIEND_REQUEST_INCOMING,
-                        requestId = event.requestId,
-                        actorUserId = actorUserId,
-                        actorName = name,
-                    )
-                )
+                add(LinkoNotification("friend-request:${event.requestId}", "New Friend Request", "$name wants to be your LINKO friend.", LinkoNotification.Kind.FRIEND_REQUEST_INCOMING, event.requestId, actorUserId, name))
                 postFriendRequestNotification(event.requestId, name)
             }
-
-            is LinkoRealtimeEvent.FriendRequestSent -> add(
-                LinkoNotification(
-                    id = "friend-sent:${event.requestId}",
-                    title = "Friend Request Sent",
-                    message = "Your LINKO friend request was sent and is waiting for a response.",
-                    kind = LinkoNotification.Kind.FRIEND_REQUEST_SENT,
-                    requestId = event.requestId,
-                )
-            )
-
+            is LinkoRealtimeEvent.FriendRequestSent -> add(LinkoNotification("friend-sent:${event.requestId}", "Friend Request Sent", "Your LINKO friend request was sent and is waiting for a response.", LinkoNotification.Kind.FRIEND_REQUEST_SENT, event.requestId))
             is LinkoRealtimeEvent.FriendRequestAccepted -> {
-                add(
-                    LinkoNotification(
-                        id = "friend-accepted:${event.requestId}",
-                        title = "Friend Request Accepted",
-                        message = "Your LINKO friend request was accepted. You can now connect and share internet.",
-                        kind = LinkoNotification.Kind.FRIEND_ACCEPTED,
-                        requestId = event.requestId,
-                    )
-                )
+                add(LinkoNotification("friend-accepted:${event.requestId}", "Friend Request Accepted", "Your LINKO friend request was accepted. You can now connect and share internet.", LinkoNotification.Kind.FRIEND_ACCEPTED, event.requestId))
                 postSimpleNotification("Friend Request Accepted", "Your LINKO friend request was accepted.")
+                refreshFriendCache()
             }
-
             is LinkoRealtimeEvent.FriendRequestDeclined -> {
-                add(
-                    LinkoNotification(
-                        id = "friend-declined:${event.requestId}",
-                        title = "Friend Request Declined",
-                        message = "Your LINKO friend request was declined.",
-                        kind = LinkoNotification.Kind.FRIEND_DECLINED,
-                        requestId = event.requestId,
-                    )
-                )
+                add(LinkoNotification("friend-declined:${event.requestId}", "Friend Request Declined", "Your LINKO friend request was declined.", LinkoNotification.Kind.FRIEND_DECLINED, event.requestId))
                 postSimpleNotification("Friend Request Declined", "Your LINKO friend request was declined.")
             }
-
             is LinkoRealtimeEvent.PresenceChanged -> handlePresence(event.presence)
-
-            is LinkoRealtimeEvent.FriendRemoved -> add(
-                LinkoNotification(
-                    id = "friend-removed:${event.requestId}",
-                    title = "Friend Removed",
-                    message = "A LINKO friendship was removed.",
-                    kind = LinkoNotification.Kind.FRIEND_REMOVED,
-                    requestId = event.requestId,
-                )
-            )
-
+            is LinkoRealtimeEvent.FriendRemoved -> {
+                add(LinkoNotification("friend-removed:${event.requestId}", "Friend Removed", "A LINKO friendship was removed.", LinkoNotification.Kind.FRIEND_REMOVED, event.requestId))
+                refreshFriendCache()
+            }
             is LinkoRealtimeEvent.IncomingConnectionRequest -> {
                 val name = event.peerName?.takeIf { it.isNotBlank() } ?: "A trusted friend"
-                add(
-                    LinkoNotification(
-                        id = "connection-request:${event.sessionId}",
-                        title = "Incoming Connection Request",
-                        message = "$name wants to use your LINKO Internet connection.",
-                        kind = LinkoNotification.Kind.CONNECTION,
-                        requestId = event.sessionId,
-                        actorName = name,
-                    )
-                )
-                postSimpleNotification(
-                    "Incoming LINKO Connection",
-                    "$name wants to connect to your Internet.",
-                    BASE_NOTIFICATION_ID + event.sessionId.hashCode().absoluteValueSafe(),
-                )
+                add(LinkoNotification("connection-request:${event.sessionId}", "Incoming Connection Request", "$name wants to use your LINKO Internet connection.", LinkoNotification.Kind.CONNECTION, event.sessionId, actorName = name))
+                postSimpleNotification("Incoming LINKO Connection", "$name wants to connect to your Internet.", BASE_NOTIFICATION_ID + event.sessionId.hashCode().absoluteValueSafe())
             }
-
             is LinkoRealtimeEvent.SessionStateChanged -> {
                 val state = event.state ?: return
                 val message = when (state) {
                     "requested" -> "A connection request was created."
                     "approved" -> "Connection request approved."
-                    "connected" -> "LINKO connection is established."
+                    "connected", "direct_verified" -> "LINKO connection is established."
                     "denied" -> "Connection request was declined."
                     "revoked" -> "LINKO connection ended."
                     "expired" -> "LINKO connection session expired."
+                    "provider_connection_failed", "failed" -> "LINKO could not establish the connection."
+                    "disconnected" -> "The LINKO connection was disconnected."
                     else -> "Connection state changed to $state."
                 }
                 val kind = when (state) {
@@ -202,22 +147,15 @@ object LinkoNotificationCenter {
                     "provider_connection_failed", "failed", "denied", "expired", "revoked", "disconnected" -> LinkoNotification.Kind.CONNECTION_FAILED
                     else -> LinkoNotification.Kind.CONNECTION
                 }
-                add(
-                    LinkoNotification(
-                        id = "session:${event.sessionId ?: state}:$state",
-                        title = if (kind == LinkoNotification.Kind.CONNECTION_CONNECTED) "LINKO Connected" else "Connection Update",
-                        message = message,
-                        kind = kind,
-                        requestId = event.sessionId,
-                    )
-                )
-                if (state == "connected" || state == "direct_verified") {
-                    postSimpleNotification("LINKO Connected", message, BASE_NOTIFICATION_ID + 60)
-                } else if (state == "provider_connection_failed" || state == "failed" || state == "denied" || state == "expired" || state == "revoked" || state == "disconnected") {
-                    postSimpleNotification("LINKO Connection Update", message, BASE_NOTIFICATION_ID + 61)
-                }
+                add(LinkoNotification("session:${event.sessionId ?: state}:$state", if (kind == LinkoNotification.Kind.CONNECTION_CONNECTED) "LINKO Connected" else "Connection Update", message, kind, event.sessionId))
+                if (state == "connected" || state == "direct_verified") postSimpleNotification("LINKO Connected", message, BASE_NOTIFICATION_ID + 60)
+                else if (state == "provider_connection_failed" || state == "failed" || state == "denied" || state == "expired" || state == "revoked" || state == "disconnected") postSimpleNotification("LINKO Connection Update", message, BASE_NOTIFICATION_ID + 61)
             }
-
+            is LinkoRealtimeEvent.TransportError -> {
+                val message = event.message.ifBlank { "LINKO realtime service was interrupted. Reconnecting…" }
+                add(LinkoNotification("realtime-error:${message.hashCode()}", "LINKO Connection Service", message, LinkoNotification.Kind.REALTIME_ERROR))
+                postSimpleNotification("LINKO Connection Service", message, BASE_NOTIFICATION_ID + 90)
+            }
             else -> Unit
         }
     }
@@ -232,14 +170,7 @@ object LinkoNotificationCenter {
         val kind = if (presence.online) LinkoNotification.Kind.FRIEND_ONLINE else LinkoNotification.Kind.FRIEND_OFFLINE
         val title = if (presence.online) "Your Friend Is Online" else "Your Friend Is Offline"
         val message = if (presence.online) "$friendName is now online on LINKO." else "$friendName is now offline on LINKO."
-        add(LinkoNotification(
-            id = "presence:${presence.userId}:${if (presence.online) "online" else "offline"}",
-            title = title,
-            message = message,
-            kind = kind,
-            actorUserId = presence.userId,
-            actorName = friendName,
-        ))
+        add(LinkoNotification("presence:${presence.userId}:${if (presence.online) "online" else "offline"}", title, message, kind, actorUserId = presence.userId, actorName = friendName))
         postSimpleNotification(title, message, BASE_NOTIFICATION_ID + presence.userId.hashCode().absoluteValueSafe())
     }
 
@@ -257,44 +188,26 @@ object LinkoNotificationCenter {
         }
     }
 
-    private suspend fun findRequest(requestId: String): JSONObject? {
-        return runCatching {
-            val array = LinkoFriendsApiHolder.api.requests().optJSONArray("requests") ?: return null
-            for (i in 0 until array.length()) {
-                val item = array.optJSONObject(i) ?: continue
-                if (item.optString("id") == requestId) return item
-            }
-            null
-        }.getOrNull()
-    }
+    private suspend fun findRequest(requestId: String): JSONObject? = runCatching {
+        val array = LinkoFriendsApiHolder.api.requests().optJSONArray("requests") ?: return null
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            if (item.optString("id") == requestId) return item
+        }
+        null
+    }.getOrNull()
 
     private fun postFriendRequestNotification(requestId: String, senderName: String) {
         val context = appContext ?: return
         if (!notificationsAllowed(context)) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notificationId = BASE_NOTIFICATION_ID + requestId.hashCode().absoluteValueSafe()
-
-        val acceptIntent = Intent(context, LinkoNotificationActionReceiver::class.java).apply {
-            action = LinkoNotificationActionReceiver.ACTION_ACCEPT_FRIEND
-            putExtra(LinkoNotificationActionReceiver.EXTRA_REQUEST_ID, requestId)
-        }
-        val declineIntent = Intent(context, LinkoNotificationActionReceiver::class.java).apply {
-            action = LinkoNotificationActionReceiver.ACTION_DECLINE_FRIEND
-            putExtra(LinkoNotificationActionReceiver.EXTRA_REQUEST_ID, requestId)
-        }
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra("EXTRA_NOTIFICATION_REQUEST_ID", requestId)
-        }
+        val acceptIntent = Intent(context, LinkoNotificationActionReceiver::class.java).apply { action = LinkoNotificationActionReceiver.ACTION_ACCEPT_FRIEND; putExtra(LinkoNotificationActionReceiver.EXTRA_REQUEST_ID, requestId) }
+        val declineIntent = Intent(context, LinkoNotificationActionReceiver::class.java).apply { action = LinkoNotificationActionReceiver.ACTION_DECLINE_FRIEND; putExtra(LinkoNotificationActionReceiver.EXTRA_REQUEST_ID, requestId) }
+        val openIntent = Intent(context, MainActivity::class.java).apply { addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP); putExtra("EXTRA_NOTIFICATION_REQUEST_ID", requestId) }
         val acceptPending = broadcastPending(context, acceptIntent, notificationId + 1)
         val declinePending = broadcastPending(context, declineIntent, notificationId + 2)
-        val openPending = PendingIntent.getActivity(
-            context,
-            notificationId + 3,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
+        val openPending = PendingIntent.getActivity(context, notificationId + 3, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("New LINKO Friend Request")
@@ -325,28 +238,18 @@ object LinkoNotificationCenter {
             .build())
     }
 
-    private fun notificationsAllowed(context: Context): Boolean =
-        Build.VERSION.SDK_INT < 33 ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    private fun notificationsAllowed(context: Context): Boolean = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    private fun broadcastPending(context: Context, intent: Intent, requestCode: Int): PendingIntent =
-        PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+    private fun broadcastPending(context: Context, intent: Intent, requestCode: Int): PendingIntent = PendingIntent.getBroadcast(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     private fun ensureChannel() {
         val context = appContext ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Incoming LINKO friend requests and request results"
-                enableVibration(true)
-            }
-        )
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Incoming LINKO friend requests and request results"
+            enableVibration(true)
+        })
     }
 
     private fun Int.absoluteValueSafe(): Int = if (this == Int.MIN_VALUE) Int.MAX_VALUE else kotlin.math.abs(this)
