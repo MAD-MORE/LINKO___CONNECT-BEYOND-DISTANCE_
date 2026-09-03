@@ -2,7 +2,9 @@ package com.linkshare.app.tunnel
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.linkshare.app.vpn.LinkShareVpnService
 
 class TunnelCoordinator(private val context: Context) {
@@ -15,7 +17,12 @@ class TunnelCoordinator(private val context: Context) {
             .putExtra(LinkShareVpnService.EXTRA_SESSION_ID, sessionId)
             .putExtra(LinkShareVpnService.EXTRA_ROLE, LinkShareVpnService.ROLE_RECEIVER)
             .putExtra(LinkShareVpnService.EXTRA_SESSION_KEY, sessionKey.copyOf())
-        context.startService(intent)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(context, intent)
+        } else {
+            context.startService(intent)
+        }
     }
 
     /** Legacy endpoint-based entry point retained for source compatibility; direct mode rejects server endpoints. */
