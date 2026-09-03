@@ -62,10 +62,11 @@ fun LinkoRealtimeOverlay() {
                         connectionSessionId = event.sessionId
                         statusText = null
                         processingConnection = false
-                    } else if (event.state == "approved" || event.state == "connected") {
+                    } else if (event.state == "approved" || event.state == "signaling") {
                         connectionSessionId = null
                         requesterPeerName = null
                         processingConnection = false
+                        statusText = if (event.state == "approved") "APPROVED • ESTABLISHING DIRECT TUNNEL" else "NEGOTIATING DIRECT TUNNEL"
                     } else if (event.state == "denied" || event.state == "revoked" || event.state == "expired") {
                         connectionSessionId = null
                         requesterPeerName = null
@@ -151,7 +152,7 @@ fun LinkoRealtimeOverlay() {
                                             requesterPeerName = null
                                             processingConnection = false
                                             isCelebration = true
-                                            statusText = "SHARING ACTIVE • FRIEND CONNECTED"
+                                            statusText = "APPROVED • ESTABLISHING DIRECT TUNNEL"
                                         } else if (state.contains("failed") || state.contains("error")) {
                                             processingConnection = false
                                             statusText = state
