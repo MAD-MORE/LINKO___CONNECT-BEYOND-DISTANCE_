@@ -58,6 +58,7 @@ object LinkoNotificationCenter {
     private const val CHANNEL_ID = "linko_request_alerts_v3"
     private const val CHANNEL_NAME = "LINKO Requests"
     private const val BASE_NOTIFICATION_ID = 31_000
+    private const val DIAGNOSTIC_NOTIFICATION_ID = BASE_NOTIFICATION_ID + 70
     private const val MAX_ITEMS = 100
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -79,6 +80,13 @@ object LinkoNotificationCenter {
             scope.launch {
                 refreshFriendCache()
                 LinkoRealtimeManager.events.collect { event -> handle(event) }
+            }
+            scope.launch {
+                LinkoConnectionDiagnostics.snapshot.collect { snapshot ->
+                    if (snapshot.headline != "Ready" || snapshot.stage != ConnectionStage.REQUESTING) {
+                        postDiagnosticsNotification(snapshot)
+                    }
+                }
             }
         }
     }
@@ -222,6 +230,45 @@ object LinkoNotificationCenter {
             .also { manager.notify(notificationId, it) }
     }
 
+    private fun postDiagnosticsNotification(snapshot: ConnectionDiagnosticsSnapshot) {
+        val context = appContext ?: return
+        if (!notificationsAllowed(context)) return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val terminal = snapshot.stage == ConnectionStage.CONNECTED || snapshot.stage == ConnectionStage.FAILED
+        val title = when (snapshot.stage) {
+            ConnectionStage.CONNECTED -> "LINKO Connected"
+            ConnectionStage.FAILED -> "LINKO Connection Failed"
+            else -> "LINKO · ${snapshot.stage.name.replace('_', ' ')}"
+        }
+        val counts = "Local ${snapshot.localCandidates} · Remote ${snapshot.remoteCandidates} · Checks ${snapshot.checks} · Success ${snapshot.successfulChecks}"
+        val eventLines = snapshot.recentEvents.take(5).asReversed().joinToString("\n") { event ->
+            val marker = when (event.severity) {
+                ConnectionSeverity.ERROR -> "✗"
+                ConnectionSeverity.SUCCESS -> "✓"
+                ConnectionSeverity.WARNING -> "!"
+                ConnectionSeverity.INFO -> "·"
+            }
+            "$marker ${event.message}"
+        }
+        val headline = snapshot.failureReason?.let { "$it\n$counts" } ?: "${snapshot.headline}\n$counts"
+        val bigText = "$headline\n\n$eventLines".trim()
+        val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pending = PendingIntent.getActivity(context, DIAGNOSTIC_NOTIFICATION_ID, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        manager.notify(
+            DIAGNOSTIC_NOTIFICATION_ID,
+            NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(headline.lineSequence().firstOrNull() ?: headline)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+                .setContentIntent(pending)
+                .setOngoing(!terminal)
+                .setAutoCancel(terminal)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build(),
+        )
+    }
+
     private fun postSimpleNotification(title: String, message: String, notificationId: Int = BASE_NOTIFICATION_ID) {
         val context = appContext ?: return
         if (!notificationsAllowed(context)) return
@@ -247,7 +294,7 @@ object LinkoNotificationCenter {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Incoming LINKO friend requests and request results"
+            description = "Incoming LINKO friend requests and connection diagnostics"
             enableVibration(true)
         })
     }
