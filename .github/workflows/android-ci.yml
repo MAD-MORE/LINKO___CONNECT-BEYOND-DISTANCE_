@@ -2,7 +2,7 @@ name: LINKO Android CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, linko-next-stable]
   pull_request:
     branches: [main]
   workflow_dispatch:
