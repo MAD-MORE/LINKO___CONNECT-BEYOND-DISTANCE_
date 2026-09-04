@@ -93,6 +93,47 @@ class LinkoDeviceControlApi(
         DeviceSession(json.optString("id", sessionId), json.optString("state", "idle"), json.optLong("expiresAt", 0L))
     }
 
+    suspend fun publishSessionUiState(
+        sessionId: String,
+        deviceId: String,
+        role: String,
+        txBytes: Long,
+        rxBytes: Long,
+        latencyMs: Int,
+    ) = withContext(Dispatchers.IO) {
+        rpc(
+            "linko_publish_session_ui_state",
+            JSONObject()
+                .put("p_session_id", sessionId)
+                .put("p_device_id", deviceId)
+                .put("p_role", role)
+                .put("p_tx_bytes", txBytes.coerceAtLeast(0L))
+                .put("p_rx_bytes", rxBytes.coerceAtLeast(0L))
+                .put("p_latency_ms", latencyMs.coerceAtLeast(0)),
+            authToken(),
+        )
+    }
+
+    suspend fun getSessionUiState(sessionId: String): SharedConnectionUiState = withContext(Dispatchers.IO) {
+        val json = rpc("linko_get_session_ui_state", JSONObject().put("p_session_id", sessionId), authToken())
+        SharedConnectionUiState(
+            sessionId = json.optString("sessionId", sessionId),
+            state = json.optString("state", "idle"),
+            receiverDeviceId = json.optString("receiverDeviceId"),
+            receiverName = json.optString("receiverName").takeIf { it.isNotBlank() },
+            receiverLinkoId = json.optString("receiverLinkoId").takeIf { it.isNotBlank() },
+            providerDeviceId = json.optString("providerDeviceId"),
+            providerName = json.optString("providerName").takeIf { it.isNotBlank() },
+            providerLinkoId = json.optString("providerLinkoId").takeIf { it.isNotBlank() },
+            receiverTxBytes = json.optLong("receiverTxBytes", 0L),
+            receiverRxBytes = json.optLong("receiverRxBytes", 0L),
+            providerTxBytes = json.optLong("providerTxBytes", 0L),
+            providerRxBytes = json.optLong("providerRxBytes", 0L),
+            sharedLatencyMs = json.optInt("sharedLatencyMs", 0),
+            updatedAt = json.optLong("updatedAt", 0L),
+        )
+    }
+
     suspend fun tunnelConfig(sessionId: String): TunnelConfig = withContext(Dispatchers.IO) {
         val json = rpc("linko_tunnel_config", JSONObject().put("p_session_id", sessionId), authToken())
         val keyB64 = json.optString("key").trim()
@@ -158,6 +199,22 @@ data class PresenceResult(val deviceId: String, val lastSeenAt: Long)
 data class ProviderDevice(val deviceId: String, val online: Boolean, val lastSeenAt: Long)
 data class DeviceSession(val id: String, val state: String, val expiresAt: Long)
 data class WireGuardIdentityInfo(val publicKey: String, val privateKey: String)
+data class SharedConnectionUiState(
+    val sessionId: String,
+    val state: String,
+    val receiverDeviceId: String,
+    val receiverName: String?,
+    val receiverLinkoId: String?,
+    val providerDeviceId: String,
+    val providerName: String?,
+    val providerLinkoId: String?,
+    val receiverTxBytes: Long,
+    val receiverRxBytes: Long,
+    val providerTxBytes: Long,
+    val providerRxBytes: Long,
+    val sharedLatencyMs: Int,
+    val updatedAt: Long,
+)
 data class TunnelConfig(
     val sessionId: String,
     val key: ByteArray,
