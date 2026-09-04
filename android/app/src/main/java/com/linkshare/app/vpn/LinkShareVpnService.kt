@@ -244,9 +244,15 @@ class LinkShareVpnService : VpnService() {
                     runCatching { transport?.sendPing() }
                     val silentMs = System.currentTimeMillis() - lastPongReceivedAt.get()
                     if (silentMs > HEARTBEAT_TIMEOUT_MS) {
-                        val reason = "Direct peer became unreachable (NAT/network timeout)"
-                        Log.w(TAG, "Direct peer heartbeat expired after ${silentMs}ms")
-                        failSession(sessionId, generation, reason)
+                        Log.w(TAG, "Direct peer heartbeat expired after ${silentMs}ms; retaining LINKO session for network recovery")
+                        LinkoEngineBridge.reportConnectionDiagnostic(
+                            ConnectionStage.CONNECTED,
+                            "NETWORK_GRACE",
+                            "Direct peer heartbeat is temporarily silent; keeping the session alive while the network recovers",
+                            ConnectionSeverity.WARNING,
+                        )
+                        updateForegroundNotification("Connected — Network unstable", "Keeping the LINKO session alive while the network recovers")
+                        LinkoEngineBridge.reportTunnelState("connected", "Network temporarily unavailable; keeping the session alive")
                     }
                 }
             }, 3, 15, TimeUnit.SECONDS)
@@ -297,11 +303,23 @@ class LinkShareVpnService : VpnService() {
             val callback = object : android.net.ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: android.net.Network) {
                     if (!isCurrent(sessionId, generation)) return
+                    Log.i(TAG, "Receiver network became available; preserving LINKO session and refreshing P2P path")
                     protect(socket)
                     runCatching { transport?.sendPing() }
                 }
                 override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
                     if (isCurrent(sessionId, generation)) protect(socket)
+                }
+                override fun onLost(network: android.net.Network) {
+                    if (!isCurrent(sessionId, generation)) return
+                    Log.w(TAG, "Receiver default network lost; keeping LINKO session alive for recovery")
+                    LinkoEngineBridge.reportConnectionDiagnostic(
+                        ConnectionStage.CONNECTED,
+                        "NETWORK_LOST_GRACE",
+                        "Default network lost; LINKO will keep the connection alive while the network recovers",
+                        ConnectionSeverity.WARNING,
+                    )
+                    updateForegroundNotification("Connected — Network interrupted", "LINKO session is being kept alive")
                 }
             }
             cm.registerDefaultNetworkCallback(callback)
