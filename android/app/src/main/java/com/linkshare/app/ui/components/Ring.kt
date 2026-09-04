@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkshare.app.ui.theme.JetBrainsMono
 
-/** LINKO connection ring. Live states keep the fast packet animation running. */
+/** LINKO connection ring. Live states keep fast directional packet flow visible. */
 @Composable
 fun Ring(
     color: Color,
@@ -47,9 +47,9 @@ fun Ring(
         GlobeRadar(
             color = color,
             size = size,
-            // Packet-flow mode makes the existing radar draw moving split atoms. The label is
-            // rendered here so provider LIVE/ONLINE can retain the correct user-facing text.
-            label = if (live) null else label,
+            // PACKET FLOW activates the moving split-atom renderer. incomingFlow controls
+            // direction, so receiver traffic moves inward while provider traffic moves outward.
+            label = if (live) "PACKET FLOW" else label,
             fast = fast || live,
             incomingFlow = incomingFlow,
             idle = idle && !live,
