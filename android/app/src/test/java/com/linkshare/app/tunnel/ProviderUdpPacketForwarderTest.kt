@@ -22,14 +22,7 @@ class ProviderUdpPacketForwarderTest {
                 server.receive(request)
                 Thread.sleep(350)
                 val replyPayload = "LINKO-UDP-RESPONSE".toByteArray()
-                server.send(
-                    DatagramPacket(
-                        replyPayload,
-                        replyPayload.size,
-                        request.address,
-                        request.port,
-                    )
-                )
+                server.send(DatagramPacket(replyPayload, replyPayload.size, request.address, request.port))
             }
             serverThread.start()
 
@@ -44,13 +37,12 @@ class ProviderUdpPacketForwarderTest {
             val started = System.nanoTime()
             forwarder.forward(packet)
             val elapsedMs = (System.nanoTime() - started) / 1_000_000L
-
             assertTrue("forward() must not wait for the remote UDP response", elapsedMs < 200L)
 
             var response: ByteArray? = null
-            repeat(30) {
+            for (attempt in 0 until 30) {
                 response = forwarder.drainResponses(8).firstOrNull()
-                if (response != null) return@repeat
+                if (response != null) break
                 Thread.sleep(50)
             }
 
