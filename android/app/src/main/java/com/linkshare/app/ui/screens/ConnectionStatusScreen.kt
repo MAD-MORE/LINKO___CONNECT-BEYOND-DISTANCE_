@@ -43,7 +43,7 @@ import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
 
 @Composable
-fun ConnectionStatusScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
+fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val state by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     val health by LinkoNetworkHealthMonitor.snapshot.collectAsStateWithLifecycle()
@@ -56,8 +56,13 @@ fun ConnectionStatusScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         LinkoNetworkHealthMonitor.start(context)
         VpnService.prepare(context)?.let(vpnLauncher::launch) ?: run { vpnGranted = true }
     }
-    LaunchedEffect(state.phase) { if (state.phase == LinkoConnectionPhase.Connected) onConnected() }
 
+    // Stay on the live connection screen for Connected and Failed states.
+    // Navigation is deliberately not triggered by state changes here; the user
+    // controls STOP, RETRY and DISCONNECT from this screen.
+    val activeConnection = state.phase != LinkoConnectionPhase.Idle
+    val negotiating = state.phase != LinkoConnectionPhase.Idle && state.phase != LinkoConnectionPhase.Failed
+    val fastAnimation = negotiating && (!health.available || health.score >= 60)
     val color = when {
         state.phase == LinkoConnectionPhase.Failed -> Red
         state.phase == LinkoConnectionPhase.Connected && health.score >= 65 -> Green
@@ -93,7 +98,15 @@ fun ConnectionStatusScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(10.dp))
-        Ring(color = color, size = 170.dp, idle = state.phase == LinkoConnectionPhase.Idle || state.phase == LinkoConnectionPhase.Failed, label = label)
+        Ring(
+            color = color,
+            size = 170.dp,
+            idle = !activeConnection,
+            label = label,
+            pulse = negotiating,
+            fast = fastAnimation,
+            incomingFlow = negotiating || state.phase == LinkoConnectionPhase.Connected,
+        )
         Spacer(Modifier.height(18.dp))
         Text(title, color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(7.dp))
@@ -102,7 +115,7 @@ fun ConnectionStatusScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         if (state.phase == LinkoConnectionPhase.Connected) {
             Spacer(Modifier.height(18.dp))
             LinkoCard {
-                Text("Live usage", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Live connection", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(9.dp))
                 InfoRow("Downloaded", formatBytes(state.bytesIn))
                 InfoRow("Uploaded", formatBytes(state.bytesOut))
@@ -123,15 +136,19 @@ fun ConnectionStatusScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         }
 
         Spacer(Modifier.height(22.dp))
-        if (state.phase == LinkoConnectionPhase.Failed) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton("TRY AGAIN", { LinkoEngineBridge.reconnect() }, color = Blue)
-                PrimaryButton("CANCEL", { LinkoEngineBridge.disconnect(); onFailed() }, color = Red, outline = true)
+        when {
+            state.phase == LinkoConnectionPhase.Failed -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrimaryButton("TRY AGAIN", { LinkoEngineBridge.reconnect() }, color = Blue)
+                    PrimaryButton("CANCEL", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+                }
             }
-        } else if (state.phase != LinkoConnectionPhase.Idle && state.phase != LinkoConnectionPhase.Connected) {
-            PrimaryButton("STOP", { LinkoEngineBridge.disconnect(); onFailed() }, color = Red, outline = true)
-        } else if (state.phase == LinkoConnectionPhase.Connected) {
-            PrimaryButton("DISCONNECT", { LinkoEngineBridge.disconnect(); onFailed() }, color = Red, outline = true)
+            state.phase == LinkoConnectionPhase.Connected -> {
+                PrimaryButton("DISCONNECT", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+            }
+            state.phase != LinkoConnectionPhase.Idle -> {
+                PrimaryButton("STOP", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+            }
         }
         Spacer(Modifier.height(20.dp))
     }
