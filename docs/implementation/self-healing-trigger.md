@@ -1,0 +1,1 @@
+Temporary trigger for the bounded automatic connection recovery implementation. This file is retained as implementation documentation.
