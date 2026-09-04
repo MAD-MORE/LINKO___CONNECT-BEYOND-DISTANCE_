@@ -4,19 +4,19 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.linkshare.app.ui.theme.JetBrainsMono
 
-/**
- * LINKO connection ring. Animation intensity is tied to real connection work:
- * pulse=true means negotiation is active; incomingFlow=true makes atoms travel
- * from the outer path into the receiver instead of the ring looking like a fake timer.
- */
+/** LINKO connection ring. Live states keep the fast packet animation running. */
 @Composable
 fun Ring(
     color: Color,
@@ -29,6 +29,7 @@ fun Ring(
     onClick: (() -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val live = label == "ONLINE" || label == "LIVE" || label == "CONNECTED"
     Box(
         modifier = Modifier
             .size(size)
@@ -46,10 +47,15 @@ fun Ring(
         GlobeRadar(
             color = color,
             size = size,
-            label = label,
-            fast = fast,
+            // Packet-flow mode makes the existing radar draw moving split atoms. The label is
+            // rendered here so provider LIVE/ONLINE can retain the correct user-facing text.
+            label = if (live) null else label,
+            fast = fast || live,
             incomingFlow = incomingFlow,
-            idle = idle,
+            idle = idle && !live,
         )
+        if (live && !label.isNullOrBlank()) {
+            Text(label, color = color, fontSize = 9.5.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        }
     }
 }
