@@ -410,7 +410,14 @@ object LinkoEngineBridge {
         } ?: notifyOnMain(onState, "engine_scope_unavailable")
     }
 
+    /** All callers, including legacy UI screens, converge on the same authoritative teardown path. */
     fun disconnect() {
+        val context = appContext
+        if (context != null) {
+            LinkoConnectionLifecycle.stop(context)
+            return
+        }
+
         val sessionId = _connection.value.sessionId
         beginNewConnection(stopServices = true)
         lastFriendUserId?.let(::stopWatchingFriendPresence)
