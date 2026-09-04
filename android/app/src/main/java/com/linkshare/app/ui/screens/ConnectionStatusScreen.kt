@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.linkshare.app.network.LinkoConnectionLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.ui.components.InfoRow
@@ -57,9 +58,8 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         VpnService.prepare(context)?.let(vpnLauncher::launch) ?: run { vpnGranted = true }
     }
 
-    // Stay on the live connection screen for Connected and Failed states.
-    // Navigation is deliberately not triggered by state changes here; the user
-    // controls STOP, RETRY and DISCONNECT from this screen.
+    // This screen is the single live view for every non-idle connection state. Navigation is
+    // controlled by the user; the engine state itself drives the animation and controls shown.
     val activeConnection = state.phase != LinkoConnectionPhase.Idle
     val negotiating = state.phase != LinkoConnectionPhase.Idle && state.phase != LinkoConnectionPhase.Failed
     val fastAnimation = negotiating && (!health.available || health.score >= 60)
@@ -140,14 +140,14 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
             state.phase == LinkoConnectionPhase.Failed -> {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PrimaryButton("TRY AGAIN", { LinkoEngineBridge.reconnect() }, color = Blue)
-                    PrimaryButton("CANCEL", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+                    PrimaryButton("CANCEL", { LinkoConnectionLifecycle.stop(context) }, color = Red, outline = true)
                 }
             }
             state.phase == LinkoConnectionPhase.Connected -> {
-                PrimaryButton("DISCONNECT", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+                PrimaryButton("DISCONNECT", { LinkoConnectionLifecycle.stop(context) }, color = Red, outline = true)
             }
             state.phase != LinkoConnectionPhase.Idle -> {
-                PrimaryButton("STOP", { LinkoEngineBridge.disconnect() }, color = Red, outline = true)
+                PrimaryButton("STOP", { LinkoConnectionLifecycle.stop(context) }, color = Red, outline = true)
             }
         }
         Spacer(Modifier.height(20.dp))
