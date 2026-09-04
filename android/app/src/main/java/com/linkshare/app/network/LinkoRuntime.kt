@@ -67,6 +67,7 @@ class LinkoRuntime(
 
             onProgress("Preparing Database & Local Cache…")
             LinkoEngineBridge.configure(appContext)
+            LinkoSessionWatchdog.start(appContext)
 
             if (!auth.isSignedIn()) {
                 onProgress("Engine Ready")
@@ -151,10 +152,11 @@ class LinkoRuntime(
     suspend fun sendFriendRequest(userId: String): Boolean = friendApi.sendFriendRequest(userId)
     suspend fun getFriends(): List<Friend> = friendApi.getFriends()
     fun connect(providerDeviceId: String, onState: (String) -> Unit = {}) { LinkoEngineBridge.connect(providerDeviceId, onState) }
-    fun disconnect() { LinkoEngineBridge.disconnect() }
+    fun disconnect() { LinkoConnectionLifecycle.stop(appContext) }
 
     fun stop() {
         runCatching { presenceManager.stop() }
+        runCatching { LinkoSessionWatchdog.stop() }
         runCatching { disconnect() }
         scope.cancel()
     }
