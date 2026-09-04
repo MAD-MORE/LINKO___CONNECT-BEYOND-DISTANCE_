@@ -33,8 +33,8 @@ import kotlin.math.sqrt
 
 /**
  * Real LINKO globe/radar visualization.
- * The receiver's CONNECTING/WAITING stages use an inward packet stream.
- * fast=true is used for active provider negotiation and makes the ring visibly accelerate.
+ * Negotiating/connecting stages show directional packet motion.
+ * fast=true visibly accelerates rotation and packet flow.
  */
 @Composable
 fun GlobeRadar(
@@ -46,7 +46,9 @@ fun GlobeRadar(
     idle: Boolean = false,
 ) {
     val transition = rememberInfiniteTransition(label = "globe_radar")
-    val activeFast = fast || label == "CONNECTING" || label == "WAITING" || label == "APPROVED" || label == "SIGNALING"
+    val normalizedLabel = label?.uppercase()
+    val activeFast = fast || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" ||
+        normalizedLabel == "LINKING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING"
     val rotation by transition.animateFloat(
         -180f,
         180f,
@@ -72,12 +74,16 @@ fun GlobeRadar(
         label = "fast_connection_spin",
     )
 
-    val outgoing = label == "SYNCING" || label == "REQUESTING" || label == "APPROVED" || label == "SIGNALING" ||
-        label == "SDP" || label == "ICE GATHERING" || label == "ICE CHECKING" ||
-        label == "NOMINATING" || label == "HANDSHAKE" || label == "TUNNEL"
-    val receiverNegotiating = incomingFlow || label == "CONNECTING" || label == "WAITING"
-    val packetFlow = label == "PACKET FLOW"
-    val connected = label == "CONNECTED" || label == "LIVE" || label == "ONLINE"
+    val outgoing = normalizedLabel == "SYNCING" || normalizedLabel == "REQUESTING" ||
+        normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING" ||
+        normalizedLabel == "SDP" || normalizedLabel == "ICE GATHERING" || normalizedLabel == "ICE CHECKING" ||
+        normalizedLabel == "NOMINATING" || normalizedLabel == "HANDSHAKE" || normalizedLabel == "TUNNEL" ||
+        normalizedLabel == "SHARING"
+    val receiverNegotiating = incomingFlow || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" ||
+        normalizedLabel == "LINKING"
+    val connected = normalizedLabel == "CONNECTED" || normalizedLabel == "LIVE" || normalizedLabel == "ONLINE" ||
+        normalizedLabel == "SHARING"
+    val packetFlow = normalizedLabel == "PACKET FLOW" || connected
     val flowing = outgoing || receiverNegotiating || packetFlow
 
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
