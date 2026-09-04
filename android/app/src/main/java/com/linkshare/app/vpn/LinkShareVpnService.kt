@@ -48,6 +48,8 @@ class LinkShareVpnService : VpnService() {
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
     private val lastPongReceivedAt = AtomicLong(0)
+    private val internetProbeReceivedAt = AtomicLong(0)
+    @Volatile private var internetProbeExpectation: InternetPathProbe.Expectation? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
@@ -178,13 +180,16 @@ class LinkShareVpnService : VpnService() {
             assertCurrent(sessionId, generation)
             running.set(true)
             lastPongReceivedAt.set(0L)
+            internetProbeReceivedAt.set(0L)
+            internetProbeExpectation = null
             executor.execute { outboundLoop() }
             executor.execute { inboundLoop() }
             if (!verifyBidirectionalTransport(sessionId, generation)) throw LinkoNetworkException("DIRECT_DATA_PLANE_PROBE_FAILED")
+            if (!verifyInternetPath(sessionId, generation)) throw LinkoNetworkException("DIRECT_INTERNET_PATH_PROBE_FAILED")
             runCatching { runBlocking { LinkoDeviceControlApi(applicationContext).transition(sessionId, "connected") } }
                 .onFailure { Log.w(TAG, "Connected tunnel established but session-state update failed: ${it.message}") }
-            updateForegroundNotification("Connected", "Direct encrypted LINKO tunnel is active")
-            LinkoEngineBridge.reportTunnelState("direct_established", "Secure direct connection established")
+            updateForegroundNotification("Connected", "Direct Internet path verified")
+            LinkoEngineBridge.reportTunnelState("direct_established", "Secure direct connection established; Internet path verified")
             registerNetworkHandoverCallback(result.socket, sessionId, generation)
             scheduler = Executors.newSingleThreadScheduledExecutor()
             scheduler?.scheduleWithFixedDelay({
@@ -198,8 +203,8 @@ class LinkShareVpnService : VpnService() {
                     }
                 }
             }, 3, 15, TimeUnit.SECONDS)
-            LinkoEngineBridge.reportTunnelState("connected", "Direct tunnel established; packet flow verified")
-            Log.i(TAG, "LINKO direct P2P tunnel established and verified for session=$sessionId to ${result.peer.hostString}:${result.peer.port}")
+            LinkoEngineBridge.reportTunnelState("connected", "Direct Internet path verified; packet flow active")
+            Log.i(TAG, "LINKO direct P2P tunnel established and Internet path verified for session=$sessionId to ${result.peer.hostString}:${result.peer.port}")
         } catch (e: CancellationExceptionLike) {
             runCatching { socket.close() }
             throw e
@@ -208,6 +213,7 @@ class LinkShareVpnService : VpnService() {
             runCatching { tunnelInterface?.close() }; tunnelInterface = null
             runCatching { transport?.close() }; transport = null
             running.set(false)
+            internetProbeExpectation = null
             Log.w(TAG, "Direct P2P connection failed: ${e.message}", e)
             runCatching { socket.close() }
             throw e
@@ -230,6 +236,61 @@ class LinkShareVpnService : VpnService() {
             try { Thread.sleep(40) } catch (interrupted: InterruptedException) { Thread.currentThread().interrupt(); return false }
         }
         LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "DATA_PLANE_PROBE_FAILED", "Peer did not acknowledge the encrypted transport probe", ConnectionSeverity.ERROR, sessionId)
+        return false
+    }
+
+    private fun verifyInternetPath(sessionId: String, generation: Long): Boolean {
+        val transportRef = transport ?: return false
+        repeat(INTERNET_PATH_PROBE_ATTEMPTS) { attemptIndex ->
+            if (!isCurrent(sessionId, generation) || !running.get()) return false
+            val request = InternetPathProbe.create()
+            internetProbeReceivedAt.set(0L)
+            internetProbeExpectation = request.expectation
+            LinkoConnectionDiagnostics.record(
+                ConnectionStage.HANDSHAKE,
+                "INTERNET_PATH_PROBE_STARTED",
+                "Testing receiver → provider → public Internet → provider → receiver path (attempt ${attemptIndex + 1}/$INTERNET_PATH_PROBE_ATTEMPTS)",
+                ConnectionSeverity.INFO,
+                sessionId,
+                mapOf("target" to "1.1.1.1:443", "source_port" to request.expectation.sourcePort.toString()),
+            )
+            try {
+                transportRef.send(request.packet, EncryptedDatagramTunnel.PacketType.DATA)
+            } catch (error: Exception) {
+                internetProbeExpectation = null
+                LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "INTERNET_PATH_PROBE_SEND_FAILED", "Could not send Internet-path probe: ${error.message ?: "send_failed"}", ConnectionSeverity.WARNING, sessionId)
+                return@repeat
+            }
+
+            val deadline = request.expectation.startedAt + INTERNET_PATH_PROBE_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                if (!isCurrent(sessionId, generation) || !running.get()) return false
+                if (internetProbeReceivedAt.get() >= request.expectation.startedAt) {
+                    val rtt = System.currentTimeMillis() - request.expectation.startedAt
+                    internetProbeExpectation = null
+                    LinkoConnectionDiagnostics.record(
+                        ConnectionStage.CONNECTED,
+                        "INTERNET_PATH_PROBE_PASSED",
+                        "Public Internet TCP path verified (${rtt} ms to 1.1.1.1:443)",
+                        ConnectionSeverity.SUCCESS,
+                        sessionId,
+                        mapOf("target" to "1.1.1.1:443", "rtt_ms" to rtt.toString()),
+                    )
+                    return true
+                }
+                try { Thread.sleep(40) } catch (interrupted: InterruptedException) { Thread.currentThread().interrupt(); return false }
+            }
+            internetProbeExpectation = null
+            LinkoConnectionDiagnostics.record(
+                ConnectionStage.HANDSHAKE,
+                "INTERNET_PATH_PROBE_TIMEOUT",
+                "No Internet-path response from 1.1.1.1:443 on attempt ${attemptIndex + 1}",
+                ConnectionSeverity.WARNING,
+                sessionId,
+            )
+            try { Thread.sleep(INTERNET_PATH_PROBE_RETRY_DELAY_MS) } catch (interrupted: InterruptedException) { Thread.currentThread().interrupt(); return false }
+        }
+        LinkoConnectionDiagnostics.record(ConnectionStage.HANDSHAKE, "INTERNET_PATH_PROBE_FAILED", "Direct encrypted transport works, but the provider could not verify a real public Internet path", ConnectionSeverity.ERROR, sessionId, mapOf("target" to "1.1.1.1:443"))
         return false
     }
 
@@ -314,7 +375,15 @@ class LinkShareVpnService : VpnService() {
                             else -> when (rx.type) {
                                 EncryptedDatagramTunnel.PacketType.DATA -> {
                                     val packet = rx.payload
-                                    if (packet.isNotEmpty() && packet.size <= MAX_IP_PACKET && router.parse(packet) != null) { output.write(packet); output.flush(); bytesDown.addAndGet(packet.size.toLong()); LinkoEngineBridge.updateTrafficStats(bytesDown.get(), bytesUp.get()) }
+                                    val expectation = internetProbeExpectation
+                                    if (expectation != null && InternetPathProbe.isSuccessfulResponse(packet, expectation)) {
+                                        internetProbeReceivedAt.set(System.currentTimeMillis())
+                                    } else if (packet.isNotEmpty() && packet.size <= MAX_IP_PACKET && router.parse(packet) != null) {
+                                        output.write(packet)
+                                        output.flush()
+                                        bytesDown.addAndGet(packet.size.toLong())
+                                        LinkoEngineBridge.updateTrafficStats(bytesDown.get(), bytesUp.get())
+                                    }
                                 }
                                 EncryptedDatagramTunnel.PacketType.PONG -> {
                                     val sentAt = if (rx.payload.size >= 8) ByteBuffer.wrap(rx.payload).order(ByteOrder.BIG_ENDIAN).long else 0L
@@ -338,6 +407,8 @@ class LinkShareVpnService : VpnService() {
     @Synchronized private fun stopTunnel(reportStoppedState: Boolean = !terminalFailure.get(), failureReason: String? = null) {
         val wasRunning = running.getAndSet(false)
         val sessionToDisconnect = activeSessionId
+        internetProbeExpectation = null
+        internetProbeReceivedAt.set(0L)
         releaseLocks()
         runCatching { networkCallback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.unregisterNetworkCallback(it) } }
         networkCallback = null
@@ -385,6 +456,9 @@ class LinkShareVpnService : VpnService() {
         private const val HEARTBEAT_TIMEOUT_MS = 45_000L
         private const val HEARTBEAT_DEAD_MS = 70_000L
         private const val DATA_PLANE_PROBE_TIMEOUT_MS = 8_000L
+        private const val INTERNET_PATH_PROBE_TIMEOUT_MS = 8_000L
+        private const val INTERNET_PATH_PROBE_RETRY_DELAY_MS = 250L
+        private const val INTERNET_PATH_PROBE_ATTEMPTS = 3
         private const val AUTO_RECOVERY_MAX_ATTEMPTS = 4
         private const val AUTO_RECOVERY_INITIAL_DELAY_MS = 1_500L
         private const val AUTO_RECOVERY_MAX_DELAY_MS = 8_000L
