@@ -20,7 +20,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           path = Path('android/app/src/main/java/com/linkshare/app/vpn/LinkShareVpnService.kt')
           text = path.read_text(encoding='utf-8')
@@ -117,8 +116,6 @@ jobs:
               raise SystemExit('Expected establishDirectTransport anchor not found')
           text = text.replace(anchor, recovery + anchor, 1)
 
-          # Convert the old method's terminal catch into a rethrow so the recovery wrapper owns
-          # the retry policy. The existing method still performs all successful setup unchanged.
           old_catch = '''        } catch (e: Exception) {
             if (!isCurrent(sessionId, generation)) {
                 runCatching { socket.close() }
@@ -140,20 +137,15 @@ jobs:
               raise SystemExit('Expected direct transport catch block not found')
           text = text.replace(old_catch, new_catch, 1)
 
-          constants_anchor = '''    private val router = IpPacketRouter()
+          constants_anchor = '''        private const val MAX_TUN_PAYLOAD = 32 * 1024
 '''
-          constants = '''    // Bounded, stage-local recovery prevents transient NAT/network/VPN failures from becoming
-    // permanent session failures. Recovery never creates a new user session.
-    private companion object {
-        const val AUTO_RECOVERY_MAX_ATTEMPTS = 4
-        const val AUTO_RECOVERY_INITIAL_DELAY_MS = 1_500L
-        const val AUTO_RECOVERY_MAX_DELAY_MS = 8_000L
-    }
-
+          constants = '''        private const val AUTO_RECOVERY_MAX_ATTEMPTS = 4
+        private const val AUTO_RECOVERY_INITIAL_DELAY_MS = 1_500L
+        private const val AUTO_RECOVERY_MAX_DELAY_MS = 8_000L
 '''
           if constants_anchor not in text:
-              raise SystemExit('Expected constants anchor not found')
-          text = text.replace(constants_anchor, constants_anchor + constants, 1)
+              raise SystemExit('Expected companion constants anchor not found')
+          text = text.replace(constants_anchor, constants + constants_anchor, 1)
 
           path.write_text(text, encoding='utf-8')
           print('Applied self-healing patch')
