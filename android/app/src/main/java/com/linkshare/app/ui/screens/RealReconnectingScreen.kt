@@ -31,6 +31,9 @@ import androidx.compose.ui.text.font.FontWeight
 @Composable
 fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
     val state by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
+    val peer = state.peerDisplayName?.takeIf { it.isNotBlank() } ?: state.peerLinkoId?.takeIf { it.isNotBlank() } ?: "LINKO peer"
+    val failureReason = (state.error ?: state.detail).lowercase()
+    val directPathFailure = failureReason.contains("direct") || failureReason.contains("ice") || failureReason.contains("candidate") || failureReason.contains("nomination") || failureReason.contains("probe")
 
     LaunchedEffect(Unit) {
         LinkoEngineBridge.reconnect()
@@ -49,6 +52,28 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         LinkoConnectionPhase.Connected -> Green
         else -> Blue
     }
+    val label = when {
+        state.phase == LinkoConnectionPhase.Connected -> "CONNECTED"
+        state.phase == LinkoConnectionPhase.Failed -> "FAILED"
+        state.phase == LinkoConnectionPhase.Signaling -> "NEGOTIATING"
+        state.phase == LinkoConnectionPhase.Establishing || state.phase == LinkoConnectionPhase.Securing || state.phase == LinkoConnectionPhase.Routing -> "FINDING PATH"
+        else -> "RECONNECTING"
+    }
+    val title = when {
+        state.phase == LinkoConnectionPhase.Failed && directPathFailure -> "Direct path failed"
+        state.phase == LinkoConnectionPhase.Failed -> "Reconnect failed"
+        state.phase == LinkoConnectionPhase.Signaling -> "Negotiating with $peer"
+        state.phase == LinkoConnectionPhase.Establishing || state.phase == LinkoConnectionPhase.Securing || state.phase == LinkoConnectionPhase.Routing -> "Finding a direct path to $peer"
+        state.phase == LinkoConnectionPhase.Connected -> "Connected to $peer"
+        else -> "Reconnecting to $peer"
+    }
+    val message = when {
+        state.phase == LinkoConnectionPhase.Failed && directPathFailure -> "LINKO could not establish a usable direct path with $peer. Check both phones' internet and try again."
+        state.phase == LinkoConnectionPhase.Failed -> "LINKO could not restore the connection with $peer."
+        state.phase == LinkoConnectionPhase.Signaling -> "Exchanging fresh connection information with the peer."
+        state.phase == LinkoConnectionPhase.Establishing || state.phase == LinkoConnectionPhase.Securing || state.phase == LinkoConnectionPhase.Routing -> "Checking candidates and validating the secure direct transport."
+        else -> state.detail
+    }
 
     Column(
         Modifier.fillMaxSize().padding(16.dp),
@@ -59,24 +84,33 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
             color,
             190.dp,
             pulse = state.phase != LinkoConnectionPhase.Connected && state.phase != LinkoConnectionPhase.Failed,
-            label = when (state.phase) {
-                LinkoConnectionPhase.Connected -> "CONNECTED"
-                LinkoConnectionPhase.Failed -> "FAILED"
-                else -> "RECONNECTING"
-            },
+            fast = state.phase != LinkoConnectionPhase.Failed,
+            label = label,
+            incomingFlow = state.phase != LinkoConnectionPhase.Failed,
         )
         Spacer(Modifier.height(22.dp))
-        Text("RECONNECTING LINKO", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        Text(title, color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text(state.detail, color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono)
+        Text(message, color = if (state.phase == LinkoConnectionPhase.Failed) Red else TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono)
+
+        if (state.phase != LinkoConnectionPhase.Idle) {
+            Spacer(Modifier.height(14.dp))
+            LinkoCard {
+                Text("PEER", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(peer, color = TextPrimary, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                state.peerLinkoId?.let { id ->
+                    Spacer(Modifier.height(3.dp))
+                    Text("@${id.removePrefix("@")}", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                }
+                if (state.phase == LinkoConnectionPhase.Failed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text((state.error ?: state.detail).replace('_', ' '), color = Red, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                }
+            }
+        }
 
         if (state.phase == LinkoConnectionPhase.Failed) {
-            Spacer(Modifier.height(18.dp))
-            LinkoCard {
-                Text("RECONNECT FAILED", color = Red, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(7.dp))
-                Text(state.error ?: state.detail, color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono)
-            }
             Spacer(Modifier.height(18.dp))
             PrimaryButton("RETURN TO CONNECTION", onFailed, color = Red, outline = true)
         }
