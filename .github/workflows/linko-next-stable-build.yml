@@ -1,0 +1,98 @@
+name: LINKO Stable Candidate Build
+
+on:
+  push:
+    branches: [linko-next-stable]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linko-next-stable
+  cancel-in-progress: true
+
+jobs:
+  build-and-apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: linko-next-stable
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Apply candidate implementation
+        run: python3 tools/apply_linko_next_stable.py
+
+      - name: Fix generated Kotlin imports
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/linkshare/app/ui/components/Ring.kt')
+          s = p.read_text()
+          if 'import kotlin.math.roundToInt' not in s:
+              s = s.replace('import androidx.compose.ui.unit.dp\n', 'import androidx.compose.ui.unit.dp\nimport kotlin.math.roundToInt\n')
+              p.write_text(s)
+          PY
+
+      - name: Grant Gradle execute permission
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Integrity check
+        run: python3 android/scripts/verify_linko_integrity.py
+
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew test --no-daemon --stacktrace
+
+      - name: Debug APK build
+        working-directory: android
+        env:
+          LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
+          LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
+          LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace -PLINKO_VERSION_CODE=9999 -PLINKO_VERSION_NAME=0.1.next-stable
+
+      - name: Upload candidate APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: linko-next-stable-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit generated implementation only after build passes
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android docs SDLC
+          git reset -- tools/apply_linko_next_stable.py || true
+          if git diff --cached --quiet; then
+            echo 'No generated source changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Implement LINKO stable candidate UX, health and legal updates'
+          git push origin HEAD:linko-next-stable
+
+      - name: Remove one-time transformer after generated implementation is committed
+        if: success()
+        run: |
+          if git ls-files --error-unmatch tools/apply_linko_next_stable.py >/dev/null 2>&1; then
+            git rm -f tools/apply_linko_next_stable.py
+            git commit -m 'Remove one-time stable candidate transformer'
+            git push origin HEAD:linko-next-stable
+          fi
