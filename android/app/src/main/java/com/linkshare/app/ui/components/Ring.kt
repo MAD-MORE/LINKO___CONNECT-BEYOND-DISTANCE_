@@ -51,7 +51,7 @@ fun Ring(
             color = color,
             size = size,
             label = label,
-            fast = fast || live,
+            fast = fast,
             incomingFlow = effectiveIncomingFlow,
             idle = idle && !live,
         )
