@@ -49,10 +49,6 @@ class ProviderTcpPacketForwarder : Closeable {
         }, CLEAN_INTERVAL_MS, CLEAN_INTERVAL_MS, TimeUnit.MILLISECONDS)
     }
 
-    /**
-     * Accepts a client TCP packet and returns any immediately-generated packets.
-     * Remote connection establishment is always performed asynchronously.
-     */
     fun forward(packet: ByteArray, timeoutMs: Int = 5_000): List<ByteArray> {
         val tcp = TcpCodec.parse(packet) ?: return emptyList()
         if (tcp.payload.size > MAX_PAYLOAD) return emptyList()
@@ -71,7 +67,8 @@ class ProviderTcpPacketForwarder : Closeable {
             val socket = Socket().apply {
                 keepAlive = true
                 tcpNoDelay = true
-                soTimeout = 1_000
+                // The response reader is deliberately blocking in its worker thread; the packet path is not.
+                soTimeout = 0
             }
             val flow = Flow(
                 key = key,
@@ -324,7 +321,6 @@ private object TcpCodec {
         write16(out, 2, total)
         System.arraycopy(java.net.InetAddress.getByName(srcHost).address, 0, out, 12, 4)
         System.arraycopy(java.net.InetAddress.getByName(dstHost).address, 0, out, 16, 4)
-
         write16(out, 20, srcPort)
         write16(out, 22, dstPort)
         write32(out, 24, seq)
@@ -338,7 +334,6 @@ private object TcpCodec {
             (if (ackFlag) 16 else 0)
         write16(out, 32, flags)
         write16(out, 34, 65535)
-
         if (syn) {
             out[40] = 2
             out[41] = 4
@@ -348,7 +343,6 @@ private object TcpCodec {
         } else {
             System.arraycopy(payload, 0, out, 40, payload.size)
         }
-
         write16(out, 10, checksum(out, 0, 20))
         val pseudo = ByteArray(12 + tcpHeaderLen + payload.size)
         System.arraycopy(out, 12, pseudo, 0, 8)
