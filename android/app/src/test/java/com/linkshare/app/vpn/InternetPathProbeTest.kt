@@ -14,13 +14,16 @@ class InternetPathProbeTest {
         System.arraycopy(request.packet, 12, response, 16, 4)
         System.arraycopy(request.packet, 16, response, 12, 4)
         // Swap TCP ports.
-        val sourcePort = request.packet[20].toInt() and 0xff shl 8 or (request.packet[21].toInt() and 0xff)
+        val sourcePort = ((request.packet[20].toInt() and 0xff) shl 8) or (request.packet[21].toInt() and 0xff)
         response[20] = 0
         response[21] = 443.toByte()
         response[22] = (sourcePort ushr 8).toByte()
         response[23] = sourcePort.toByte()
         // Remote sequence may be arbitrary; ACK must be the client sequence + 1.
-        System.arraycopy(byteArrayOf(0, 0, 0, 7), 0, response, 24, 4)
+        response[24] = 0
+        response[25] = 0
+        response[26] = 0
+        response[27] = 7
         val ack = request.expectation.sequence + 1L
         response[28] = (ack ushr 24).toByte()
         response[29] = (ack ushr 16).toByte()
