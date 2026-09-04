@@ -17,6 +17,9 @@ object LinkoConnectionLifecycle {
         val app = context.applicationContext
         val sessionId = LinkoEngineBridge.connection.value.sessionId
 
+        // Prevent the safety monitor from racing the explicit user stop.
+        LinkoSessionWatchdog.stop()
+
         // Stop the actual data-plane services immediately. UI teardown must never wait on REST.
         runCatching { app.stopService(Intent(app, LinkShareVpnService::class.java)) }
         runCatching { app.stopService(Intent(app, LinkoProviderService::class.java)) }
@@ -33,9 +36,10 @@ object LinkoConnectionLifecycle {
             }
         }
 
-        // Reinitialize the bridge so its cancelled realtime collector cannot remain dead after
-        // STOP. The next connect starts with fresh control-plane/realtime state.
+        // Reset local control state and recreate its realtime collector. The data plane is fully
+        // stopped before the next connection generation can start.
         LinkoEngineBridge.configure(app)
+        LinkoSessionWatchdog.start(app)
     }
 
     private val TERMINAL_STATES = setOf("failed", "denied", "expired", "revoked", "disconnected")
