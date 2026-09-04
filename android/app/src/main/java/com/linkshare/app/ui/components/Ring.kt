@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linkshare.app.ui.theme.JetBrainsMono
 
-/** LINKO connection ring. Live states keep fast directional packet flow visible. */
+/** LINKO connection ring. Live/negotiating states expose directional packet flow. */
 @Composable
 fun Ring(
     color: Color,
@@ -29,7 +29,10 @@ fun Ring(
     onClick: (() -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val live = label == "ONLINE" || label == "LIVE" || label == "CONNECTED"
+    val state = label?.uppercase()
+    val live = state == "ONLINE" || state == "LIVE" || state == "CONNECTED" || state == "SHARING"
+    val effectiveIncomingFlow = incomingFlow || state == "ONLINE" || state == "CONNECTED"
+
     Box(
         modifier = Modifier
             .size(size)
@@ -47,11 +50,9 @@ fun Ring(
         GlobeRadar(
             color = color,
             size = size,
-            // PACKET FLOW activates the moving split-atom renderer. incomingFlow controls
-            // direction, so receiver traffic moves inward while provider traffic moves outward.
-            label = if (live) "PACKET FLOW" else label,
+            label = label,
             fast = fast || live,
-            incomingFlow = incomingFlow,
+            incomingFlow = effectiveIncomingFlow,
             idle = idle && !live,
         )
         if (live && !label.isNullOrBlank()) {
