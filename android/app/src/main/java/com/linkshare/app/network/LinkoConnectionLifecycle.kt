@@ -9,14 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * Single authoritative UI-facing stop/restart boundary.
- *
- * LinkoEngineBridge currently tears down its realtime collector as part of its generic
- * connection reset. This wrapper deliberately stops the actual services first, publishes
- * the server-side terminal state independently, then reinitializes the engine so a subsequent
- * connection starts from a clean local state instead of inheriting a dead/stale lifecycle.
- */
+/** Authoritative UI-facing stop boundary for LINKO connection/session teardown. */
 object LinkoConnectionLifecycle {
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -24,39 +17,26 @@ object LinkoConnectionLifecycle {
         val app = context.applicationContext
         val sessionId = LinkoEngineBridge.connection.value.sessionId
 
+        // Stop the actual data-plane services immediately. UI teardown must never wait on REST.
         runCatching { app.stopService(Intent(app, LinkShareVpnService::class.java)) }
         runCatching { app.stopService(Intent(app, LinkoProviderService::class.java)) }
 
+        // Publish the session terminal state independently so local service teardown cannot
+        // block behind Supabase or realtime.
         if (!sessionId.isNullOrBlank()) {
             ioScope.launch {
                 runCatching {
                     val api = LinkoDeviceControlApi(app)
                     val current = api.session(sessionId).state.trim().lowercase()
-                    if (current !in setOf("failed", "denied", "expired", "revoked", "disconnected")) {
-                        api.transition(sessionId, "disconnected")
-                    }
+                    if (current !in TERMINAL_STATES) api.transition(sessionId, "disconnected")
                 }
             }
         }
 
-        // Rebuild the engine after the concrete tunnel/services are stopped. This restores
-        // realtime + presence for the next connection attempt and clears stale UI state.
+        // Reinitialize the bridge so its cancelled realtime collector cannot remain dead after
+        // STOP. The next connect starts with fresh control-plane/realtime state.
         LinkoEngineBridge.configure(app)
     }
 
-    fun retry(context: Context) {
-        val app = context.applicationContext
-        val state = LinkoEngineBridge.connection.value
-        val friendUserId = state.peerLinkoId?.takeIf { it.isNotBlank() }
-        if (friendUserId.isNullOrBlank()) {
-            LinkoEngineBridge.configure(app)
-            return
-        }
-        LinkoEngineBridge.configure(app)
-        LinkoEngineBridge.connectToFriend(
-            friendUserId = friendUserId,
-            friendName = state.peerDisplayName,
-            friendId = state.peerLinkoId,
-        )
-    }
+    private val TERMINAL_STATES = setOf("failed", "denied", "expired", "revoked", "disconnected")
 }
