@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.ParcelFileDescriptor
@@ -14,6 +15,8 @@ import android.util.Log
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.ConnectionSeverity
+import com.linkshare.app.network.ConnectionStage
 import com.linkshare.app.network.DirectP2pNegotiator
 import com.linkshare.app.network.LinkoDeviceControlApi
 import com.linkshare.app.network.LinkoEngineBridge
@@ -37,6 +40,7 @@ class LinkShareVpnService : VpnService() {
     @Volatile private var transport: EncryptedDatagramTunnel? = null
     private val running = AtomicBoolean(false)
     private val terminalFailure = AtomicBoolean(false)
+    private val recoveryInProgress = AtomicBoolean(false)
     private val sessionGeneration = AtomicLong(0L)
     private val executor = Executors.newFixedThreadPool(3)
     private var scheduler: ScheduledExecutorService? = null
@@ -53,8 +57,15 @@ class LinkShareVpnService : VpnService() {
         super.onCreate()
         createChannel()
         try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                startForeground(NOTIFICATION_ID, serviceNotification("LINKO", "Preparing direct encrypted tunnel"))
+            val notification = serviceNotification("LINKO", "Preparing direct encrypted tunnel")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                )
+            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForeground(NOTIFICATION_ID, notification)
             }
         } catch (error: Throwable) {
             Log.e(TAG, "LINKO_VPN_FOREGROUND_START_FAILED", error)
@@ -81,31 +92,102 @@ class LinkShareVpnService : VpnService() {
         stopTunnel(reportStoppedState = false)
         activeSessionId = sessionId
         terminalFailure.set(false)
+        recoveryInProgress.set(false)
         acquireLocks()
-
-        val socket = runCatching { DatagramSocket(0) }.getOrElse {
-            Log.e(TAG, "Could not create direct UDP socket", it)
-            releaseLocks()
-            failSession(sessionId, generation, "udp_socket_creation_failed")
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
-        if (!protect(socket)) {
-            Log.e(TAG, "Failed to protect direct UDP socket from VPN routing loop")
-            socket.close()
-            releaseLocks()
-            failSession(sessionId, generation, "udp_socket_protection_failed")
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
 
         running.set(false)
         LinkoEngineBridge.reportTunnelState("direct_connecting", "Finding a direct peer path")
-        executor.execute { establishDirectTransport(sessionId, sessionKey.copyOf(), socket, intent, generation) }
+        executor.execute {
+            establishDirectTransportWithRecovery(sessionId, sessionKey.copyOf(), intent, generation)
+        }
         return START_STICKY
     }
 
-    private fun establishDirectTransport(sessionId: String, sessionKey: ByteArray, socket: DatagramSocket, startupIntent: Intent?, generation: Long) {
+    private fun establishDirectTransportWithRecovery(
+        sessionId: String,
+        sessionKey: ByteArray,
+        startupIntent: Intent?,
+        generation: Long,
+    ) {
+        if (!recoveryInProgress.compareAndSet(false, true)) return
+        var lastReason = "direct_connection_failed"
+        try {
+            for (attempt in 1..AUTO_RECOVERY_MAX_ATTEMPTS) {
+                if (!isCurrent(sessionId, generation)) return
+
+                if (attempt > 1) {
+                    val delayMs = (AUTO_RECOVERY_INITIAL_DELAY_MS * (1L shl (attempt - 2)))
+                        .coerceAtMost(AUTO_RECOVERY_MAX_DELAY_MS)
+                    LinkoEngineBridge.reportTunnelState("reconnecting", "Trying the connection again")
+                    LinkoEngineBridge.reportConnectionDiagnostic(
+                        ConnectionStage.ICE_CHECKING,
+                        "AUTO_RECOVERY_ATTEMPT",
+                        "Retrying direct connection attempt $attempt/$AUTO_RECOVERY_MAX_ATTEMPTS",
+                        ConnectionSeverity.INFO,
+                        mapOf("attempt" to attempt.toString()),
+                    )
+                    try {
+                        Thread.sleep(delayMs)
+                    } catch (interrupted: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return
+                    }
+                    if (!isCurrent(sessionId, generation)) return
+                }
+
+                val socket = try {
+                    DatagramSocket(0).apply { reuseAddress = true }
+                } catch (error: Exception) {
+                    lastReason = error.message?.takeIf { it.isNotBlank() } ?: "udp_socket_creation_failed"
+                    Log.w(TAG, "AUTO_RECOVERY_SOCKET_CREATE_FAILED session=$sessionId attempt=$attempt/$AUTO_RECOVERY_MAX_ATTEMPTS reason=$lastReason")
+                    continue
+                }
+
+                try {
+                    if (!protect(socket)) throw LinkoNetworkException("udp_socket_protection_failed")
+                    Log.i(TAG, "AUTO_RECOVERY_SOCKET_READY session=$sessionId attempt=$attempt/$AUTO_RECOVERY_MAX_ATTEMPTS port=${socket.localPort}")
+                    establishDirectTransport(sessionId, sessionKey.copyOf(), socket, startupIntent, generation)
+                    return
+                } catch (stale: CancellationExceptionLike) {
+                    runCatching { socket.close() }
+                    return
+                } catch (error: Exception) {
+                    lastReason = error.message?.takeIf { it.isNotBlank() } ?: "direct_connection_failed"
+                    Log.w(TAG, "AUTO_RECOVERY_ATTEMPT_FAILED session=$sessionId attempt=$attempt/$AUTO_RECOVERY_MAX_ATTEMPTS reason=$lastReason")
+                    LinkoEngineBridge.reportConnectionDiagnostic(
+                        ConnectionStage.ICE_CHECKING,
+                        "AUTO_RECOVERY_ATTEMPT_FAILED",
+                        "Direct connection attempt $attempt failed; retrying safely",
+                        ConnectionSeverity.WARNING,
+                        mapOf("attempt" to attempt.toString(), "reason" to lastReason.take(96)),
+                    )
+                    runCatching { socket.close() }
+                    if (!isCurrent(sessionId, generation)) return
+                }
+            }
+
+            if (isCurrent(sessionId, generation)) {
+                LinkoEngineBridge.reportConnectionDiagnostic(
+                    ConnectionStage.ICE_CHECKING,
+                    "AUTO_RECOVERY_EXHAUSTED",
+                    "Automatic connection recovery exhausted",
+                    ConnectionSeverity.ERROR,
+                    mapOf("attempts" to AUTO_RECOVERY_MAX_ATTEMPTS.toString()),
+                )
+                failSession(sessionId, generation, lastReason)
+            }
+        } finally {
+            recoveryInProgress.set(false)
+        }
+    }
+
+    private fun establishDirectTransport(
+        sessionId: String,
+        sessionKey: ByteArray,
+        socket: DatagramSocket,
+        startupIntent: Intent?,
+        generation: Long,
+    ) {
         try {
             assertCurrent(sessionId, generation)
             val auth = LinkoAuth(applicationContext)
@@ -173,14 +255,18 @@ class LinkShareVpnService : VpnService() {
         } catch (e: CancellationExceptionLike) {
             Log.i(TAG, "Ignoring stale LINKO receiver startup session=$sessionId generation=$generation")
             runCatching { socket.close() }
+            throw e
         } catch (e: Exception) {
             if (!isCurrent(sessionId, generation)) {
                 runCatching { socket.close() }
-                return
+                throw CancellationExceptionLike()
             }
-            Log.e(TAG, "Direct P2P connection failed: ${e.message}", e)
+            runCatching { tunnelInterface?.close() }; tunnelInterface = null
+            runCatching { transport?.close() }; transport = null
+            running.set(false)
+            Log.w(TAG, "Direct P2P connection failed: ${e.message}", e)
             runCatching { socket.close() }
-            failSession(sessionId, generation, e.message ?: "direct_connection_failed", e)
+            throw e
         }
     }
 
@@ -315,6 +401,7 @@ class LinkShareVpnService : VpnService() {
         }
         networkCallback = null
         scheduler?.shutdownNow(); scheduler = null
+        recoveryInProgress.set(false)
         runCatching { transport?.sendClose() }; runCatching { transport?.close() }; transport = null
         runCatching { tunnelInterface?.close() }; tunnelInterface = null
         if (failureReason != null) {
@@ -347,7 +434,14 @@ class LinkShareVpnService : VpnService() {
     }
 
     private fun updateForegroundNotification(title: String, text: String) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) runCatching { startForeground(NOTIFICATION_ID, serviceNotification(title, text)) }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) runCatching {
+            val notification = serviceNotification(title, text)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
     }
 
     override fun onRevoke() {
@@ -378,6 +472,9 @@ class LinkShareVpnService : VpnService() {
         const val ROLE_RECEIVER = "receiver"
         private const val RECEIVE_TIMEOUT_MS = 500
         private const val HEARTBEAT_TIMEOUT_MS = 45_000L
+        private const val AUTO_RECOVERY_MAX_ATTEMPTS = 4
+        private const val AUTO_RECOVERY_INITIAL_DELAY_MS = 1_500L
+        private const val AUTO_RECOVERY_MAX_DELAY_MS = 8_000L
         private const val MAX_IP_PACKET = 64 * 1024
         private const val MAX_TUN_PAYLOAD = 32 * 1024
         private const val TUN_MTU = 1280

@@ -1,8 +1,10 @@
 name: LINKO Android CI
 
+# Stable-candidate push runs include the signed development APK path.
+
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, linko-next-stable]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -114,6 +116,15 @@ jobs:
           LINKO_CONTROL_PLANE_URL: ${{ secrets.LINKO_CONTROL_PLANE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co/functions/v1/linko-control-plane' }}
           LINKO_SUPABASE_URL: ${{ secrets.LINKO_SUPABASE_URL || 'https://pbnvssbtshvesqwhckfa.supabase.co' }}
           LINKO_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.LINKO_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_lUMjChFhCBKATMQzEpD5vg_ZdSc6Fw9' }}
+      - name: Verify signed APK
+        if: github.event_name != 'pull_request'
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -x "$APKSIGNER" || { echo 'apksigner not found'; exit 1; }
+          "$APKSIGNER" verify --verbose android/app/build/outputs/apk/release/app-release.apk
       - name: Upload signed release APK
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4

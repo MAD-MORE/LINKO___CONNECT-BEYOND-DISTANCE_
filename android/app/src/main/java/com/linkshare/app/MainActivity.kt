@@ -39,6 +39,7 @@ import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoNotificationCenter
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
+import com.linkshare.app.ui.components.LinkoNetworkHealthBanner
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
 import com.linkshare.app.ui.components.LinkoUpdateStatusOverlay
 import com.linkshare.app.ui.screens.LinkoApp
@@ -60,7 +61,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         runCatching {
             linkoAuth = LinkoAuth(this)
             LinkoFriendsApiHolder.api = LinkoFriendsApi { linkoAuth.currentAccessToken() }
@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             LinkoTheme {
                 Box(Modifier.fillMaxSize()) {
+                    LinkoNetworkHealthBanner()
                     if (::updateManager.isInitialized) {
                         val updateState by updateManager.state.collectAsStateWithLifecycle()
                         if (!appUnlocked) {
@@ -119,6 +120,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         runCatching { LinkoRealtimeManager.stop() }
+        runCatching { com.linkshare.app.ui.components.LinkoNetworkHealthMonitor.stop() }
         if (::linkoRuntime.isInitialized) runCatching { linkoRuntime.stop() }
         super.onDestroy()
     }
@@ -171,77 +173,43 @@ class MainActivity : ComponentActivity() {
             when (state.status) {
                 LinkoUpdateManager.UpdateStatus.UpdateAvailable -> manager.startUpdate()
                 LinkoUpdateManager.UpdateStatus.UpToDate,
-                LinkoUpdateManager.UpdateStatus.Installed -> {
-                    delay(350L)
-                    unlockApp()
-                }
+                LinkoUpdateManager.UpdateStatus.Installed -> { delay(350L); unlockApp() }
                 LinkoUpdateManager.UpdateStatus.Error,
                 LinkoUpdateManager.UpdateStatus.RateLimited -> {
-                    if (state.latestVersionCode == null || state.latestVersionCode <= state.installedVersionCode) {
-                        delay(250L)
-                        unlockApp()
-                    }
+                    if (state.latestVersionCode == null || state.latestVersionCode <= state.installedVersionCode) { delay(250L); unlockApp() }
                 }
                 else -> Unit
             }
         }
 
         val isDownloading = state.status == LinkoUpdateManager.UpdateStatus.Downloading
-        val isWorking = state.status == LinkoUpdateManager.UpdateStatus.Checking ||
-            state.status == LinkoUpdateManager.UpdateStatus.Verifying ||
-            state.status == LinkoUpdateManager.UpdateStatus.Installing
+        val isWorking = state.status == LinkoUpdateManager.UpdateStatus.Checking || state.status == LinkoUpdateManager.UpdateStatus.Verifying || state.status == LinkoUpdateManager.UpdateStatus.Installing
         val progress = (state.progressPercent.coerceIn(0, 100) / 100f)
-
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text("LINKO", color = Blue, fontFamily = JetBrainsMono, fontSize = 30.sp)
             Spacer(Modifier.height(12.dp))
-            Text("STARTUP UPDATE CENTER", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp)
+            Text("Starting LINKO", color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 13.sp)
             Spacer(Modifier.height(24.dp))
-
             if (isDownloading) {
                 Text("${state.progressPercent.coerceIn(0, 100)}%", color = Blue, fontFamily = JetBrainsMono, fontSize = 32.sp)
                 Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(10.dp))
-                if (state.totalBytes > 0) {
-                    Text(
-                        "${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)}",
-                        color = TextMuted,
-                        fontFamily = JetBrainsMono,
-                        fontSize = 10.sp,
-                    )
-                }
-            } else if (isWorking) {
-                CircularProgressIndicator(color = Blue)
-            } else {
-                CircularProgressIndicator(color = Blue)
-            }
-
+                if (state.totalBytes > 0) Text("${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)}", color = TextMuted, fontFamily = JetBrainsMono, fontSize = 10.sp)
+            } else if (isWorking) CircularProgressIndicator(color = Blue) else CircularProgressIndicator(color = Blue)
             Spacer(Modifier.height(18.dp))
-            Text(state.statusMessage.ifBlank { "CHECKING FOR LINKO UPDATES…" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 12.sp)
+            Text(state.statusMessage.ifBlank { "Checking for updates…" }, color = TextPrimary, fontFamily = JetBrainsMono, fontSize = 12.sp)
             Spacer(Modifier.height(8.dp))
             when (state.status) {
                 LinkoUpdateManager.UpdateStatus.Downloading,
                 LinkoUpdateManager.UpdateStatus.Verifying,
                 LinkoUpdateManager.UpdateStatus.Installing,
-                LinkoUpdateManager.UpdateStatus.UpdateAvailable -> Text(
-                    "LINKO ${state.latestVersionName.orEmpty()} • UPDATE IN PROGRESS",
-                    color = Blue,
-                    fontFamily = JetBrainsMono,
-                    fontSize = 10.sp,
-                )
+                LinkoUpdateManager.UpdateStatus.UpdateAvailable -> Text("Updating LINKO…", color = Blue, fontFamily = JetBrainsMono, fontSize = 10.sp)
                 LinkoUpdateManager.UpdateStatus.UpToDate,
-                LinkoUpdateManager.UpdateStatus.Installed -> Text("UPDATE COMPLETE • OPENING LINKO…", color = Green, fontFamily = JetBrainsMono, fontSize = 10.sp)
+                LinkoUpdateManager.UpdateStatus.Installed -> Text("Ready", color = Green, fontFamily = JetBrainsMono, fontSize = 10.sp)
                 LinkoUpdateManager.UpdateStatus.Error,
                 LinkoUpdateManager.UpdateStatus.RateLimited -> Text(state.errorMessage.orEmpty(), color = Red, fontFamily = JetBrainsMono, fontSize = 10.sp)
-                else -> Text("SECURELY CHECKING THE LATEST LINKO BUILD…", color = TextMuted, fontFamily = JetBrainsMono, fontSize = 10.sp)
+                else -> Text("Getting things ready…", color = TextMuted, fontFamily = JetBrainsMono, fontSize = 10.sp)
             }
         }
     }
@@ -250,8 +218,7 @@ class MainActivity : ComponentActivity() {
         if (bytes < 1024L) return "$bytes B"
         val kb = bytes / 1024L
         if (kb < 1024L) return "$kb KB"
-        val mb = kb / 1024L
-        return "$mb MB"
+        return "${kb / 1024L} MB"
     }
 
     companion object {
