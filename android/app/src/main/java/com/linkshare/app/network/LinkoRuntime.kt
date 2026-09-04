@@ -68,6 +68,7 @@ class LinkoRuntime(
             onProgress("Preparing Database & Local Cache…")
             LinkoEngineBridge.configure(appContext)
             LinkoSessionWatchdog.start(appContext)
+            LinkoSharedConnectionSync.start(appContext)
 
             if (!auth.isSignedIn()) {
                 onProgress("Engine Ready")
@@ -157,6 +158,7 @@ class LinkoRuntime(
     fun stop() {
         runCatching { presenceManager.stop() }
         runCatching { LinkoSessionWatchdog.stop() }
+        runCatching { LinkoSharedConnectionSync.stop() }
         runCatching { disconnect() }
         scope.cancel()
     }
