@@ -15,7 +15,7 @@ class InternetPathProbeTest {
         System.arraycopy(request.packet, 16, response, 12, 4)
         // Swap TCP ports.
         val sourcePort = ((request.packet[20].toInt() and 0xff) shl 8) or (request.packet[21].toInt() and 0xff)
-        response[20] = 0
+        response[20] = (443 ushr 8).toByte()
         response[21] = 443.toByte()
         response[22] = (sourcePort ushr 8).toByte()
         response[23] = sourcePort.toByte()
@@ -43,7 +43,7 @@ class InternetPathProbeTest {
         System.arraycopy(request.packet, 12, response, 16, 4)
         System.arraycopy(request.packet, 16, response, 12, 4)
         val sourcePort = ((request.packet[20].toInt() and 0xff) shl 8) or (request.packet[21].toInt() and 0xff)
-        response[20] = 0
+        response[20] = (443 ushr 8).toByte()
         response[21] = 443.toByte()
         response[22] = (sourcePort ushr 8).toByte()
         response[23] = sourcePort.toByte()
