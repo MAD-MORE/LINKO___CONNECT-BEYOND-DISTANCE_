@@ -1,22 +1,35 @@
 package com.linkshare.app.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.linkshare.app.network.ConnectionStage
-import com.linkshare.app.network.LinkoConnectionDiagnostics
+import androidx.compose.ui.unit.sp
+import kotlin.math.cos
+import kotlin.math.sin
 
-/** Unified LINKO visual ring. Its status label follows the real transport stage. */
 @Composable
 fun Ring(
     color: Color,
@@ -26,46 +39,55 @@ fun Ring(
     label: String? = null,
     onClick: (() -> Unit)? = null,
 ) {
-    val diagnostics by LinkoConnectionDiagnostics.snapshot.collectAsState()
-    val diagnosticLabel = when (diagnostics.stage) {
-        ConnectionStage.REQUESTING -> "REQUESTING"
-        ConnectionStage.APPROVING -> "APPROVED"
-        ConnectionStage.SIGNALING -> "SIGNALING"
-        ConnectionStage.SDP_NEGOTIATION -> "SDP"
-        ConnectionStage.ICE_GATHERING -> "ICE GATHERING"
-        ConnectionStage.ICE_CHECKING -> "ICE CHECKING"
-        ConnectionStage.NOMINATING -> "NOMINATING"
-        ConnectionStage.HANDSHAKE -> "HANDSHAKE"
-        ConnectionStage.TUNNEL_STARTING -> "TUNNEL"
-        ConnectionStage.PACKET_FLOW -> "PACKET FLOW"
-        ConnectionStage.CONNECTED -> "CONNECTED"
-        ConnectionStage.FAILED -> diagnostics.failureReason
-            ?.uppercase()
-            ?.replace('_', ' ')
-            ?.take(18)
-            ?: "FAILED"
-    }
-    val effectiveLabel = if (diagnostics.headline != "Ready" || diagnostics.stage != ConnectionStage.REQUESTING) diagnosticLabel else label
-
+    val health by LinkoNetworkHealthMonitor.snapshot.collectAsState()
+    val duration = health.ringDurationMs()
+    val transition = rememberInfiniteTransition(label = "linko_connection_ring")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = duration, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "ring_rotation",
+    )
+    val pulseScale by transition.animateFloat(
+        initialValue = 0.98f,
+        targetValue = 1.02f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = (duration * 0.8f).toInt().coerceAtLeast(300), easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "ring_pulse",
+    )
     val interactionSource = remember { MutableInteractionSource() }
     Box(
-        modifier = Modifier
+        Modifier
             .size(size)
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                        onClick = onClick,
-                    )
-                } else Modifier
-            ),
+            .then(if (onClick != null) Modifier.clickable(interactionSource, indication = null, onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        GlobeRadar(
-            color = color,
-            size = size,
-            label = effectiveLabel,
-        )
+        Canvas(Modifier.size(size).alpha(if (idle) 0.65f else 1f)) {
+            val radius = this.size.minDimension / 2f - 9.dp.toPx()
+            val center = Offset(this.size.width / 2f, this.size.height / 2f)
+            drawCircle(color.copy(alpha = 0.08f), radius * pulseScale, center)
+            drawCircle(color.copy(alpha = 0.22f), radius, center, style = Stroke(2.dp.toPx()))
+            if (!idle) {
+                drawArc(
+                    color = color,
+                    startAngle = rotation - 80f,
+                    sweepAngle = 105f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius, center.y - radius),
+                    size = androidx.compose.ui.geometry.Size(radius * 2f, radius * 2f),
+                    style = Stroke(6.dp.toPx(), cap = StrokeCap.Round),
+                )
+                val theta = Math.toRadians(rotation.toDouble())
+                val dot = Offset(center.x + cos(theta).toFloat() * radius, center.y + sin(theta).toFloat() * radius)
+                drawCircle(color, 5.dp.toPx(), dot)
+                drawCircle(color.copy(alpha = 0.22f), 11.dp.toPx(), dot)
+            }
+        }
+        label?.let { Text(it, color = if (idle) color else color, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
     }
 }
