@@ -14,19 +14,17 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Keeps the local data plane and shared session state honest.
- * Realtime is the fast path; this REST watchdog is the safety net when realtime delivery,
- * a service process, or a network path disappears.
+ * Keeps the local data plane synchronized with the shared session state.
+ * Realtime is the fast path; this REST watchdog is the safety net when realtime delivery
+ * is delayed or a peer ends the session without a local UI action.
  */
 object LinkoSessionWatchdog {
     private const val POLL_MS = 1_500L
-    private const val CONNECTED_GRACE_MS = 5_000L
 
     private val started = AtomicBoolean(false)
     private var scope: CoroutineScope? = null
     private var job: Job? = null
     private var lastObservedSession: String? = null
-    private var connectedSince: Long = 0L
     private var stoppingSession: String? = null
 
     fun start(context: Context) {
@@ -60,28 +58,18 @@ object LinkoSessionWatchdog {
         scope?.cancel()
         scope = null
         lastObservedSession = null
-        connectedSince = 0L
         stoppingSession = null
     }
 
     private suspend fun tick(context: Context) {
-        val state = LinkoEngineBridge.connection.value
-        val sessionId = state.sessionId?.takeIf { it.isNotBlank() } ?: run {
+        val sessionId = LinkoEngineBridge.connection.value.sessionId?.takeIf { it.isNotBlank() } ?: run {
             lastObservedSession = null
-            connectedSince = 0L
             return
         }
 
         if (sessionId != lastObservedSession) {
             lastObservedSession = sessionId
-            connectedSince = if (state.phase == LinkoConnectionPhase.Connected) System.currentTimeMillis() else 0L
             stoppingSession = null
-        }
-
-        if (state.phase == LinkoConnectionPhase.Connected) {
-            if (connectedSince == 0L) connectedSince = System.currentTimeMillis()
-        } else {
-            connectedSince = 0L
         }
 
         val session = runCatching { LinkoDeviceControlApi(context).session(sessionId) }.getOrNull() ?: return
@@ -99,26 +87,8 @@ object LinkoSessionWatchdog {
                     stopLocalDataPlane(context, session.state)
                 }
             }
-            "connected" -> {
-                if (System.currentTimeMillis() - connectedSince >= CONNECTED_GRACE_MS && !localDataPlaneAlive(state.isProvider)) {
-                    if (stoppingSession != sessionId) {
-                        stoppingSession = sessionId
-                        LinkoEngineBridge.reportConnectionDiagnostic(
-                            ConnectionStage.CONNECTED,
-                            "LOCAL_DATA_PLANE_MISSING",
-                            "Shared session is connected but the local data-plane service is no longer running",
-                            ConnectionSeverity.ERROR,
-                        )
-                        runCatching { LinkoDeviceControlApi(context).transition(sessionId, "disconnected") }
-                        stopLocalDataPlane(context, "local_data_plane_missing")
-                    }
-                }
-            }
         }
     }
-
-    private fun localDataPlaneAlive(isProvider: Boolean): Boolean =
-        if (isProvider) LinkoProviderService.isRunning else LinkShareVpnService.isRunning()
 
     private fun stopLocalDataPlane(context: Context, reason: String) {
         runCatching { context.stopService(Intent(context, LinkShareVpnService::class.java)) }
