@@ -58,10 +58,11 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         VpnService.prepare(context)?.let(vpnLauncher::launch) ?: run { vpnGranted = true }
     }
 
-    // This screen is the single live view for every non-idle connection state. Navigation is
-    // controlled by the user; the engine state itself drives the animation and controls shown.
+    val rawReason = (state.error ?: state.detail).trim()
+    val failureKind = failureKind(rawReason)
     val activeConnection = state.phase != LinkoConnectionPhase.Idle
-    val negotiating = state.phase != LinkoConnectionPhase.Idle && state.phase != LinkoConnectionPhase.Failed
+    val pathNegotiating = state.phase == LinkoConnectionPhase.Establishing || state.phase == LinkoConnectionPhase.Securing || state.phase == LinkoConnectionPhase.Routing
+    val negotiating = activeConnection && state.phase != LinkoConnectionPhase.Failed
     val fastAnimation = negotiating && (!health.available || health.score >= 60)
     val color = when {
         state.phase == LinkoConnectionPhase.Failed -> Red
@@ -69,26 +70,34 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         health.score < 45 && health.available -> Red
         else -> Blue
     }
-    val label = when (state.phase) {
-        LinkoConnectionPhase.Connected -> "CONNECTED"
-        LinkoConnectionPhase.Failed -> "LOST"
-        LinkoConnectionPhase.Signaling -> "WAITING"
-        LinkoConnectionPhase.Idle -> "READY"
+    val label = when {
+        state.phase == LinkoConnectionPhase.Connected -> "CONNECTED"
+        state.phase == LinkoConnectionPhase.Failed -> "FAILED"
+        pathNegotiating -> "FINDING PATH"
+        state.phase == LinkoConnectionPhase.Signaling -> "NEGOTIATING"
+        state.phase == LinkoConnectionPhase.Idle -> "READY"
         else -> "CONNECTING"
     }
-    val title = when (state.phase) {
-        LinkoConnectionPhase.Connected -> if (state.peerDisplayName.isNullOrBlank()) "Connected" else "Connected to ${state.peerDisplayName}"
-        LinkoConnectionPhase.Failed -> "We couldn't connect"
-        LinkoConnectionPhase.Signaling -> "Waiting for your friend"
-        LinkoConnectionPhase.Idle -> "Ready to connect"
-        else -> "Connecting"
+    val peer = state.peerDisplayName?.takeIf { it.isNotBlank() } ?: state.peerLinkoId?.takeIf { it.isNotBlank() } ?: "LINKO peer"
+    val title = when {
+        state.phase == LinkoConnectionPhase.Connected -> "Connected to $peer"
+        state.phase == LinkoConnectionPhase.Failed && failureKind == FailureKind.DIRECT_PATH -> "Direct path failed"
+        state.phase == LinkoConnectionPhase.Failed && failureKind == FailureKind.NEGOTIATION -> "Negotiation failed"
+        state.phase == LinkoConnectionPhase.Failed -> "We couldn't connect to $peer"
+        pathNegotiating -> "Finding a direct path to $peer"
+        state.phase == LinkoConnectionPhase.Signaling -> "Negotiating with $peer"
+        state.phase == LinkoConnectionPhase.Idle -> "Ready to connect"
+        else -> "Connecting to $peer"
     }
     val message = when {
-        state.phase == LinkoConnectionPhase.Failed -> friendlyFailure(state.error ?: state.detail)
+        state.phase == LinkoConnectionPhase.Failed && failureKind == FailureKind.DIRECT_PATH -> "LINKO could not establish a usable direct UDP path with this peer. Check both phones' internet and try again."
+        state.phase == LinkoConnectionPhase.Failed && failureKind == FailureKind.NEGOTIATION -> "LINKO could not complete direct negotiation with this peer. Make sure both phones are online and try again."
+        state.phase == LinkoConnectionPhase.Failed -> friendlyFailure(rawReason, peer)
+        pathNegotiating -> "Checking candidate paths, validating the peer, and establishing the secure tunnel."
         state.phase == LinkoConnectionPhase.Connected && health.level == LinkoNetworkHealthLevel.POOR -> "Your connection is weak. LINKO is trying to keep you connected."
         state.phase == LinkoConnectionPhase.Connected && health.level == LinkoNetworkHealthLevel.WEAK -> "Connection is slowing down."
         state.phase == LinkoConnectionPhase.Connected -> "Your friend's internet is available now."
-        state.phase == LinkoConnectionPhase.Signaling -> "Your friend needs to accept the request."
+        state.phase == LinkoConnectionPhase.Signaling -> "Waiting for the peer to accept and exchange direct connection information."
         state.phase == LinkoConnectionPhase.Idle -> "Choose a friend and we'll handle the connection for you."
         else -> "We're working on the connection."
     }
@@ -112,8 +121,31 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         Spacer(Modifier.height(7.dp))
         Text(message, color = if (state.phase == LinkoConnectionPhase.Failed) Red else TextSub, fontSize = 12.sp, textAlign = TextAlign.Center)
 
+        if (state.phase != LinkoConnectionPhase.Idle) {
+            Spacer(Modifier.height(12.dp))
+            LinkoCard {
+                Text("PEER", color = TextSub, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text(peer, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                state.peerLinkoId?.takeIf { it.isNotBlank() }?.let { id ->
+                    Spacer(Modifier.height(3.dp))
+                    Text("@${id.removePrefix("@")}", color = TextSub, fontSize = 11.sp)
+                }
+                state.sessionId?.let { session ->
+                    Spacer(Modifier.height(3.dp))
+                    Text("Session ${session.take(8)}…", color = TextSub, fontSize = 10.sp)
+                }
+                if (state.phase == LinkoConnectionPhase.Failed && rawReason.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Reason", color = TextSub, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(2.dp))
+                    Text(rawReason.replace('_', ' '), color = Red, fontSize = 10.sp)
+                }
+            }
+        }
+
         if (state.phase == LinkoConnectionPhase.Connected) {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             LinkoCard {
                 Text("Live connection", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(9.dp))
@@ -154,15 +186,29 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
     }
 }
 
-private fun friendlyFailure(raw: String): String {
+private enum class FailureKind { NEGOTIATION, DIRECT_PATH, OTHER }
+
+private fun failureKind(raw: String): FailureKind {
     val lower = raw.lowercase()
     return when {
-        lower.contains("timeout") -> "The connection took too long. Check both phones' internet and try again."
-        lower.contains("denied") || lower.contains("declined") -> "Your friend declined the connection request."
-        lower.contains("offline") -> "Your friend is not available right now."
+        lower.contains("no_local_udp_candidate") || lower.contains("direct_check") || lower.contains("ice_check") ||
+            lower.contains("candidate") || lower.contains("nomination") || lower.contains("direct_path") ||
+            lower.contains("direct_receive") || lower.contains("direct_data_plane") || lower.contains("unreachable") -> FailureKind.DIRECT_PATH
+        lower.contains("signaling") || lower.contains("offer") || lower.contains("answer") ||
+            lower.contains("negotiat") || lower.contains("ice") -> FailureKind.NEGOTIATION
+        else -> FailureKind.OTHER
+    }
+}
+
+private fun friendlyFailure(raw: String, peer: String): String {
+    val lower = raw.lowercase()
+    return when {
+        lower.contains("timeout") -> "The connection to $peer took too long. Check both phones' internet and try again."
+        lower.contains("denied") || lower.contains("declined") -> "$peer declined the connection request."
+        lower.contains("offline") -> "$peer is not available right now."
         lower.contains("permission") || lower.contains("vpn") -> "Android permission is needed before LINKO can connect."
-        lower.contains("network") || lower.contains("socket") || lower.contains("unreachable") -> "The network is having trouble. Check your connection and try again."
-        else -> "Something went wrong while connecting. Please try again."
+        lower.contains("network") || lower.contains("socket") -> "The network is having trouble reaching $peer. Check your connection and try again."
+        else -> "Something went wrong while connecting to $peer. Please try again."
     }
 }
 
