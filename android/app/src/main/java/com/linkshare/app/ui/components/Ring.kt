@@ -13,8 +13,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * LINKO connection ring: globe/radar visualization with network nodes,
- * connection-flow beam, and animated outer sweep.
+ * LINKO connection ring. Animation intensity is tied to real connection work:
+ * pulse=true means negotiation is active; incomingFlow=true makes atoms travel
+ * from the outer path into the receiver instead of the ring looking like a fake timer.
  */
 @Composable
 fun Ring(
@@ -23,6 +24,8 @@ fun Ring(
     pulse: Boolean = false,
     idle: Boolean = false,
     label: String? = null,
+    incomingFlow: Boolean = false,
+    fast: Boolean = pulse,
     onClick: (() -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -44,6 +47,9 @@ fun Ring(
             color = color,
             size = size,
             label = label,
+            fast = fast,
+            incomingFlow = incomingFlow,
+            idle = idle,
         )
     }
 }
