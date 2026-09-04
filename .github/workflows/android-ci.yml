@@ -201,3 +201,5 @@ jobs:
             exit 1
           fi
           echo 'Direct-P2P contract verified.'
+
+# CI trigger: force a fresh main-branch release/update validation run.
