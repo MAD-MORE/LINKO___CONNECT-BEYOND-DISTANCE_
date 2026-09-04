@@ -26,6 +26,8 @@ class ProviderIpPacketForwarder : Closeable {
         }
     }
 
+    fun drainUdpResponses(maxPackets: Int = 32): List<ByteArray> = udp.drainResponses(maxPackets)
+
     fun drainTcpResponses(maxPackets: Int = 32): List<ByteArray> = tcp.drainResponses(maxPackets)
 
     private fun handleIcmp(packet: ByteArray): ByteArray? {
