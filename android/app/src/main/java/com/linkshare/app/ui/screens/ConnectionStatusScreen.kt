@@ -58,11 +58,8 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         VpnService.prepare(context)?.let(vpnLauncher::launch) ?: run { vpnGranted = true }
     }
 
-    // A failed connection stays on this screen so TRY AGAIN and CANCEL are actually reachable.
-    // Only a real Connected state advances to the live session screen.
-    LaunchedEffect(state.phase) {
-        if (state.phase == LinkoConnectionPhase.Connected) onConnected()
-    }
+    // Stay on this screen after connection. This is the receiver's actual live session UI.
+    // Navigation away here previously caused the receiver to land on the generic LIVE/ONLINE view.
 
     val rawReason = (state.error ?: state.detail).trim()
     val failureKind = failureKind(rawReason)
@@ -130,7 +127,7 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         if (state.phase != LinkoConnectionPhase.Idle) {
             Spacer(Modifier.height(12.dp))
             LinkoCard {
-                Text("PEER", color = TextSub, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text("CONNECTED PEER", color = if (state.phase == LinkoConnectionPhase.Connected) Green else TextSub, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(peer, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 state.peerLinkoId?.takeIf { it.isNotBlank() }?.let { id ->
@@ -153,12 +150,25 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         if (state.phase == LinkoConnectionPhase.Connected) {
             Spacer(Modifier.height(12.dp))
             LinkoCard {
-                Text("Live connection", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("LIVE USAGE", color = Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Real-time traffic through the friend's connection", color = TextSub, fontSize = 10.sp)
                 Spacer(Modifier.height(9.dp))
-                InfoRow("Downloaded", formatBytes(state.bytesIn))
-                InfoRow("Uploaded", formatBytes(state.bytesOut))
-                InfoRow("Total", formatBytes(state.bytesIn + state.bytesOut))
-                if (state.latencyMs > 0) InfoRow("Response time", "${state.latencyMs} ms")
+                InfoRow("DOWNLOADED", formatBytes(state.bytesIn), "Internet received by this receiver", Blue, true)
+                Spacer(Modifier.height(7.dp))
+                InfoRow("UPLOADED", formatBytes(state.bytesOut), "Traffic sent through the provider", Green, true)
+                Spacer(Modifier.height(7.dp))
+                InfoRow("TOTAL USAGE", formatBytes(state.bytesIn + state.bytesOut), "Combined session traffic", TextPrimary, true)
+                if (state.latencyMs > 0) {
+                    Spacer(Modifier.height(7.dp))
+                    InfoRow("LATENCY", "${state.latencyMs} ms", "Live response time to provider", Blue)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            LinkoCard {
+                Text("CONNECTION ACTIVE", color = Green, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Your phone is currently using the provider's internet connection. Keep this screen open to monitor live usage.", color = TextSub, fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         }
 
