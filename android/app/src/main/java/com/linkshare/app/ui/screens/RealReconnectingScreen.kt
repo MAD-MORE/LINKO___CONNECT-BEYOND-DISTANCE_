@@ -43,12 +43,9 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         LinkoEngineBridge.reconnect()
     }
 
+    // Do not navigate away on failure: the retry/stop controls on this screen must remain usable.
     LaunchedEffect(state.phase) {
-        when (state.phase) {
-            LinkoConnectionPhase.Connected -> onConnected()
-            LinkoConnectionPhase.Failed -> onFailed()
-            else -> Unit
-        }
+        if (state.phase == LinkoConnectionPhase.Connected) onConnected()
     }
 
     val color = when (state.phase) {
