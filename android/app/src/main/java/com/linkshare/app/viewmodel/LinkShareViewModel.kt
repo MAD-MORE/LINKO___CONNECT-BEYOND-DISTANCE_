@@ -15,7 +15,6 @@ import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoControlPlaneApi
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoEngineConnectionState
-import com.linkshare.app.network.LinkoNetworkException
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.tunnel.TunnelCoordinator
 import kotlinx.coroutines.Dispatchers
@@ -72,11 +71,41 @@ class LinkShareViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
-    fun disconnect() {
+    /** Retry the last selected friend using a fresh engine generation/session. */
+    fun retryConnection() {
+        val friend = _uiState.value.activeFriend
+        if (friend == null || friend.id.isBlank()) {
+            fail("Select a friend before retrying")
+            return
+        }
+        _uiState.update {
+            it.copy(
+                connectionPhase = ConnectionPhase.Requesting,
+                retryAttempt = it.retryAttempt + 1,
+                failureReason = null,
+                eventMessage = "Retrying ${friend.name}…",
+            )
+        }
+        LinkoEngineBridge.reconnect(onState = ::handleEngineCallback)
+    }
+
+    /** Stop/cancel an in-flight attempt or disconnect an established tunnel. */
+    fun stopConnection() {
         LinkoEngineBridge.disconnect()
         stopUsageTicker()
-        _uiState.update { it.copy(activeFriend = null, retryAttempt = 0, usageStats = UsageStats(), failureReason = null, eventMessage = "Disconnected.") }
+        _uiState.update {
+            it.copy(
+                activeFriend = null,
+                retryAttempt = 0,
+                usageStats = UsageStats(),
+                failureReason = null,
+                connectionPhase = ConnectionPhase.Idle,
+                eventMessage = "Connection stopped.",
+            )
+        }
     }
+
+    fun disconnect() = stopConnection()
 
     fun onVpnPermissionResult(granted: Boolean) = _uiState.update {
         it.copy(hasVpnPermission = granted, eventMessage = if (granted) "VPN permission granted." else "VPN permission is required before connecting.")
