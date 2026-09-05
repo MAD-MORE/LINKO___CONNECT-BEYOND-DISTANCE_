@@ -237,3 +237,5 @@ private fun formatBytes(bytes: Long): String {
         else -> String.format(java.util.Locale.US, "%.2f GB", value / 1024.0 / 1024.0 / 1024.0)
     }
 }
+
+// Final connected-session UI is intentionally kept on this screen so the receiver sees live state and usage.
