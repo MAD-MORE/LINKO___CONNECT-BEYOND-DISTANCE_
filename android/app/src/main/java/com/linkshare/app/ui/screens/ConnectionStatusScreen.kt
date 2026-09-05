@@ -58,6 +58,12 @@ fun ConnectionStatusScreen(onConnected: () -> Unit = {}, onFailed: () -> Unit = 
         VpnService.prepare(context)?.let(vpnLauncher::launch) ?: run { vpnGranted = true }
     }
 
+    // A failed connection stays on this screen so TRY AGAIN and CANCEL are actually reachable.
+    // Only a real Connected state advances to the live session screen.
+    LaunchedEffect(state.phase) {
+        if (state.phase == LinkoConnectionPhase.Connected) onConnected()
+    }
+
     val rawReason = (state.error ?: state.detail).trim()
     val failureKind = failureKind(rawReason)
     val activeConnection = state.phase != LinkoConnectionPhase.Idle
