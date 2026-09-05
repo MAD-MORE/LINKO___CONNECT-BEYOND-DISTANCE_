@@ -1,5 +1,6 @@
 package com.linkshare.app.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -11,9 +12,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.linkshare.app.network.LinkoConnectionLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.ui.components.LinkoCard
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 
 @Composable
 fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
+    val context = LocalContext.current
     val state by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     val peer = state.peerDisplayName?.takeIf { it.isNotBlank() } ?: state.peerLinkoId?.takeIf { it.isNotBlank() } ?: "LINKO peer"
     val failureReason = (state.error ?: state.detail).lowercase()
@@ -110,9 +114,24 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
             }
         }
 
-        if (state.phase == LinkoConnectionPhase.Failed) {
-            Spacer(Modifier.height(18.dp))
-            PrimaryButton("RETURN TO CONNECTION", onFailed, color = Red, outline = true)
+        Spacer(Modifier.height(18.dp))
+        when {
+            state.phase == LinkoConnectionPhase.Failed -> {
+                PrimaryButton("TRY AGAIN", { LinkoEngineBridge.reconnect() }, color = Blue)
+                Spacer(Modifier.height(10.dp))
+                PrimaryButton("STOP & RETURN", { stopAndReturn(context, onFailed) }, color = Red, outline = true)
+            }
+            state.phase == LinkoConnectionPhase.Connected -> {
+                PrimaryButton("DISCONNECT", { stopAndReturn(context, onFailed) }, color = Red, outline = true)
+            }
+            state.phase != LinkoConnectionPhase.Idle -> {
+                PrimaryButton("STOP", { stopAndReturn(context, onFailed) }, color = Red, outline = true)
+            }
         }
     }
+}
+
+private fun stopAndReturn(context: Context, onReturn: () -> Unit) {
+    LinkoConnectionLifecycle.stop(context)
+    onReturn()
 }
