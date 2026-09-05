@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,8 +32,9 @@ import kotlin.math.sqrt
 
 /**
  * Real LINKO globe/radar visualization.
- * Negotiating/connecting stages show directional packet motion.
- * fast=true visibly accelerates rotation and packet flow.
+ * READY is the provider listening state: the same ring continuously sweeps
+ * like a radar while remaining lightweight. Negotiating/connecting stages
+ * show directional packet motion. fast=true visibly accelerates rotation and packet flow.
  */
 @Composable
 fun GlobeRadar(
@@ -47,19 +47,26 @@ fun GlobeRadar(
 ) {
     val transition = rememberInfiniteTransition(label = "globe_radar")
     val normalizedLabel = label?.uppercase()
+    val readyRadar = normalizedLabel == "READY"
     val activeFast = fast || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" ||
         normalizedLabel == "LINKING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING"
     val rotation by transition.animateFloat(
         -180f,
         180f,
-        infiniteRepeatable(tween(if (activeFast) 2600 else 9000, easing = LinearEasing), RepeatMode.Restart),
+        infiniteRepeatable(tween(if (activeFast) 2600 else if (readyRadar) 7200 else 9000, easing = LinearEasing), RepeatMode.Restart),
         label = "globe_rotation",
     )
     val sweep by transition.animateFloat(
         0f,
         360f,
-        infiniteRepeatable(tween(if (activeFast) 750 else 2200, easing = LinearEasing), RepeatMode.Restart),
+        infiniteRepeatable(tween(if (activeFast) 750 else if (readyRadar) 1400 else 2200, easing = LinearEasing), RepeatMode.Restart),
         label = "radar_sweep",
+    )
+    val radarPulse by transition.animateFloat(
+        0f,
+        1f,
+        infiniteRepeatable(tween(if (readyRadar) 1600 else 2400, easing = LinearEasing), RepeatMode.Restart),
+        label = "radar_pulse",
     )
     val flow by transition.animateFloat(
         0f,
@@ -97,6 +104,16 @@ fun GlobeRadar(
             drawCircle(color.copy(alpha = if (flowing) 0.075f else if (connected) 0.065f else 0.045f), radius * 1.08f, center)
             drawCircle(color.copy(alpha = 0.10f), radius, center, style = Stroke(1.5.dp.toPx()))
             drawCircle(color.copy(alpha = 0.20f), radius * 0.94f, center, style = Stroke(0.8.dp.toPx()))
+
+            if (readyRadar && !idle) {
+                val pulseRadius = radius * (0.42f + radarPulse * 0.58f)
+                drawCircle(
+                    color.copy(alpha = (0.16f * (1f - radarPulse)).coerceAtLeast(0f)),
+                    pulseRadius,
+                    center,
+                    style = Stroke(1.4.dp.toPx()),
+                )
+            }
 
             floatArrayOf(-0.72f, -0.42f, -0.18f, 0.18f, 0.42f, 0.72f).forEach { latitude ->
                 val y = cy + radius * latitude
@@ -183,11 +200,11 @@ fun GlobeRadar(
                 val sweepRad = Math.toRadians(sweep.toDouble())
                 val sx = cx + radius * cos(sweepRad).toFloat()
                 val sy = cy + radius * sin(sweepRad).toFloat()
-                drawLine(color.copy(alpha = 0.10f), center, Offset(sx, sy), 11.dp.toPx(), StrokeCap.Round)
-                drawLine(color.copy(alpha = 0.88f), center, Offset(sx, sy), 2.2.dp.toPx(), StrokeCap.Round)
-                drawCircle(color.copy(alpha = 0.30f), 6.dp.toPx(), Offset(sx, sy))
+                drawLine(color.copy(alpha = if (readyRadar) 0.14f else 0.10f), center, Offset(sx, sy), if (readyRadar) 13.dp.toPx() else 11.dp.toPx(), StrokeCap.Round)
+                drawLine(color.copy(alpha = if (readyRadar) 0.95f else 0.88f), center, Offset(sx, sy), 2.2.dp.toPx(), StrokeCap.Round)
+                drawCircle(color.copy(alpha = if (readyRadar) 0.36f else 0.30f), 6.dp.toPx(), Offset(sx, sy))
                 drawCircle(color, 2.4.dp.toPx(), Offset(sx, sy))
-                drawArc(color = color.copy(alpha = 0.60f), startAngle = rotation - 48f, sweepAngle = 105f, useCenter = false, topLeft = Offset(cx - radius, cy - radius), size = Size(radius * 2f, radius * 2f), style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
+                drawArc(color = color.copy(alpha = if (readyRadar) 0.70f else 0.60f), startAngle = rotation - 48f, sweepAngle = 105f, useCenter = false, topLeft = Offset(cx - radius, cy - radius), size = Size(radius * 2f, radius * 2f), style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
             }
         }
 
