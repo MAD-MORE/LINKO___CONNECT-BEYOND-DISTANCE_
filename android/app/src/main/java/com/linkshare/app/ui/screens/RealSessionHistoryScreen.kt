@@ -1,5 +1,6 @@
 package com.linkshare.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -129,7 +130,7 @@ private fun HistoryEntryCard(entry: LinkoSessionHistoryStore.HistoryEntry, expan
         else -> Icons.Default.Link
     }
 
-    LinkoCard(onClick = onClick) {
+    LinkoCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = statusColor, modifier = Modifier.width(30.dp))
             Spacer(Modifier.width(4.dp))
