@@ -11,16 +11,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.network.LinkoEngineBridge
 import com.linkshare.app.network.LinkoFriendsApi
@@ -56,36 +51,24 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LinkoTheme {
-                // Keep LINKO content below the Android status bar so time, battery,
-                // signal and notification icons remain clearly visible.
-                Box(Modifier.fillMaxSize().statusBarsPadding()) {
+                Box(Modifier.fillMaxSize()) {
                     LinkoNetworkHealthBanner()
                     if (::updateManager.isInitialized && ::linkoAuth.isInitialized && ::linkoRuntime.isInitialized) {
-                        val updateState by updateManager.state.collectAsStateWithLifecycle()
                         LinkoApp(linkoAuth, linkoRuntime, updateManager)
                         LinkoRealtimeOverlay()
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            LinkoUpdateStatusOverlay(updateManager)
-                        }
+                        LinkoUpdateStatusOverlay(updateManager)
                     }
                 }
             }
         }
 
-        // Exactly one startup update check. Discovery is background work and never
-        // prevents the user from entering LINKO.
+        // Exactly one startup update check; discovery never blocks LINKO.
         window.decorView.post { checkForStartupUpdate() }
     }
 
     override fun onResume() {
         super.onResume()
-        if (::updateManager.isInitialized) {
-            updateManager.onInstallerReturned()
-        }
+        if (::updateManager.isInitialized) updateManager.onInstallerReturned()
         if (appUnlocked) runCatching {
             LinkoRealtimeManager.setForeground(true)
             LinkoNotificationCenter.start(this)
@@ -96,12 +79,8 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra("EXTRA_REQUEST_ID")?.let { requestId ->
-            Log.i(TAG, "Opened via connection notification with request ID: $requestId")
-        }
-        intent.getStringExtra("EXTRA_NOTIFICATION_REQUEST_ID")?.let { requestId ->
-            Log.i(TAG, "Opened via friend-request notification with request ID: $requestId")
-        }
+        intent.getStringExtra("EXTRA_REQUEST_ID")?.let { Log.i(TAG, "Opened via connection notification with request ID: $it") }
+        intent.getStringExtra("EXTRA_NOTIFICATION_REQUEST_ID")?.let { Log.i(TAG, "Opened via friend-request notification with request ID: $it") }
     }
 
     override fun onPause() {
@@ -124,10 +103,8 @@ class MainActivity : ComponentActivity() {
     private fun unlockApp() {
         if (appUnlocked) return
         appUnlocked = true
-        runCatching { linkoRuntime.start() }
-            .onFailure { Log.e(TAG, "LINKO runtime startup failed", it) }
-        runCatching { requestEnginePermissions() }
-            .onFailure { Log.e(TAG, "Permission setup failed", it) }
+        runCatching { linkoRuntime.start() }.onFailure { Log.e(TAG, "LINKO runtime startup failed", it) }
+        runCatching { requestEnginePermissions() }.onFailure { Log.e(TAG, "Permission setup failed", it) }
         runCatching {
             LinkoRealtimeManager.start(this)
             LinkoNotificationCenter.start(this)
