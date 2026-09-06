@@ -10,11 +10,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Gavel
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,8 +28,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.auth.LinkoAuth
 import com.linkshare.app.auth.LinkoDeviceIdentity
@@ -64,6 +72,7 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
     val context = LocalContext.current
     val auth = remember { com.linkshare.app.auth.LinkoAuth(context) }
     val displayName = remember { auth.currentDisplayName().orEmpty().ifBlank { "LINKO USER" } }
+    var showTerms by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -141,9 +150,9 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(Brush.linearGradient(listOf(BlueSoft, GradientMid)))
-                    .border(1.5.dp, Blue.copy(alpha = 0.35f), androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                    .border(1.5.dp, Blue.copy(alpha = 0.35f), RoundedCornerShape(18.dp))
                     .clickable { onReceiver() }
                     .padding(16.dp)
             ) {
@@ -164,9 +173,9 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(Brush.linearGradient(listOf(GreenSoft, GradientMid)))
-                    .border(1.5.dp, Green.copy(alpha = 0.35f), androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                    .border(1.5.dp, Green.copy(alpha = 0.35f), RoundedCornerShape(18.dp))
                     .clickable { onProvider() }
                     .padding(16.dp)
             ) {
@@ -184,7 +193,178 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
         }
+
+        // Small, always-visible trust control in the lower-right of Home.
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 14.dp, bottom = 14.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .border(1.dp, Blue.copy(alpha = 0.28f), RoundedCornerShape(24.dp))
+                .clickable { showTerms = true },
+            shape = RoundedCornerShape(24.dp),
+            color = GradientMid.copy(alpha = 0.96f),
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.Gavel, contentDescription = null, tint = Blue, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("TERMS & AGREEMENT", color = TextPrimary, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (showTerms) {
+            TermsAgreementDialog(onDismiss = { showTerms = false })
+        }
     }
+}
+
+@Composable
+private fun TermsAgreementDialog(onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 650.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .border(1.dp, Blue.copy(alpha = 0.30f), RoundedCornerShape(28.dp)),
+                shape = RoundedCornerShape(28.dp),
+                color = GradientMid.copy(alpha = 0.99f),
+                tonalElevation = 10.dp,
+                shadowElevation = 24.dp
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 10.dp, top = 16.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Brush.linearGradient(listOf(Blue.copy(alpha = .18f), Green.copy(alpha = .12f)))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Filled.Shield, contentDescription = null, tint = Blue, modifier = Modifier.size(22.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Terms & Agreement", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                            Text("LINKO TRUST CENTER • v1.0", color = Blue, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close terms", tint = TextSub)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 18.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Blue.copy(alpha = 0.08f))
+                            .border(1.dp, Blue.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+                            .padding(14.dp)
+                    ) {
+                        Text(
+                            "LINKO connects trusted people and can let an authorized friend route internet traffic through your shared network. Please read these rules before using connection sharing.",
+                            color = TextPrimary,
+                            fontSize = 11.sp,
+                            lineHeight = 17.sp,
+                            fontFamily = JetBrainsMono
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 14.dp)
+                    ) {
+                        TermsSection("1", "USE LINKO RESPONSIBLY", "Use LINKO only for lawful activity and only on devices, accounts and networks you are authorized to use. Do not use LINKO to attack, disrupt, defraud, impersonate, surveil, or gain unauthorized access to another system.")
+                        TermsSection("2", "INTERNET SHARING", "When you approve a connection, your device may provide internet connectivity to the selected friend. You can stop an active sharing session. Network speed and availability can depend on your device, carrier, ISP and local network conditions.")
+                        TermsSection("3", "TRUST & ACCESS", "Only approve people you recognize and trust. Keep your LINKO account and device secure. Removing a friend, revoking access or ending a session can prevent future connections according to LINKO's current security controls.")
+                        TermsSection("4", "SECURITY", "LINKO uses device identity, authenticated sessions and encrypted connection mechanisms where supported by the current implementation. No network service can guarantee absolute security or uninterrupted availability.")
+                        TermsSection("5", "THIRD-PARTY NETWORKS", "Your mobile carrier, ISP and other network providers may have separate rules that apply to internet sharing, tethering, VPNs, traffic and acceptable use. You remain responsible for following those rules.")
+                        TermsSection("6", "SERVICE CHANGES", "LINKO may change, suspend or discontinue features when required for security, maintenance, compatibility or product development. These terms may be updated as the service evolves.")
+
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "For the information LINKO uses and your data choices, see the Privacy section in Settings. This in-app agreement is product guidance and should be reviewed with applicable legal requirements before public release.",
+                            color = TextSub,
+                            fontSize = 10.sp,
+                            lineHeight = 15.sp,
+                            fontFamily = JetBrainsMono,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Last updated • September 2026",
+                            color = TextMuted,
+                            fontSize = 9.sp,
+                            fontFamily = JetBrainsMono,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Blue.copy(alpha = 0.13f))
+                                .clickable { onDismiss() }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Text("GOT IT", color = Blue, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TermsSection(number: String, title: String, body: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(Blue.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(number, color = Blue, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text(body, color = TextSub, fontSize = 10.sp, lineHeight = 15.sp, fontFamily = JetBrainsMono)
+        }
+    }
+    Spacer(Modifier.height(14.dp))
 }
 
 @Composable fun RxSelectFriendScreen(onRequest: () -> Unit) {
