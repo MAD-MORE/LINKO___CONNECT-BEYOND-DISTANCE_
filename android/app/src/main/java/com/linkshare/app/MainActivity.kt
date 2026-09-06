@@ -142,7 +142,8 @@ class MainActivity : ComponentActivity() {
         runCatching {
             LinkoRealtimeManager.start(this)
             LinkoNotificationCenter.start(this)
-        }.onFailure { Log.e(TAG, "Realtime/notification startup failed", it) }
+            LinkoSessionHistoryStore.start(this)
+        }.onFailure { Log.e(TAG, "Realtime/notification/history startup failed", it) }
     }
 
     private fun requestEnginePermissions() {
