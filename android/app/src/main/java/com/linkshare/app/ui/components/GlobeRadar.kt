@@ -15,24 +15,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
 
-/** LINKO globe/radar visualization. Home uses a calm premium ice/ocean treatment. */
+/**
+ * LINKO's main globe visualization.
+ *
+ * This is intentionally rendered as a live scene rather than a static bitmap:
+ * the globe rotates, the atmosphere breathes, network routes orbit it, and
+ * packets move when the connection is active.
+ */
 @Composable
 fun GlobeRadar(
     color: Color,
@@ -43,140 +47,244 @@ fun GlobeRadar(
     idle: Boolean = false,
     iceOcean: Boolean = false,
 ) {
-    val transition = rememberInfiniteTransition(label = "globe_radar")
-    val normalizedLabel = label?.uppercase()
-    val readyRadar = normalizedLabel == "READY"
-    val activeFast = fast || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" ||
-        normalizedLabel == "LINKING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING"
+    val transition = rememberInfiniteTransition(label = "linko_globe")
+    val state = label?.uppercase().orEmpty()
+    val active = state in setOf("CONNECTED", "ONLINE", "LIVE", "SHARING")
+    val negotiating = fast || state in setOf("CONNECTING", "WAITING", "LINKING", "APPROVED", "SIGNALING", "FINDING PATH", "NEGOTIATING")
+    val flowing = active || incomingFlow || negotiating
 
-    val ice = if (iceOcean) Color(0xFFF3FDFF) else Color.White
-    val frost = if (iceOcean) Color(0xFFB5F2FF) else color.copy(alpha = 0.72f)
-    val ocean = if (iceOcean) Color(0xFF25C7F4) else color
-    val deepOcean = if (iceOcean) Color(0xFF0A6FA5) else Green
-    val glass = if (iceOcean) Color(0xFF081D2A) else Color.Transparent
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(if (negotiating) 4200 else 9000, easing = LinearEasing),
+            RepeatMode.Restart,
+        ),
+        label = "earth_rotation",
+    )
+    val orbitRotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(if (flowing) 2600 else 6500, easing = LinearEasing),
+            RepeatMode.Restart,
+        ),
+        label = "network_orbit",
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Reverse),
+        label = "atmosphere",
+    )
+    val packets by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(if (active) 700 else 1050, easing = LinearEasing),
+            RepeatMode.Restart,
+        ),
+        label = "packets",
+    )
 
-    val rotation by transition.animateFloat(-180f, 180f,
-        infiniteRepeatable(tween(if (activeFast) 1800 else if (readyRadar) 7200 else 10000, easing = LinearEasing), RepeatMode.Restart), label = "globe_rotation")
-    val sweep by transition.animateFloat(0f, 360f,
-        infiniteRepeatable(tween(if (activeFast) 1000 else if (readyRadar) 2400 else 3400, easing = LinearEasing), RepeatMode.Restart), label = "radar_sweep")
-    val breathe by transition.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse), label = "home_breathe")
-    val flow by transition.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(if (activeFast) 650 else 900, easing = LinearEasing), RepeatMode.Restart), label = "connection_flow")
+    val ocean = if (iceOcean) Color(0xFF24C8F5) else color
+    val cyan = Color(0xFF8DEBFF)
+    val deep = Color(0xFF041521)
+    val earthBlue = Color(0xFF0B466C)
+    val earthBlue2 = Color(0xFF092B43)
+    val land = Color(0xFF74C9B4)
+    val white = Color.White
 
-    val outgoing = normalizedLabel == "SYNCING" || normalizedLabel == "REQUESTING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING" ||
-        normalizedLabel == "SDP" || normalizedLabel == "ICE GATHERING" || normalizedLabel == "ICE CHECKING" || normalizedLabel == "NOMINATING" ||
-        normalizedLabel == "HANDSHAKE" || normalizedLabel == "TUNNEL" || normalizedLabel == "SHARING"
-    val receiverNegotiating = incomingFlow || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" || normalizedLabel == "LINKING"
-    val connected = normalizedLabel == "CONNECTED" || normalizedLabel == "LIVE" || normalizedLabel == "ONLINE" || normalizedLabel == "SHARING"
-    val flowing = outgoing || receiverNegotiating || connected
-
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
+    Box(
+        modifier = Modifier.size(size),
+        contentAlignment = Alignment.Center,
+    ) {
         Canvas(Modifier.size(size)) {
             val cx = this.size.width / 2f
             val cy = this.size.height / 2f
-            val radius = this.size.minDimension / 2f - 12.dp.toPx()
+            val outer = this.size.minDimension / 2f - 5.dp.toPx()
+            val globe = outer * 0.73f
             val center = Offset(cx, cy)
-            val pulse = if (iceOcean) (0.92f + breathe * 0.08f) else 1f
+            val glow = 0.12f + pulse * 0.06f
 
-            if (iceOcean) {
-                drawCircle(deepOcean.copy(alpha = 0.06f + breathe * 0.025f), radius * 1.22f, center)
-                drawCircle(ocean.copy(alpha = 0.075f + breathe * 0.025f), radius * 1.10f, center)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF12394B).copy(alpha = 0.92f), glass.copy(alpha = 0.98f), Color(0xFF06131C))
+            // Deep atmospheric halo and glass-like outer ring.
+            drawCircle(ocean.copy(alpha = glow), outer * 1.06f, center)
+            drawCircle(ocean.copy(alpha = 0.07f + pulse * 0.025f), outer * 1.16f, center)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        cyan.copy(alpha = 0.25f),
+                        ocean.copy(alpha = 0.10f),
+                        Color.Transparent,
                     ),
-                    radius = radius * pulse,
-                    center = center
-                )
-                drawCircle(ocean.copy(alpha = 0.38f), radius * 1.015f, center, style = Stroke(2.2.dp.toPx()))
-                drawCircle(frost.copy(alpha = 0.25f), radius * 0.965f, center, style = Stroke(0.9.dp.toPx()))
-            } else {
-                drawCircle(deepOcean.copy(alpha = if (flowing) 0.075f else 0.045f), radius * 1.08f, center)
-                drawCircle(ocean.copy(alpha = 0.13f), radius, center, style = Stroke(1.5.dp.toPx()))
-                drawCircle(frost.copy(alpha = 0.22f), radius * 0.94f, center, style = Stroke(0.8.dp.toPx()))
-            }
+                    center = center,
+                    radius = outer * 1.17f,
+                ),
+                radius = outer * 1.17f,
+                center = center,
+            )
+            drawCircle(ocean.copy(alpha = 0.65f), outer, center, style = Stroke(2.2.dp.toPx()))
+            drawCircle(cyan.copy(alpha = 0.20f), outer * 0.94f, center, style = Stroke(0.8.dp.toPx()))
 
-            // A restrained globe: curved meridians and latitude bands create depth without a busy grid.
-            val globeRadius = radius * if (iceOcean) 0.78f else 0.94f
-            floatArrayOf(-0.58f, -0.30f, 0f, 0.30f, 0.58f).forEachIndexed { index, latitude ->
-                val y = cy + globeRadius * latitude
-                val rx = globeRadius * (0.86f - kotlin.math.abs(latitude) * 0.34f)
-                val ry = globeRadius * 0.075f
-                drawOval(
-                    frost.copy(alpha = if (iceOcean) 0.09f else if (index == 2) 0.25f else 0.13f),
-                    topLeft = Offset(cx - rx, y - ry),
-                    size = Size(rx * 2f, ry * 2f),
-                    style = Stroke(if (iceOcean) 0.8.dp.toPx() else 1.1.dp.toPx())
-                )
-            }
+            // Rotating Earth body: radial lighting makes the flat canvas read as a sphere.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF5CD9FF).copy(alpha = 0.88f),
+                        earthBlue.copy(alpha = 0.98f),
+                        earthBlue2.copy(alpha = 0.99f),
+                        deep,
+                    ),
+                    center = Offset(cx - globe * 0.28f, cy - globe * 0.30f),
+                    radius = globe * 1.45f,
+                ),
+                radius = globe,
+                center = center,
+            )
 
-            intArrayOf(-58, -29, 0, 29, 58).forEach { longitude ->
-                val phase = Math.toRadians((longitude + rotation * if (iceOcean) 0.55f else 1f).toDouble())
-                val x = cx + globeRadius * sin(phase).toFloat()
-                val squeeze = kotlin.math.abs(cos(phase)).toFloat().coerceIn(0.08f, 1f)
+            // Atmospheric rim.
+            drawCircle(cyan.copy(alpha = 0.70f), globe, center, style = Stroke(2.4.dp.toPx()))
+            drawCircle(white.copy(alpha = 0.18f), globe * 0.965f, center, style = Stroke(1.dp.toPx()))
+
+            // Simplified rotating continental silhouettes. They intentionally stay sparse so
+            // the network remains the visual focus while still reading as Earth.
+            val landScale = globe / 100f
+            val continents = listOf(
+                listOf(-58f to -12f, -40f to -35f, -18f to -25f, -12f to 5f, -28f to 15f, -50f to 4f),
+                listOf(8f to -45f, 28f to -50f, 48f to -30f, 42f to -5f, 18f to 2f, 2f to -18f),
+                listOf(30f to 8f, 52f to 10f, 62f to 28f, 42f to 45f, 18f to 32f, 22f to 15f),
+                listOf(-5f to 35f, 14f to 30f, 20f to 58f, 5f to 72f, -12f to 58f, -20f to 42f),
+            )
+            continents.forEachIndexed { index, points ->
                 val path = Path()
-                path.moveTo(x, cy - globeRadius)
-                path.cubicTo(cx + (x - cx) * squeeze * 0.36f, cy - globeRadius * 0.50f,
-                    cx + (x - cx) * squeeze * 0.36f, cy + globeRadius * 0.50f, x, cy + globeRadius)
-                drawPath(path, frost.copy(alpha = if (iceOcean) 0.10f else 0.12f), style = Stroke(if (iceOcean) 0.8.dp.toPx() else 1.1.dp.toPx(), join = StrokeJoin.Round))
+                points.forEachIndexed { pointIndex, point ->
+                    val lon = Math.toRadians((point.first + rotation * 0.72f + index * 8f).toDouble())
+                    val x3 = sin(lon).toFloat()
+                    val visible = abs(x3) < 0.96f
+                    if (!visible) return@forEachIndexed
+                    val x = cx + point.first * landScale * 0.68f
+                    val y = cy + point.second * landScale * 0.68f
+                    val rotatedX = cx + (x - cx) * cos(Math.toRadians(rotation.toDouble())).toFloat()
+                    val finalX = if (abs(cos(Math.toRadians(rotation.toDouble())).toFloat()) < 0.08f) cx else rotatedX
+                    if (pointIndex == 0) path.moveTo(finalX, y) else path.lineTo(finalX, y)
+                }
+                path.close()
+                drawPath(path, land.copy(alpha = 0.38f), Stroke(1.1.dp.toPx(), join = StrokeJoin.Round))
             }
 
-            if (iceOcean) {
-                drawArc(ocean.copy(alpha = 0.18f), -32f + rotation * 0.08f, 145f, false,
-                    Offset(cx - globeRadius, cy - globeRadius), Size(globeRadius * 2f, globeRadius * 2f), style = Stroke(2.4.dp.toPx(), cap = StrokeCap.Round))
-                drawArc(frost.copy(alpha = 0.15f), 145f + rotation * 0.05f, 95f, false,
-                    Offset(cx - globeRadius, cy - globeRadius), Size(globeRadius * 2f, globeRadius * 2f), style = Stroke(1.3.dp.toPx(), cap = StrokeCap.Round))
-                drawCircle(ice.copy(alpha = 0.92f), 2.5.dp.toPx(), center)
-                drawCircle(ocean.copy(alpha = 0.15f + breathe * 0.06f), 14.dp.toPx() + breathe * 3.dp.toPx(), center)
+            // Longitude/latitude curves give the Earth its spherical geometry.
+            for (i in -4..4) {
+                val longitude = i * 22f + rotation
+                val rad = Math.toRadians(longitude.toDouble())
+                val squeeze = abs(cos(rad)).toFloat().coerceIn(0.05f, 1f)
+                val path = Path()
+                path.moveTo(cx, cy - globe)
+                path.cubicTo(
+                    cx + globe * squeeze * 0.72f,
+                    cy - globe * 0.45f,
+                    cx - globe * squeeze * 0.72f,
+                    cy + globe * 0.45f,
+                    cx,
+                    cy + globe,
+                )
+                drawPath(path, cyan.copy(alpha = 0.10f), Stroke(0.75.dp.toPx()))
+            }
+            for (i in -2..2) {
+                val y = cy + i * globe * 0.27f
+                val half = globe * (1f - abs(i) * 0.13f)
+                drawOval(
+                    cyan.copy(alpha = 0.09f),
+                    Offset(cx - half, y - globe * 0.055f),
+                    androidx.compose.ui.geometry.Size(half * 2f, globe * 0.11f),
+                    style = Stroke(0.75.dp.toPx()),
+                )
             }
 
-            if (readyRadar && !idle) {
-                val pulseRadius = radius * (0.42f + breathe * 0.48f)
-                drawCircle(frost.copy(alpha = 0.10f * (1f - breathe)), pulseRadius, center, style = Stroke(1.2.dp.toPx()))
+            // Global network routes. Arcs are projected onto the face of the globe.
+            val nodes = listOf(
+                -0.62f to -0.12f,
+                -0.35f to 0.34f,
+                -0.02f to -0.28f,
+                0.25f to 0.18f,
+                0.55f to -0.20f,
+                0.42f to 0.46f,
+                -0.10f to 0.50f,
+            )
+            val routePairs = listOf(0 to 2, 2 to 4, 1 to 3, 3 to 5, 6 to 3, 0 to 1, 4 to 5)
+            routePairs.forEach { (a, b) ->
+                val p1 = Offset(cx + nodes[a].first * globe, cy + nodes[a].second * globe)
+                val p2 = Offset(cx + nodes[b].first * globe, cy + nodes[b].second * globe)
+                val midY = (p1.y + p2.y) / 2f - globe * 0.16f
+                val path = Path().apply {
+                    moveTo(p1.x, p1.y)
+                    cubicTo(p1.x + (p2.x - p1.x) * 0.25f, midY, p2.x - (p2.x - p1.x) * 0.25f, midY, p2.x, p2.y)
+                }
+                drawPath(path, cyan.copy(alpha = if (flowing) 0.30f else 0.16f), Stroke(1.1.dp.toPx(), cap = StrokeCap.Round))
             }
 
+            // Orbiting communication bands.
+            drawOval(
+                ocean.copy(alpha = 0.40f),
+                Offset(cx - outer * 0.86f, cy - outer * 0.30f),
+                androidx.compose.ui.geometry.Size(outer * 1.72f, outer * 0.60f),
+                style = Stroke(1.7.dp.toPx()),
+            )
+            drawArc(
+                white.copy(alpha = 0.80f),
+                startAngle = orbitRotation,
+                sweepAngle = 28f,
+                useCenter = false,
+                topLeft = Offset(cx - outer * 0.86f, cy - outer * 0.30f),
+                size = androidx.compose.ui.geometry.Size(outer * 1.72f, outer * 0.60f),
+                style = Stroke(2.6.dp.toPx(), cap = StrokeCap.Round),
+            )
+
+            // Network nodes and moving packets.
+            nodes.forEachIndexed { index, node ->
+                val point = Offset(cx + node.first * globe, cy + node.second * globe)
+                drawCircle(cyan.copy(alpha = 0.16f), 7.dp.toPx(), point)
+                drawCircle(white.copy(alpha = if (flowing) 0.95f else 0.60f), 2.2.dp.toPx(), point)
+                if (flowing && index < 5) {
+                    val t = (packets + index * 0.19f).let { it - floor(it.toDouble()).toFloat() }
+                    val packet = Offset(
+                        point.x + cos(t * Math.PI * 2.0).toFloat() * 8.dp.toPx(),
+                        point.y + sin(t * Math.PI * 2.0).toFloat() * 8.dp.toPx(),
+                    )
+                    drawCircle(ocean.copy(alpha = 0.45f), 4.dp.toPx(), packet)
+                    drawCircle(white, 1.7.dp.toPx(), packet)
+                }
+            }
+
+            // Active flow streaks around the outside make the connection readable at a glance.
             if (flowing) {
-                // Directional packet arcs: sparse, small and deliberately elegant.
-                repeat(if (iceOcean) 5 else 9) { index ->
-                    val start = rotation * 0.45f + index * if (iceOcean) 72f else 40f
-                    drawArc(ice.copy(alpha = if (iceOcean) 0.65f else 0.92f), startAngle = start,
-                        sweepAngle = if (iceOcean) 17f else 25f, useCenter = false,
-                        topLeft = Offset(cx - radius * 1.025f, cy - radius * 1.025f),
-                        size = Size(radius * 2.05f, radius * 2.05f),
-                        style = Stroke(if (iceOcean) 2.0.dp.toPx() else 2.8.dp.toPx(), cap = StrokeCap.Round))
+                repeat(7) { index ->
+                    val start = orbitRotation + index * 51f
+                    drawArc(
+                        cyan.copy(alpha = 0.75f),
+                        start,
+                        13f,
+                        false,
+                        Offset(cx - outer * 0.98f, cy - outer * 0.98f),
+                        androidx.compose.ui.geometry.Size(outer * 1.96f, outer * 1.96f),
+                        style = Stroke(2.2.dp.toPx(), cap = StrokeCap.Round),
+                    )
                 }
+            }
 
-                val particles = arrayOf(0.00f to 0.00f, 0.18f to 0.52f, 0.42f to 0.91f, 0.67f to 0.33f, 0.84f to 0.76f, 0.30f to 0.16f, 0.56f to 0.58f)
-                particles.forEachIndexed { index, particle ->
-                    val angle = particle.second * (Math.PI * 2.0) + index * 0.37
-                    val local = (flow + particle.first).let { value -> value - floor(value.toDouble()).toFloat() }
-                    val inward = receiverNegotiating && !outgoing
-                    val distance = if (inward) radius * (0.98f - local * 0.82f) else radius * (0.18f + local * 0.80f)
-                    val px = cx + cos(angle).toFloat() * distance
-                    val py = cy + sin(angle).toFloat() * distance
-                    drawCircle(ocean.copy(alpha = if (iceOcean) 0.38f else 0.30f), if (iceOcean) 4.dp.toPx() else 5.dp.toPx(), Offset(px, py))
-                    drawCircle(ice.copy(alpha = 0.95f), if (iceOcean) 1.9.dp.toPx() else 2.7.dp.toPx(), Offset(px, py))
-                }
-            } else if (!idle) {
-                val sweepRad = Math.toRadians(sweep.toDouble())
-                val sx = cx + radius * cos(sweepRad).toFloat()
-                val sy = cy + radius * sin(sweepRad).toFloat()
-                drawLine(frost.copy(alpha = if (iceOcean) 0.07f else 0.10f), center, Offset(sx, sy), if (iceOcean) 10.dp.toPx() else 11.dp.toPx(), StrokeCap.Round)
-                drawLine(ice.copy(alpha = if (iceOcean) 0.82f else 0.88f), center, Offset(sx, sy), if (iceOcean) 1.7.dp.toPx() else 2.2.dp.toPx(), StrokeCap.Round)
-                drawCircle(frost.copy(alpha = if (iceOcean) 0.22f else 0.30f), if (iceOcean) 4.dp.toPx() else 6.dp.toPx(), Offset(sx, sy))
-                drawCircle(ice, if (iceOcean) 1.9.dp.toPx() else 2.4.dp.toPx(), Offset(sx, sy))
+            if (!idle && !flowing) {
+                val angle = Math.toRadians(orbitRotation.toDouble())
+                val point = Offset(cx + outer * 0.88f * cos(angle).toFloat(), cy + outer * 0.88f * sin(angle).toFloat())
+                drawCircle(cyan.copy(alpha = 0.30f), 7.dp.toPx(), point)
+                drawCircle(white, 2.dp.toPx(), point)
             }
         }
 
-        label?.let {
+        if (!label.isNullOrBlank()) {
             Text(
-                it,
-                color = if (iceOcean) ice else Color.White,
-                fontSize = if (iceOcean) 8.5.sp else 9.5.sp,
+                text = label,
+                color = white.copy(alpha = 0.92f),
+                fontSize = 8.5.sp,
                 fontFamily = JetBrainsMono,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = if (iceOcean) 0.5.sp else 0.sp,
             )
         }
     }
