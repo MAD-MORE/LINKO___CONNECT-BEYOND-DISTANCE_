@@ -40,8 +40,14 @@ class LinkoUpdateManager(private val context: Context) {
     private var activeDownloadId = -1L
     private var completionHandledDownloadId = -1L
     private var expectedInstallVersionCode: Int? = null
+    private var completedDownloadId = -1L
+    private var installerFile: File? = null
     private var latestRelease: ReleaseInfo? = null
     private val cache = appContext.getSharedPreferences(CACHE_NAME, Context.MODE_PRIVATE)
+
+    init {
+        cleanupUpdateArtifacts()
+    }
 
     private val _state = MutableStateFlow(UpdateState(BuildConfig.VERSION_CODE, BuildConfig.VERSION_NAME))
     val state: StateFlow<UpdateState> = _state.asStateFlow()
@@ -106,6 +112,8 @@ class LinkoUpdateManager(private val context: Context) {
             val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             runCatching { manager.remove(activeDownloadId) }
         }
+        completedDownloadId = -1L
+        cleanupUpdateArtifacts()
         activeDownloadId = -1L
         progressJob?.cancel()
         unregisterReceiver()
@@ -119,6 +127,7 @@ class LinkoUpdateManager(private val context: Context) {
         val installed = readInstalledVersion()
         updateState(installedVersionCode = installed.first, installedVersionName = installed.second)
         if (installed.first >= expected) {
+            cleanupUpdateArtifacts()
             expectedInstallVersionCode = null
             updateState(status = UpdateStatus.Installed, statusMessage = "LINKO UPDATED", errorMessage = null, usingCachedData = false)
             scope.launch {
@@ -126,6 +135,7 @@ class LinkoUpdateManager(private val context: Context) {
                 if (_state.value.status == UpdateStatus.Installed) updateState(status = UpdateStatus.UpToDate, statusMessage = "LINKO IS UP TO DATE", errorMessage = null, usingCachedData = false)
             }
         } else if (_state.value.status == UpdateStatus.Installing) {
+            cleanupUpdateArtifacts()
             updateState(status = UpdateStatus.UpdateAvailable, statusMessage = "UPDATE READY", errorMessage = "Installation was cancelled or did not complete.", usingCachedData = false)
         }
     }
@@ -246,7 +256,7 @@ class LinkoUpdateManager(private val context: Context) {
         unregisterReceiver()
         progressJob?.cancel()
         val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val request = DownloadManager.Request(Uri.parse(release.apkUrl)).setTitle("LINKO ${release.versionName}").setDescription("Downloading LINKO update…").setMimeType(APK_MIME).setAllowedOverMetered(true).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE).setDestinationInExternalFilesDir(appContext, Environment.DIRECTORY_DOWNLOADS, "LINKO-${release.versionCode}.apk")
+        val request = DownloadManager.Request(Uri.parse(release.apkUrl)).setTitle("LINKO ${release.versionName}").setDescription("Downloading LINKO update…").setMimeType(APK_MIME).setAllowedOverMetered(true).setAllowedOverRoaming(false).setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE).setDestinationInExternalFilesDir(appContext, UPDATE_DIRECTORY, "LINKO-${release.versionCode}.apk")
         val expectedIdHolder = longArrayOf(-1L)
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
@@ -293,6 +303,7 @@ class LinkoUpdateManager(private val context: Context) {
             return
         }
         val uri = manager.getUriForDownloadedFile(id)
+        completedDownloadId = id
         activeDownloadId = -1L
         unregisterReceiver()
         if (uri == null) {
@@ -339,10 +350,16 @@ class LinkoUpdateManager(private val context: Context) {
             runCatching { activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))) }
             return
         }
-        val installerFile = File(appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "LINKO-${expectedInstallVersionCode ?: BuildConfig.VERSION_CODE}-installer.apk")
+        val installerFile = File(appContext.getExternalFilesDir(UPDATE_DIRECTORY), "LINKO-${expectedInstallVersionCode ?: BuildConfig.VERSION_CODE}-installer.apk")
+        this.installerFile = installerFile
         val installerUri = runCatching {
             installerFile.parentFile?.mkdirs()
             appContext.contentResolver.openInputStream(uri)?.use { input -> installerFile.outputStream().use { output -> input.copyTo(output) } } ?: throw IllegalStateException("The downloaded LINKO APK could not be read for installation.")
+            completedDownloadId.takeIf { it >= 0L }?.let { downloadId ->
+                val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                runCatching { manager.remove(downloadId) }
+                completedDownloadId = -1L
+            }
             FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", installerFile)
         }.getOrElse { error ->
             updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION PREPARATION FAILED", errorMessage = error.message ?: "The verified LINKO APK could not be prepared for Android's installer.")
@@ -354,8 +371,26 @@ class LinkoUpdateManager(private val context: Context) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         runCatching { activity.startActivity(intent) }.onFailure { error ->
+            cleanupUpdateArtifacts()
             updateState(status = UpdateStatus.Error, statusMessage = "INSTALLATION FAILED", errorMessage = error.message ?: "Android could not start the LINKO package installer.")
         }
+    }
+
+    private fun cleanupUpdateArtifacts() {
+        val directories = listOfNotNull(
+            appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            appContext.getExternalFilesDir(UPDATE_DIRECTORY),
+            appContext.cacheDir
+        ).distinct()
+        directories.forEach { directory ->
+            directory.listFiles()?.forEach { file ->
+                val name = file.name
+                if (name.startsWith("LINKO-") && name.endsWith(".apk") || name.startsWith("linko-update-") && name.endsWith(".apk")) {
+                    runCatching { file.delete() }
+                }
+            }
+        }
+        installerFile = null
     }
 
     private fun queryDownload(manager: DownloadManager, id: Long): DownloadSnapshot? {
@@ -433,6 +468,7 @@ class LinkoUpdateManager(private val context: Context) {
 
     companion object {
         private const val APK_MIME = "application/vnd.android.package-archive"
+        private const val UPDATE_DIRECTORY = "linko-updates"
         private const val UPDATE_MANIFEST_NAME = "linko-update.json"
         private const val RELEASES_API = "https://api.github.com/repos/MAD-MORE/LINKO___CONNECT-BEYOND-DISTANCE_/releases/latest"
         private const val GITHUB_JSON_ACCEPT = "application/vnd.github+json"
