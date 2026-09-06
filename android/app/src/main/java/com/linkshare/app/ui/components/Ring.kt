@@ -26,6 +26,7 @@ fun Ring(
     label: String? = null,
     incomingFlow: Boolean = false,
     fast: Boolean = pulse,
+    iceOcean: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -54,6 +55,7 @@ fun Ring(
             fast = fast,
             incomingFlow = effectiveIncomingFlow,
             idle = idle && !live,
+            iceOcean = iceOcean,
         )
         if (live && !label.isNullOrBlank()) {
             Text(label, color = color, fontSize = 9.5.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
