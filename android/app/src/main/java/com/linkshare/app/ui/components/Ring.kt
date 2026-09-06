@@ -33,6 +33,8 @@ fun Ring(
     val state = label?.uppercase()
     val live = state == "ONLINE" || state == "LIVE" || state == "CONNECTED" || state == "SHARING"
     val effectiveIncomingFlow = incomingFlow || state == "ONLINE" || state == "CONNECTED" || state == "SHARE INTERNET"
+    // SHARE INTERNET is the home engine ring; all other rings keep their existing palette.
+    val homeIceOcean = iceOcean || state == "SHARE INTERNET"
 
     Box(
         modifier = Modifier
@@ -55,7 +57,7 @@ fun Ring(
             fast = fast,
             incomingFlow = effectiveIncomingFlow,
             idle = idle && !live,
-            iceOcean = iceOcean,
+            iceOcean = homeIceOcean,
         )
         if (live && !label.isNullOrBlank()) {
             Text(label, color = color, fontSize = 9.5.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
