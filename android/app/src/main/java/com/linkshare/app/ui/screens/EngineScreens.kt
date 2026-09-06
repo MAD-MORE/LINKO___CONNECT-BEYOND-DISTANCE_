@@ -293,7 +293,7 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
 
 @Composable fun SessionDetailsScreen(onDisconnect: () -> Unit) = UsageScreen(onDisconnect)
 
-@Composable fun SessionHistoryScreen() = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Session History", "Your verified LINKO session logs"); Spacer(Modifier.height(20.dp)); LinkoCard { Text("NO SESSION HISTORY", color = TextMuted, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)); Text("Completed sessions will be logged here with byte counters and peer timestamps.", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono) } }
+@Composable fun SessionHistoryScreen() = RealSessionHistoryScreen()
 
 @Composable fun ProviderIncomingScreen(onReview: () -> Unit, onReject: () -> Unit) {
     val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle(); val receiverName = engineState.peerDisplayName ?: "LINKO Friend"; val receiverId = engineState.peerLinkoId?.let { "@${it.removePrefix("@")}" } ?: "@trusted_friend"
