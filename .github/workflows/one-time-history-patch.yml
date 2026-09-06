@@ -1,0 +1,37 @@
+name: One-time History Screen Patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-history:
+    if: github.event.head_commit.message != 'Wire real history screen into navigation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Replace placeholder history screen
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt')
+          text = path.read_text(encoding='utf-8')
+          old = '''@Composable fun SessionHistoryScreen() = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Session History", "Your verified LINKO session logs"); Spacer(Modifier.height(20.dp)); LinkoCard { Text("NO SESSION HISTORY", color = TextMuted, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)); Text("Completed sessions will be logged here with byte counters and peer timestamps.", color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono) } }'''
+          new = '@Composable fun SessionHistoryScreen() = RealSessionHistoryScreen()'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one history placeholder, found {count}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+      - name: Remove one-time workflow and commit
+        run: |
+          rm -f .github/workflows/one-time-history-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt .github/workflows/one-time-history-patch.yml
+          git commit -m "Wire persistent history UI to app" 
+          git push origin main
