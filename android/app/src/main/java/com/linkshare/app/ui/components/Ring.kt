@@ -31,7 +31,7 @@ fun Ring(
     val interactionSource = remember { MutableInteractionSource() }
     val state = label?.uppercase()
     val live = state == "ONLINE" || state == "LIVE" || state == "CONNECTED" || state == "SHARING"
-    val effectiveIncomingFlow = incomingFlow || state == "ONLINE" || state == "CONNECTED"
+    val effectiveIncomingFlow = incomingFlow || state == "ONLINE" || state == "CONNECTED" || state == "SHARE INTERNET"
 
     Box(
         modifier = Modifier
