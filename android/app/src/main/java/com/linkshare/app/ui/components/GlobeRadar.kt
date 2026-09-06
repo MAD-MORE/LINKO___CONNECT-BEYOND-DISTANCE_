@@ -69,16 +69,19 @@ fun GlobeRadar(
         infiniteRepeatable(tween(if (readyRadar) 1600 else 2400, easing = LinearEasing), RepeatMode.Restart),
         label = "radar_pulse",
     )
+    // Keep packet motion visible but calm enough to read on the home screen.
     val flow by transition.animateFloat(
         0f,
         1f,
-        infiniteRepeatable(tween(if (activeFast) 230 else 760, easing = LinearEasing), RepeatMode.Restart),
+        infiniteRepeatable(tween(if (activeFast) 650 else 900, easing = LinearEasing), RepeatMode.Restart),
         label = "connection_flow",
     )
+    // The previous 240/620 ms loop made the entire ring appear to spin rapidly.
+    // A complete outer-ring revolution now takes 1.8–2.4 seconds.
     val fastSpin by transition.animateFloat(
         0f,
         360f,
-        infiniteRepeatable(tween(if (activeFast) 240 else 620, easing = LinearEasing), RepeatMode.Restart),
+        infiniteRepeatable(tween(if (activeFast) 1800 else 2400, easing = LinearEasing), RepeatMode.Restart),
         label = "fast_connection_spin",
     )
 
