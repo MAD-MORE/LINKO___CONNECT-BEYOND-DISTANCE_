@@ -39,6 +39,7 @@ import com.linkshare.app.network.LinkoFriendsApiHolder
 import com.linkshare.app.network.LinkoNotificationCenter
 import com.linkshare.app.network.LinkoRealtimeManager
 import com.linkshare.app.network.LinkoRuntime
+import com.linkshare.app.network.LinkoSessionHistoryStore
 import com.linkshare.app.ui.components.LinkoNetworkHealthBanner
 import com.linkshare.app.ui.components.LinkoRealtimeOverlay
 import com.linkshare.app.ui.components.LinkoUpdateStatusOverlay
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
         if (appUnlocked) runCatching {
             LinkoRealtimeManager.setForeground(true)
             LinkoNotificationCenter.start(this)
+            LinkoSessionHistoryStore.start(this)
         }
     }
 
