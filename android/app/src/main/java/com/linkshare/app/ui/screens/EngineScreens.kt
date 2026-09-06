@@ -107,7 +107,6 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
 
             Spacer(Modifier.height(28.dp))
 
-            // Hero Ring — directly opens the real internet-sharing/provider flow.
             GlassCard(accentColor = Green) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Spacer(Modifier.height(8.dp))
@@ -139,7 +138,6 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
 
-            // Receiver mode tile
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -163,7 +161,6 @@ fun HomeEngineScreen(onReceiver: () -> Unit, onProvider: () -> Unit) {
 
             Spacer(Modifier.height(10.dp))
 
-            // Provider mode tile
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
