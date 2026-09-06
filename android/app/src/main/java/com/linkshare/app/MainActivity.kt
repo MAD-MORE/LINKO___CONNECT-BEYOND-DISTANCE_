@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -72,7 +72,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LinkoTheme {
-                Box(Modifier.fillMaxSize()) {
+                // Keep LINKO content below the Android status bar so time, battery,
+                // signal and notification icons remain clearly visible on every device.
+                Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     LinkoNetworkHealthBanner()
                     if (::updateManager.isInitialized) {
                         val updateState by updateManager.state.collectAsStateWithLifecycle()
