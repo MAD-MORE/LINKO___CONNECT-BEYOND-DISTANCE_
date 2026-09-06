@@ -1,0 +1,73 @@
+name: LINKO One-Time Home UI Cleanup
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.event.head_commit.message != 'Remove Home engine status labels'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Remove Home-only engine labels
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt')
+          text = p.read_text(encoding='utf-8')
+          old = '''            // Header
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "LINKO ENGINE",
+                        color = Blue,
+                        fontSize = 11.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.2.sp
+                    )
+                    Text(
+                        displayName.uppercase(),
+                        color = TextPrimary,
+                        fontSize = 20.sp,
+                        fontFamily = JetBrainsMono,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                StatusChip("READY", Green)
+            }
+'''
+          new = '''            // Header: keep Home focused on the user and actions.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    displayName.uppercase(),
+                    color = TextPrimary,
+                    fontSize = 20.sp,
+                    fontFamily = JetBrainsMono,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+'''
+          if old not in text:
+              raise SystemExit('Expected Home header block was not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+      - name: Remove one-time cleanup workflow and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/one-time-home-ui-cleanup.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt .github/workflows/one-time-home-ui-cleanup.yml
+          git commit -m "Remove Home engine status labels"
+          git push origin HEAD:main
