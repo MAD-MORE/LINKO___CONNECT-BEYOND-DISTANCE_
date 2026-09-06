@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.JetBrainsMono
 import kotlin.math.abs
 import kotlin.math.cos
@@ -31,7 +32,7 @@ import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** LINKO globe/radar visualization: cool ice/ocean cyan-blue visual language. */
+/** LINKO globe/radar visualization. Ice/ocean styling is opt-in for the home ring only. */
 @Composable
 fun GlobeRadar(
     color: Color,
@@ -40,6 +41,7 @@ fun GlobeRadar(
     fast: Boolean = false,
     incomingFlow: Boolean = false,
     idle: Boolean = false,
+    iceOcean: Boolean = false,
 ) {
     val transition = rememberInfiniteTransition(label = "globe_radar")
     val normalizedLabel = label?.uppercase()
@@ -47,44 +49,25 @@ fun GlobeRadar(
     val activeFast = fast || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" ||
         normalizedLabel == "LINKING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING"
 
-    // Ice + ocean palette: no green on the home ring.
-    val ice = Color(0xFFE8FAFF)
-    val frost = Color(0xFF9DEBFF)
-    val ocean = Color(0xFF20BFEF)
-    val deepOcean = Color(0xFF087FB8)
-    val primary = ocean
+    val ice = if (iceOcean) Color(0xFFE8FAFF) else Color.White
+    val frost = if (iceOcean) Color(0xFF9DEBFF) else color.copy(alpha = 0.72f)
+    val ocean = if (iceOcean) Color(0xFF20BFEF) else color
+    val deepOcean = if (iceOcean) Color(0xFF087FB8) else Green
 
-    val rotation by transition.animateFloat(
-        -180f, 180f,
-        infiniteRepeatable(tween(if (activeFast) 1800 else if (readyRadar) 7200 else 9000, easing = LinearEasing), RepeatMode.Restart),
-        label = "globe_rotation",
-    )
-    val sweep by transition.animateFloat(
-        0f, 360f,
-        infiniteRepeatable(tween(if (activeFast) 900 else if (readyRadar) 1800 else 2600, easing = LinearEasing), RepeatMode.Restart),
-        label = "radar_sweep",
-    )
-    val radarPulse by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(if (readyRadar) 1800 else 2600, easing = LinearEasing), RepeatMode.Restart),
-        label = "radar_pulse",
-    )
-    val flow by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(if (activeFast) 650 else 900, easing = LinearEasing), RepeatMode.Restart),
-        label = "connection_flow",
-    )
-    val fastSpin by transition.animateFloat(
-        0f, 360f,
-        infiniteRepeatable(tween(if (activeFast) 1800 else 2400, easing = LinearEasing), RepeatMode.Restart),
-        label = "fast_connection_spin",
-    )
+    val rotation by transition.animateFloat(-180f, 180f,
+        infiniteRepeatable(tween(if (activeFast) 1800 else if (readyRadar) 7200 else 9000, easing = LinearEasing), RepeatMode.Restart), label = "globe_rotation")
+    val sweep by transition.animateFloat(0f, 360f,
+        infiniteRepeatable(tween(if (activeFast) 900 else if (readyRadar) 1800 else 2600, easing = LinearEasing), RepeatMode.Restart), label = "radar_sweep")
+    val radarPulse by transition.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(if (readyRadar) 1800 else 2600, easing = LinearEasing), RepeatMode.Restart), label = "radar_pulse")
+    val flow by transition.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(if (activeFast) 650 else 900, easing = LinearEasing), RepeatMode.Restart), label = "connection_flow")
+    val fastSpin by transition.animateFloat(0f, 360f,
+        infiniteRepeatable(tween(if (activeFast) 1800 else 2400, easing = LinearEasing), RepeatMode.Restart), label = "fast_connection_spin")
 
-    val outgoing = normalizedLabel == "SYNCING" || normalizedLabel == "REQUESTING" ||
-        normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING" ||
-        normalizedLabel == "SDP" || normalizedLabel == "ICE GATHERING" || normalizedLabel == "ICE CHECKING" ||
-        normalizedLabel == "NOMINATING" || normalizedLabel == "HANDSHAKE" || normalizedLabel == "TUNNEL" ||
-        normalizedLabel == "SHARING"
+    val outgoing = normalizedLabel == "SYNCING" || normalizedLabel == "REQUESTING" || normalizedLabel == "APPROVED" || normalizedLabel == "SIGNALING" ||
+        normalizedLabel == "SDP" || normalizedLabel == "ICE GATHERING" || normalizedLabel == "ICE CHECKING" || normalizedLabel == "NOMINATING" ||
+        normalizedLabel == "HANDSHAKE" || normalizedLabel == "TUNNEL" || normalizedLabel == "SHARING"
     val receiverNegotiating = incomingFlow || normalizedLabel == "CONNECTING" || normalizedLabel == "WAITING" || normalizedLabel == "LINKING"
     val connected = normalizedLabel == "CONNECTED" || normalizedLabel == "LIVE" || normalizedLabel == "ONLINE" || normalizedLabel == "SHARING"
     val packetFlow = normalizedLabel == "PACKET FLOW" || connected
