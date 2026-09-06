@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.event.head_commit.message != 'Remove Home engine status labels'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
@@ -19,8 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Remove Home-only engine labels
-        shell: python
-        run: |
+        run: python3 - <<'PY'
           from pathlib import Path
           p = Path('android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt')
           text = p.read_text(encoding='utf-8')
@@ -60,14 +58,14 @@ jobs:
           if old not in text:
               raise SystemExit('Expected Home header block was not found')
           p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
 
-      - name: Remove one-time cleanup workflow and commit
-        shell: bash
+      - name: Remove temporary workflow and trigger marker
         run: |
           set -euo pipefail
-          rm -f .github/workflows/one-time-home-ui-cleanup.yml
+          rm -f .github/workflows/one-time-home-ui-cleanup.yml tools/home-ui-cleanup-trigger.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt .github/workflows/one-time-home-ui-cleanup.yml
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt .github/workflows/one-time-home-ui-cleanup.yml tools/home-ui-cleanup-trigger.txt
           git commit -m "Remove Home engine status labels"
           git push origin HEAD:main
