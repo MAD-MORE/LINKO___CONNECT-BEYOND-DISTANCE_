@@ -1,7 +1,6 @@
 package com.linkshare.app.network
 
 import android.Manifest
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -25,12 +24,10 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
- * LINKO notification observer.
+ * User-facing LINKO notification center.
  *
- * This component is deliberately downstream of the connection engine. It may
- * display or persist state, but notification permission, NotificationManager
- * failures, or UI callback failures must never affect realtime, P2P, handshake,
- * or tunnel execution.
+ * This observer is strictly downstream of realtime/connection execution:
+ * notification failures can never fail the connection, VPN, or tunnel.
  */
 data class LinkoNotification(
     val id: String,
@@ -49,25 +46,33 @@ data class LinkoNotification(
         FRIEND_DECLINED,
         FRIEND_REMOVED,
         CONNECTION,
-        FRIEND_ONLINE,
-        FRIEND_OFFLINE,
         CONNECTION_CONNECTED,
         CONNECTION_FAILED,
+        CONNECTION_DISCONNECTED,
+        CONNECTION_RECONNECTING,
+        SHARING_STARTED,
+        SHARING_STOPPED,
+        INTERNET_UNAVAILABLE,
+        INTERNET_RESTORED,
+        VPN_PERMISSION_REQUIRED,
+        FRIEND_ONLINE,
+        FRIEND_OFFLINE,
+        SECURITY,
         REALTIME_ERROR,
     }
 }
 
 object LinkoNotificationCenter {
-    private const val CHANNEL_ID = "linko_request_alerts_v3"
-    private const val CHANNEL_NAME = "LINKO Requests"
+    private const val CHANNEL_ID = "linko_request_alerts_v4"
+    private const val CHANNEL_NAME = "LINKO Notifications"
     private const val BASE_NOTIFICATION_ID = 31_000
-    private const val DIAGNOSTIC_NOTIFICATION_ID = BASE_NOTIFICATION_ID + 70
     private const val MAX_ITEMS = 100
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _notifications = MutableStateFlow<List<LinkoNotification>>(emptyList())
     private val knownFriends = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val lastPresence = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val lastEngineNotification = java.util.concurrent.ConcurrentHashMap<String, String>()
     val notifications: StateFlow<List<LinkoNotification>> = _notifications.asStateFlow()
 
     @Volatile private var started = false
@@ -80,37 +85,31 @@ object LinkoNotificationCenter {
             started = true
             appContext = context.applicationContext
             runCatching { ensureChannel() }
-                .onFailure { android.util.Log.w("LINKO_NOTIFICATIONS", "Channel setup failed: ${it.message}") }
 
             scope.launch {
                 runCatching { refreshFriendCache() }
-                    .onFailure { android.util.Log.w("LINKO_NOTIFICATIONS", "Friend cache refresh failed: ${it.message}") }
                 runCatching {
                     LinkoRealtimeManager.events.collect { event ->
                         runCatching { handle(event) }
                             .onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Realtime observer failed", error) }
                     }
-                }.onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Realtime notification observer stopped", error) }
+                }.onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Realtime observer stopped", error) }
             }
 
-            // The connection engine is the only source of truth for connection state.
-            // Notifications observe its state rather than deriving connection status
-            // independently from raw realtime session events.
             scope.launch {
                 runCatching {
                     LinkoEngineBridge.connection.collect { state ->
                         runCatching { handleEngineState(state) }
                             .onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Engine observer failed", error) }
                     }
-                }.onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Engine notification observer stopped", error) }
+                }.onFailure { error -> android.util.Log.e("LINKO_NOTIFICATIONS", "Engine observer stopped", error) }
             }
         }
     }
 
     fun add(item: LinkoNotification) {
-        val current = _notifications.value
-        if (current.any { it.id == item.id }) return
-        _notifications.value = (listOf(item) + current).take(MAX_ITEMS)
+        if (_notifications.value.any { it.id == item.id }) return
+        _notifications.value = (listOf(item) + _notifications.value).take(MAX_ITEMS)
     }
 
     fun remove(id: String) {
@@ -133,32 +132,32 @@ object LinkoNotificationCenter {
                 add(LinkoNotification("friend-request:${event.requestId}", "New Friend Request", "$name wants to be your LINKO friend.", LinkoNotification.Kind.FRIEND_REQUEST_INCOMING, event.requestId, actorUserId, name))
                 safePost { postFriendRequestNotification(event.requestId, name) }
             }
-            is LinkoRealtimeEvent.FriendRequestSent -> add(LinkoNotification("friend-sent:${event.requestId}", "Friend Request Sent", "Your LINKO friend request was sent and is waiting for a response.", LinkoNotification.Kind.FRIEND_REQUEST_SENT, event.requestId))
+            is LinkoRealtimeEvent.FriendRequestSent -> add(LinkoNotification("friend-sent:${event.requestId}", "Friend Request Sent", "Your LINKO friend request is waiting for a response.", LinkoNotification.Kind.FRIEND_REQUEST_SENT, event.requestId))
             is LinkoRealtimeEvent.FriendRequestAccepted -> {
-                add(LinkoNotification("friend-accepted:${event.requestId}", "Friend Request Accepted", "Your LINKO friend request was accepted. You can now connect and share internet.", LinkoNotification.Kind.FRIEND_ACCEPTED, event.requestId))
-                safePost { postSimpleNotification("Friend Request Accepted", "Your LINKO friend request was accepted.") }
+                add(LinkoNotification("friend-accepted:${event.requestId}", "Friend Request Accepted", "You can now connect and share Internet with this friend.", LinkoNotification.Kind.FRIEND_ACCEPTED, event.requestId))
+                safePost { postSimpleNotification("Friend Request Accepted", "You can now connect with this friend.") }
                 refreshFriendCache()
             }
             is LinkoRealtimeEvent.FriendRequestDeclined -> {
                 add(LinkoNotification("friend-declined:${event.requestId}", "Friend Request Declined", "Your LINKO friend request was declined.", LinkoNotification.Kind.FRIEND_DECLINED, event.requestId))
                 safePost { postSimpleNotification("Friend Request Declined", "Your LINKO friend request was declined.") }
             }
-            is LinkoRealtimeEvent.PresenceChanged -> handlePresence(event.presence)
             is LinkoRealtimeEvent.FriendRemoved -> {
                 add(LinkoNotification("friend-removed:${event.requestId}", "Friend Removed", "A LINKO friendship was removed.", LinkoNotification.Kind.FRIEND_REMOVED, event.requestId))
                 refreshFriendCache()
             }
+            is LinkoRealtimeEvent.PresenceChanged -> handlePresence(event.presence)
             is LinkoRealtimeEvent.IncomingConnectionRequest -> {
                 val name = event.peerName?.takeIf { it.isNotBlank() } ?: "A trusted friend"
                 add(LinkoNotification("connection-request:${event.sessionId}", "Incoming Connection Request", "$name wants to use your LINKO Internet connection.", LinkoNotification.Kind.CONNECTION, event.sessionId, actorName = name))
                 safePost { postSimpleNotification("Incoming LINKO Connection", "$name wants to connect to your Internet.", BASE_NOTIFICATION_ID + event.sessionId.hashCode().absoluteValueSafe()) }
             }
-            // Intentionally ignored: connection status is sourced from LinkoEngineBridge.connection.
-            // This prevents a second raw-realtime state machine from producing conflicting status.
+            // Raw session state is deliberately ignored here. The engine is the single
+            // source of truth for connection lifecycle notifications.
             is LinkoRealtimeEvent.SessionStateChanged -> Unit
             is LinkoRealtimeEvent.TransportError -> {
-                val message = event.message.ifBlank { "LINKO realtime service was interrupted. Reconnecting…" }
-                add(LinkoNotification("realtime-error:${message.hashCode()}", "LINKO Connection Service", message, LinkoNotification.Kind.REALTIME_ERROR))
+                val message = event.message.ifBlank { "LINKO connection service was interrupted. Reconnecting…" }
+                addOnce("realtime-error:${message.hashCode()}", "LINKO Connection Service", message, LinkoNotification.Kind.REALTIME_ERROR)
                 safePost { postSimpleNotification("LINKO Connection Service", message, BASE_NOTIFICATION_ID + 90) }
             }
             else -> Unit
@@ -167,22 +166,38 @@ object LinkoNotificationCenter {
 
     private fun handleEngineState(state: LinkoEngineConnectionState) {
         val sessionId = state.sessionId ?: return
-        when (state.phase) {
-            LinkoConnectionPhase.Connected -> {
-                add(LinkoNotification("engine-session:$sessionId:connected", "LINKO Connected", state.detail, LinkoNotification.Kind.CONNECTION_CONNECTED, sessionId, actorName = state.peerDisplayName))
-                safePost { postSimpleNotification("LINKO Connected", state.detail, BASE_NOTIFICATION_ID + 60) }
+        val detail = state.detail.trim()
+        val phase = state.phase
+        val normalized = "${phase.name}|$detail|${state.error.orEmpty()}".lowercase()
+        if (detail.isBlank() && phase == LinkoConnectionPhase.Idle) return
+
+        when {
+            phase == LinkoConnectionPhase.Connected && state.isProvider -> {
+                addOnce("engine:$sessionId:sharing-started", "Internet Sharing Started", state.detail.ifBlank { "Your Internet connection is now being shared securely." }, LinkoNotification.Kind.SHARING_STARTED, sessionId, state.peerDisplayName)
+                safePost { postSimpleNotification("LINKO Sharing Started", state.detail.ifBlank { "Your Internet connection is being shared." }, BASE_NOTIFICATION_ID + 60) }
             }
-            LinkoConnectionPhase.Failed -> {
-                val message = state.error?.takeIf { it.isNotBlank() } ?: state.detail
-                add(LinkoNotification("engine-session:$sessionId:failed", "LINKO Connection Failed", message, LinkoNotification.Kind.CONNECTION_FAILED, sessionId, actorName = state.peerDisplayName))
+            phase == LinkoConnectionPhase.Connected -> {
+                addOnce("engine:$sessionId:connected", "LINKO Connected", state.detail.ifBlank { "Internet sharing is active." }, LinkoNotification.Kind.CONNECTION_CONNECTED, sessionId, state.peerDisplayName)
+                safePost { postSimpleNotification("LINKO Connected", state.detail.ifBlank { "Internet sharing is active." }, BASE_NOTIFICATION_ID + 60) }
+            }
+            phase == LinkoConnectionPhase.Failed -> {
+                val message = state.error?.takeIf { it.isNotBlank() } ?: state.detail.ifBlank { "The LINKO connection could not be established." }
+                addOnce("engine:$sessionId:failed", "LINKO Connection Failed", message, LinkoNotification.Kind.CONNECTION_FAILED, sessionId, state.peerDisplayName)
                 safePost { postSimpleNotification("LINKO Connection Failed", message, BASE_NOTIFICATION_ID + 61) }
             }
-            else -> {
-                if (state.detail != "Ready") {
-                    add(LinkoNotification("engine-session:$sessionId:${state.phase}", "LINKO · ${state.phase.name.replace('_', ' ')}", state.detail, LinkoNotification.Kind.CONNECTION, sessionId, actorName = state.peerDisplayName))
-                }
-            }
+            normalized.contains("reconnecting") -> addOnce("engine:$sessionId:reconnecting", "Reconnecting to LINKO", detail.ifBlank { "LINKO is trying to restore the connection." }, LinkoNotification.Kind.CONNECTION_RECONNECTING, sessionId, state.peerDisplayName)
+            normalized.contains("disconnected") || normalized.contains("stopped") || normalized.contains("revoked") -> addOnce("engine:$sessionId:disconnected", "LINKO Disconnected", detail.ifBlank { "The LINKO connection has ended." }, LinkoNotification.Kind.CONNECTION_DISCONNECTED, sessionId, state.peerDisplayName)
+            normalized.contains("internet_unavailable") || normalized.contains("internet unavailable") || normalized.contains("no internet") -> addOnce("engine:$sessionId:internet-unavailable", "Internet Unavailable", detail.ifBlank { "LINKO cannot share Internet until the connection is restored." }, LinkoNotification.Kind.INTERNET_UNAVAILABLE, sessionId, state.peerDisplayName)
+            normalized.contains("internet_restored") || normalized.contains("internet restored") -> addOnce("engine:$sessionId:internet-restored", "Internet Restored", detail.ifBlank { "Internet connectivity is available again." }, LinkoNotification.Kind.INTERNET_RESTORED, sessionId, state.peerDisplayName)
+            normalized.contains("vpn_permission") || normalized.contains("vpn permission") -> addOnce("engine:$sessionId:vpn-permission", "VPN Permission Needed", detail.ifBlank { "Allow LINKO VPN access to start Internet sharing." }, LinkoNotification.Kind.VPN_PERMISSION_REQUIRED, sessionId, state.peerDisplayName)
+            phase != LinkoConnectionPhase.Idle && detail.isNotBlank() -> addOnce("engine:$sessionId:${phase.name}:$detail", "LINKO · ${phase.name.replace('_', ' ')}", detail, LinkoNotification.Kind.CONNECTION, sessionId, state.peerDisplayName)
         }
+    }
+
+    private fun addOnce(id: String, title: String, message: String, kind: LinkoNotification.Kind, requestId: String? = null, actorName: String? = null) {
+        val key = id
+        if (lastEngineNotification.putIfAbsent(key, message) != null) return
+        add(LinkoNotification(key, title, message, kind, requestId, actorName = actorName))
     }
 
     private suspend fun handlePresence(presence: LinkoPresence) {
@@ -268,7 +283,7 @@ object LinkoNotificationCenter {
     }
 
     private fun safePost(block: () -> Unit) {
-        runCatching { block() }.onFailure { error -> android.util.Log.w("LINKO_NOTIFICATIONS", "Notification observer side effect failed: ${error.message}") }
+        runCatching { block() }.onFailure { error -> android.util.Log.w("LINKO_NOTIFICATIONS", "Notification side effect failed: ${error.message}") }
     }
 
     private fun notificationsAllowed(context: Context): Boolean = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -280,7 +295,7 @@ object LinkoNotificationCenter {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Incoming LINKO friend requests and connection diagnostics"
+            description = "LINKO friend requests and important connection updates"
             enableVibration(true)
         })
     }
