@@ -10,10 +10,21 @@ const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 1000);
 const SESSION_TTL = Number(process.env.SESSION_TTL_MS ?? 120000);
 const ADMIN_TOKEN = process.env.RELAY_ADMIN_TOKEN ?? '';
 
-// Wire format: ASCII control frames followed by opaque encrypted payloads.
+// Control frames:
 // HELLO|sessionId|token|role
 // PING|sessionId|token|role
-// DATA|sessionId|token|role|<opaque bytes>
+// DATA|sessionId|token|role|<opaque encrypted payload>
+//
+// LINKO v2 encrypted tunnel frames are also accepted directly after HELLO.
+// They already contain the session id and sender role in their authenticated header,
+// so the relay can forward them unchanged without wrapping or decrypting them.
+const LINKO_MAGIC = Buffer.from([0x4c, 0x4b, 0x4f, 0x32]);
+const LINKO_VERSION = 0x02;
+const LINKO_SESSION_OFFSET = 5;
+const LINKO_SESSION_LEN = 36;
+const LINKO_ROLE_OFFSET = 73;
+const LINKO_HEADER_LEN = 95;
+const LINKO_TAG_LEN = 16;
 const registry = new SessionRegistry(SESSION_TTL, MAX_SESSIONS);
 const startedAt = Date.now();
 const socket = dgram.createSocket('udp4');
@@ -38,8 +49,35 @@ function frame(command: string, sessionId: string, payload = Buffer.alloc(0)): B
   return Buffer.concat([Buffer.from(`${command}|${sessionId}|`), payload]);
 }
 
+function parseLinkoFrame(packet: Buffer): { sessionId: string; role: PeerRole } | null {
+  if (packet.length < LINKO_HEADER_LEN + LINKO_TAG_LEN) return null;
+  if (!packet.subarray(0, LINKO_MAGIC.length).equals(LINKO_MAGIC)) return null;
+  if (packet[4] !== LINKO_VERSION) return null;
+  const sessionId = packet.subarray(LINKO_SESSION_OFFSET, LINKO_SESSION_OFFSET + LINKO_SESSION_LEN).toString('ascii');
+  if (!/^[0-9a-fA-F-]{36}$/.test(sessionId)) return null;
+  const roleCode = packet[LINKO_ROLE_OFFSET];
+  const role = roleCode === 1 ? 'provider' : roleCode === 2 ? 'receiver' : null;
+  if (!role) return null;
+  return { sessionId, role };
+}
+
 socket.on('message', (packet, remote) => {
   if (packet.length > MAX_PACKET) return;
+
+  const linkoFrame = parseLinkoFrame(packet);
+  if (linkoFrame) {
+    const session = registry.get(linkoFrame.sessionId);
+    if (!session || !registry.isBoundTo(session, linkoFrame.role, remote)) return;
+    registry.touch(session, linkoFrame.role, remote);
+    const destination = registry.peerFor(session, linkoFrame.role);
+    if (!destination) return;
+    session.bytesForwarded += packet.length;
+    session.packetsForwarded++;
+    // Opaque AES-GCM tunnel frame: forward byte-for-byte. The relay never decrypts it.
+    socket.send(packet, destination.port, destination.address);
+    return;
+  }
+
   const message = splitControl(packet);
   if (!message) return;
 
