@@ -133,7 +133,7 @@ fun RedesignedReceiverScreen(onStarted: () -> Unit) {
             friends = buildList {
                 for (i in 0 until array.length()) {
                     val o = array.optJSONObject(i) ?: continue
-                    add(FriendSearchResult(o.optString("user_id"), o.optString("linko_id"), o.optString("display_name").ifBlank { "LINKO Friend" }, null, null, o.optBoolean("is_sharing", false), "friend", null, o.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() }))
+                    add(FriendSearchResult(o.optString("user_id"), o.optString("linko_id"), o.optString("display_name").ifBlank { "LINKO Friend" }, null, null, o.optBoolean("is_sharing", false), o.optBoolean("is_online", false), "friend", null, o.optString("username").trim().removePrefix("@").takeIf { it.isNotBlank() }))
                 }
             }
             error = null
