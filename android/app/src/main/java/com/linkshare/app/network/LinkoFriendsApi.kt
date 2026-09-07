@@ -37,7 +37,7 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
     }
 
     suspend fun friends(): JSONObject = withContext(Dispatchers.IO) {
-        runCatching { callRpc("linko_get_friends", JSONObject()) }.getOrElse {
+        val result = runCatching { callRpc("linko_get_friends", JSONObject()) }.getOrElse {
             val friendsJson = get("/friends")
             val friends = friendsJson.optJSONArray("friends") ?: JSONArray()
             val requestsJson = get("/requests")
@@ -54,6 +54,24 @@ class LinkoFriendsApi(private val accessTokenProvider: () -> String?) {
             }
             JSONObject(friendsJson.toString()).put("friends", friends)
         }
+
+        // The friends list is the UI's source of truth, but presence must come from the
+        // device control plane, not from a stale profile snapshot. Refresh every friend's
+        // provider heartbeat before returning the list. If the presence RPC is unavailable,
+        // retain the backend value so a transient network failure does not hide friends.
+        val array = result.optJSONArray("friends") ?: JSONArray()
+        for (i in 0 until array.length()) {
+            val friend = array.optJSONObject(i) ?: continue
+            val userId = friend.optString("user_id").trim()
+            if (userId.isBlank()) continue
+            runCatching { LinkoDeviceControlApi(android.app.Application()).providerDeviceForUser(userId) }
+                .onSuccess { provider ->
+                    friend.put("is_online", provider.online)
+                    friend.put("last_seen_at", provider.lastSeenAt)
+                    if (provider.deviceId.isNotBlank()) friend.put("device_id", provider.deviceId)
+                }
+        }
+        result.put("friends", array)
     }
 
     suspend fun requests(): JSONObject = withContext(Dispatchers.IO) { runCatching { callRpc("linko_get_friend_requests", JSONObject()) }.getOrElse { get("/requests") } }
