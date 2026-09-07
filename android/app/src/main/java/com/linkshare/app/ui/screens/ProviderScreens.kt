@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.CircularProgressIndicator
@@ -181,7 +183,13 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
         else -> Blue
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Spacer(Modifier.height(8.dp))
         Text("READY TO SHARE", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(4.dp))
@@ -264,19 +272,45 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                     }
                     Text("● LIVE", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 }
-                Spacer(Modifier.height(8.dp))
-                Text("Direct encrypted P2P connection is established. Internet sharing is active.", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
+                Spacer(Modifier.height(10.dp))
+                Text("CONNECTION DETAILS", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("PEER", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text(engineConnection.peerDisplayName ?: "LINKO Friend", color = TextPrimary, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                        Text("PEER ID", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text(engineConnection.peerLinkoId?.let { "@${it.removePrefix("@").takeLast(18)}" } ?: "UNKNOWN", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Text("OUT", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text("PATH", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text("DIRECT • ENCRYPTED", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                        Text("LATENCY", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text(if (engineConnection.latencyMs > 0) "${engineConnection.latencyMs} ms" else "MEASURING…", color = TextPrimary, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("TRAFFIC", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(5.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("OUT / SHARED", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                         Text("${engineConnection.bytesOut / 1024} KB", color = TextPrimary, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                     }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                        Text("IN", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                        Text("IN / CONTROL", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
                         Text("${engineConnection.bytesIn / 1024} KB", color = TextPrimary, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                     }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text("TOTAL ${formatProviderBytes(engineConnection.bytesIn + engineConnection.bytesOut)}", color = Green, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -305,8 +339,21 @@ fun ProviderReadyScreen(onIncomingRequest: () -> Unit) {
                 else -> "Preparing your LINKO provider…"
             }, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono)
         }
-        Spacer(Modifier.weight(1f))
-        Text("Your connection is never shared without your approval.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono)
         Spacer(Modifier.height(12.dp))
+        Text("Your connection is never shared without your approval.", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+private fun formatProviderBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> String.format(java.util.Locale.US, "%.2f GB", gb)
+        mb >= 1.0 -> String.format(java.util.Locale.US, "%.1f MB", mb)
+        kb >= 1.0 -> String.format(java.util.Locale.US, "%.1f KB", kb)
+        else -> "$bytes B"
     }
 }
