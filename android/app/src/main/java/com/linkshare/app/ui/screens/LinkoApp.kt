@@ -105,7 +105,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.Friends.route) {
                     FriendsScreen(
                         onFindFriends = { nav.navigate(Screen.FindFriends.route) },
-                        onFriendTap = { nav.navigate(Screen.FriendProfile.route) }
+                        // A friend tap means “connect through this friend”, so go straight to
+                        // the Receiver hub. FriendsScreen stores the tapped friend in the
+                        // shared selection before invoking this callback.
+                        onFriendTap = { nav.navigate(Screen.RxSelectFriend.route) }
                     )
                 }
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
