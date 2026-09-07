@@ -1,0 +1,145 @@
+name: LINKO one-time button loading patch
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: contains(github.event.head_commit.message, 'trigger button loading patch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch connection buttons
+        env:
+          FILE: android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt")
+          s = p.read_text()
+          helper = r'''
+
+private const val LINKO_BUTTON_TIMEOUT_MS = 20_000L
+
+@Composable
+private fun rememberTimedButtonLoading(timeoutMs: Long = LINKO_BUTTON_TIMEOUT_MS): androidx.compose.runtime.MutableState<Boolean> {
+    val loading = remember { mutableStateOf(false) }
+    LaunchedEffect(loading.value) {
+        if (loading.value) {
+            delay(timeoutMs)
+            loading.value = false
+        }
+    }
+    return loading
+}
+
+@Composable
+private fun LoadingActionButton(
+    label: String,
+    loadingLabel: String,
+    onClick: () -> Unit,
+    color: androidx.compose.ui.graphics.Color = Blue,
+    outline: Boolean = false
+) {
+    val loading = rememberTimedButtonLoading()
+    PrimaryButton(
+        label = if (loading.value) loadingLabel else label,
+        onClick = {
+            if (loading.value) return@PrimaryButton
+            loading.value = true
+            runCatching { onClick() }.onFailure { loading.value = false }
+        },
+        color = color,
+        outline = outline,
+        enabled = !loading.value,
+        loading = loading.value
+    )
+}
+'''
+          marker = '@Composable fun RxSelectFriendScreen('
+          if 'rememberTimedButtonLoading' not in s:
+              s = s.replace(marker, helper + '\n' + marker, 1)
+
+          replacements = {}
+          replacements['RxRequestScreen'] = r'''@Composable fun RxRequestScreen(onCancel: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Spacer(Modifier.weight(1f)); Ring(Yellow, 180.dp, pulse = true, label = "REQUEST"); Spacer(Modifier.height(24.dp)); Text("Connection Requested", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text("Your friend will receive a request and decide whether to share their connection", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono, textAlign = androidx.compose.ui.text.style.TextAlign.Center); Spacer(Modifier.weight(1f)); LoadingActionButton("CANCEL REQUEST", "CANCELLING…", { LinkoEngineBridge.disconnect(); onCancel() }, color = Red); Spacer(Modifier.height(24.dp))
+}'''
+          replacements['RxApprovedScreen'] = r'''@Composable fun RxApprovedScreen(onConnect: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Spacer(Modifier.height(20.dp)); Title("Request Approved", "Your friend accepted the connection"); Spacer(Modifier.height(28.dp)); Ring(Green, 180.dp, label = "APPROVED"); Spacer(Modifier.weight(1f)); LoadingActionButton("START CONNECTION", "STARTING CONNECTION…", onConnect, color = Green); Spacer(Modifier.height(24.dp))
+}'''
+          replacements['RxConnectingScreen'] = r'''@Composable fun RxConnectingScreen(onSkip: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Spacer(Modifier.weight(1f)); Ring(Blue, 190.dp, pulse = true, label = "LINKING"); Spacer(Modifier.height(24.dp)); Text("Securing Connection", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)); Text("Finding the safest available cryptographic path", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.weight(1f)); LoadingActionButton("CONTINUE", "CONTINUING…", onSkip); Spacer(Modifier.height(24.dp))
+}'''
+          replacements['ConnectedScreen'] = r'''@Composable fun ConnectedScreen(onDisconnect: () -> Unit, onQuality: () -> Unit) {
+    val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle(); val peerName = engineState.peerDisplayName ?: "LINKO Friend"; val peerId = engineState.peerLinkoId?.let { "@${it.removePrefix("@")}" } ?: "@trusted_peer"; val totalBytes = engineState.bytesIn + engineState.bytesOut
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(10.dp)); Title("Tunnel Connected", "Device internet is routing through your friend's network"); Spacer(Modifier.height(20.dp)); Ring(Green, 180.dp, pulse = true, label = "ONLINE"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Green) { InfoRow("PROVIDER PEER", "$peerName ($peerId)", "Sharing active internet gateway", Green); Spacer(Modifier.height(12.dp)); InfoRow("DATA TRANSFERRED", formatBytes(totalBytes), "Real-time encrypted traffic", Blue, true); Spacer(Modifier.height(12.dp)); InfoRow("TUNNEL SECURITY", "AES-256-GCM • 10.48.0.2", "End-to-end encrypted packet route", Green) }; Spacer(Modifier.weight(1f)); LoadingActionButton("NETWORK QUALITY", "OPENING QUALITY…", onQuality, outline = true); Spacer(Modifier.height(10.dp)); LoadingActionButton("DISCONNECT", "DISCONNECTING…", { LinkoEngineBridge.disconnect(); onDisconnect() }, color = Red); Spacer(Modifier.height(24.dp))
+    }
+}'''
+          replacements['ProviderAuthorizationScreen'] = r'''@Composable fun ProviderAuthorizationScreen(onAuthorize: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Authorize Access", "Approve friend's connection request"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Green) { InfoRow("PEER IDENTITY", "VERIFIED FRIEND", "Cryptographically signed identity", Green); Spacer(Modifier.height(14.dp)); InfoRow("ACCESS SCOPE", "INTERNET SHARING", "You can stop sharing at any second", Blue) }; Spacer(Modifier.weight(1f)); LoadingActionButton("AUTHORIZE & SHARE", "AUTHORIZING…", onAuthorize, color = Green); Spacer(Modifier.height(24.dp)) }'''
+          replacements['ProviderSharingSetupScreen'] = r'''@Composable fun ProviderSharingSetupScreen(onStart: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Sharing Setup", "Configuring device sharing gateway"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Green) { InfoRow("SHARING STATUS", "READY", "Waiting for friend connection handshake", Green) }; Spacer(Modifier.weight(1f)); LoadingActionButton("START SHARING NOW", "STARTING SHARING…", onStart, color = Green); Spacer(Modifier.height(24.dp)) }'''
+          replacements['ProviderSharingActiveScreen'] = r'''@Composable fun ProviderSharingActiveScreen(onLiveUsage: () -> Unit, onStop: () -> Unit) {
+    val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle(); val receiverName = engineState.peerDisplayName ?: "LINKO Friend"; val receiverId = engineState.peerLinkoId?.let { "@${it.removePrefix("@")}" } ?: "@connected_friend"; val totalShared = engineState.bytesIn + engineState.bytesOut
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spacer(Modifier.height(10.dp)); Title("Sharing Active", "Your connection is actively shared with your friend"); Spacer(Modifier.height(20.dp)); Ring(Green, 180.dp, pulse = true, label = "SHARING"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Green) { InfoRow("CONNECTED PEER", "$receiverName ($receiverId)", "Using your network gateway", Green, true); Spacer(Modifier.height(12.dp)); InfoRow("TOTAL DATA SHARED", formatBytes(totalShared), "Throughput allocated to peer", Blue, true); Spacer(Modifier.height(12.dp)); InfoRow("ACCESS CONTROL", "MUTUALLY TRUSTED", "You can disconnect anytime", Green) }; Spacer(Modifier.weight(1f)); LoadingActionButton("LIVE USAGE", "OPENING USAGE…", onLiveUsage, outline = true); Spacer(Modifier.height(10.dp)); LoadingActionButton("STOP SHARING", "STOPPING SHARING…", onStop, color = Red); Spacer(Modifier.height(24.dp)) }
+}'''
+          replacements['ProviderLiveUsageScreen'] = r'''@Composable fun ProviderLiveUsageScreen(onKill: () -> Unit) {
+    val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle(); val receiverName = engineState.peerDisplayName ?: "LINKO Friend"; val receiverId = engineState.peerLinkoId?.let { "@${it.removePrefix("@")}" } ?: "@connected_friend"
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Live Provider Usage", "Current provider packet throughput"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Blue) { InfoRow("ACTIVE PEER", "$receiverName ($receiverId)", "Real-time provider stream", Green); Spacer(Modifier.height(14.dp)); InfoRow("DOWNLOAD FROM INTERNET", formatBytes(engineState.bytesIn), "Data fetched for peer", TextPrimary, true); Spacer(Modifier.height(14.dp)); InfoRow("UPLOAD TO PEER", formatBytes(engineState.bytesOut), "Data forwarded to peer", Blue, true) }; Spacer(Modifier.weight(1f)); LoadingActionButton("DISCONNECT FRIEND", "DISCONNECTING FRIEND…", onKill, color = Red); Spacer(Modifier.height(24.dp)) }
+}'''
+          replacements['RxDirectPathScreen'] = r'''@Composable fun RxDirectPathScreen(onContinue: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    Spacer(Modifier.height(10.dp)); Title("Direct Peer Path", "A low-latency P2P tunnel is established"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Green) { InfoRow("PATH", "DIRECT P2P", "Direct encrypted UDP connection", Green); Spacer(Modifier.height(14.dp)); InfoRow("ENCRYPTION", "AES-256-GCM", "Authenticated peer session", Green) }; Spacer(Modifier.weight(1f)); LoadingActionButton("ENTER CONNECTED SESSION", "OPENING SESSION…", onContinue, color = Green); Spacer(Modifier.height(24.dp))
+}'''
+          replacements['RxRelayFallbackScreen'] = r'''@Composable fun RxRelayFallbackScreen(onContinue: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    Spacer(Modifier.height(10.dp)); Title("Relay Fallback", "Direct path unavailable; relay tunnel active"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Yellow) { InfoRow("PATH", "SECURE RELAY", "Traffic routed via zero-knowledge relay", Yellow); Spacer(Modifier.height(14.dp)); InfoRow("TUNNEL STATUS", "PROTECTED", "End-to-end encrypted packet tunnel", Green) }; Spacer(Modifier.weight(1f)); LoadingActionButton("CONTINUE TO SESSION", "OPENING SESSION…", onContinue, color = Yellow); Spacer(Modifier.height(24.dp))
+}'''
+          replacements['ConnectionLostScreen'] = r'''@Composable fun ConnectionLostScreen(onReconnect: () -> Unit, onHome: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spacer(Modifier.weight(1f)); Ring(Red, 170.dp, pulse = true, label = "LOST"); Spacer(Modifier.height(20.dp)); Text("Connection Interrupted", color = TextPrimary, fontSize = 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)); Text("The secure peer tunnel was closed or timed out", color = TextSub, fontSize = 13.sp, fontFamily = JetBrainsMono); Spacer(Modifier.weight(1f)); LoadingActionButton("RECONNECT", "RECONNECTING…", onReconnect, color = Blue); Spacer(Modifier.height(10.dp)); LoadingActionButton("RETURN HOME", "OPENING HOME…", onHome, outline = true); Spacer(Modifier.height(24.dp)) }'''
+          replacements['SessionExpiredScreen'] = r'''@Composable fun SessionExpiredScreen(onNewSession: () -> Unit, onHome: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Session Expired", "This connection session is no longer active"); Spacer(Modifier.weight(1f)); LoadingActionButton("START NEW SESSION", "STARTING SESSION…", onNewSession); Spacer(Modifier.height(10.dp)); LoadingActionButton("HOME", "OPENING HOME…", onHome, outline = true); Spacer(Modifier.height(24.dp)) }'''
+          replacements['KeyRevokedScreen'] = r'''@Composable fun KeyRevokedScreen(onHome: () -> Unit) = Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) { Spacer(Modifier.height(10.dp)); Title("Device Session Revoked", "Security keys have rotated"); Spacer(Modifier.height(20.dp)); GlassCard(accentColor = Red) { InfoRow("SESSION", "REVOKED", "Previous session credentials are no longer accepted", Red, true) }; Spacer(Modifier.weight(1f)); LoadingActionButton("RETURN TO HOME", "OPENING HOME…", onHome); Spacer(Modifier.height(24.dp)) }'''
+
+          for name, newfunc in replacements.items():
+              pattern = re.compile(r'@Composable fun ' + re.escape(name) + r'\b[\s\S]*?(?=\n@Composable fun |\Z)')
+              if not pattern.search(s):
+                  raise SystemExit(f"missing function {name}")
+              s, n = pattern.subn(newfunc, s, count=1)
+              if n != 1:
+                  raise SystemExit(f"failed replacement {name}")
+
+          timeout_patch = r'''
+
+    LaunchedEffect(connectingUserId) {
+        val activeId = connectingUserId ?: return@LaunchedEffect
+        delay(LINKO_BUTTON_TIMEOUT_MS)
+        if (connectingUserId == activeId) {
+            LinkoEngineBridge.disconnect()
+            message = "Connection timed out. You can try again."
+            connectingUserId = null
+        }
+    }
+'''
+          anchor = '    var connectingUserId by remember { mutableStateOf<String?>(null) }\n'
+          if timeout_patch.strip() not in s:
+              if anchor not in s:
+                  raise SystemExit('connectingUserId anchor missing')
+              s = s.replace(anchor, anchor + timeout_patch, 1)
+          p.write_text(s)
+          PY
+      - name: Verify patch
+        run: |
+          grep -n "rememberTimedButtonLoading\|LINKO_BUTTON_TIMEOUT_MS\|STARTING CONNECTION…\|STOPPING SHARING…" android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt
+      - name: Compile Android app
+        working-directory: android
+        run: ./gradlew :app:compileDebugKotlin :app:compileReleaseKotlin --no-daemon
+      - name: Commit patch and self-delete workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt
+          git commit -m "fix(android): recover connection button loading states [skip-button-loading-patch]"
+          git push origin main
+          git rm .github/workflows/one-time-button-loading.yml
+          git commit -m "chore: remove one-time button loading patch [skip-button-loading-patch]"
+          git push origin main
