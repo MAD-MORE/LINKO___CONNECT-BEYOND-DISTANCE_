@@ -99,8 +99,6 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
 
-                // Unified home now owns the connection state, recovery UX, live session summary,
-                // security status and fast paths into friends/history/notifications/settings.
                 composable(Screen.HomeEngine.route) {
                     LinkoHomeExperienceScreen(
                         onFriends = { nav.navigate(Screen.Friends.route) },
@@ -185,8 +183,7 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
 @Composable private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
     val activeTab = activeNavTab(route)
     val notifications by LinkoNotificationCenter.notifications.collectAsState()
-    val hasIncomingConnection = LinkoRealtimeManager.lastIncomingConnectionRequestId != null
-    val unreadNotificationCount = notifications.size
+    val notificationCount = notifications.size
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -194,7 +191,7 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
     ) {
         bottomNavItems.forEach { item ->
             val selected = activeTab == item.route
-            val showBadge = (item == BottomNavItem.Notifications && (unreadNotificationCount > 0 || hasIncomingConnection))
+            val showBadge = item == BottomNavItem.Notifications && notificationCount > 0
             Box(
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(if (selected) Blue.copy(alpha = .14f) else GradientMid.copy(alpha = .55f)).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { nav.navigate(item.route) { launchSingleTop = true; restoreState = true } }.padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
