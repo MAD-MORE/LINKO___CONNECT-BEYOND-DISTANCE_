@@ -120,7 +120,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.RxRequest.route) { RxRequestScreen { nav.popBackStack() } }
                 composable(Screen.RxWaiting.route) { RxWaitingScreen { nav.popBackStack() } }
                 composable(Screen.RxApproved.route) { RxApprovedScreen { nav.navigate(Screen.RxConnecting.route) } }
-                composable(Screen.RxConnecting.route) { ConnectionStatusScreen(onConnected = { nav.navigate(Screen.Connected.route) }, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
+                composable(Screen.RxConnecting.route) { ConnectionStatusScreen(onConnected = {}, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } } }, { nav.navigate(Screen.NetworkQuality.route) }) }
@@ -132,7 +132,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { if (it == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
-                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { nav.navigate(Screen.HomeEngine.route) } }
+                composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { nav.navigate(Screen.ProviderSharingActive.route) } }
                 composable(Screen.ProviderSharingActive.route) { ProviderSharingActiveScreen({ nav.navigate(Screen.ProviderLiveUsage.route) }, { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) }) }
                 composable(Screen.ProviderLiveUsage.route) { ProviderLiveUsageScreen { LinkoEngineBridge.disconnect(); nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.ConnectionLost.route) { ConnectionLostScreen({ nav.navigate(Screen.Reconnecting.route) }, { nav.navigate(Screen.HomeEngine.route) }) }
