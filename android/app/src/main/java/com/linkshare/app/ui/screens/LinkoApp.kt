@@ -150,6 +150,10 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
         }
         if (!onboarding) BottomNav(route, nav)
     }
+
+    // Global process feedback: engine state drives this once for every screen/process.
+    // The modal is non-blocking for terminal states and cannot create a second connection job.
+    LinkoProcessModalHost()
 }
 
 @Composable private fun AppBar(title: String, onBack: () -> Unit) {
@@ -178,33 +182,29 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
     var hasIncomingConnection by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { LinkoRealtimeManager.events.collect { event -> when (event) {
         is LinkoRealtimeEvent.FriendRequestReceived -> friendRequestCount += 1
-        is LinkoRealtimeEvent.FriendRequestAccepted, is LinkoRealtimeEvent.FriendRequestDeclined, is LinkoRealtimeEvent.FriendRemoved -> friendRequestCount = (friendRequestCount - 1).coerceAtLeast(0)
         is LinkoRealtimeEvent.IncomingConnectionRequest -> hasIncomingConnection = true
-        is LinkoRealtimeEvent.SessionStateChanged -> hasIncomingConnection = event.state == "requested"
         else -> Unit
     } } }
-    val isSharingLive = engineState.phase == LinkoConnectionPhase.Connected
-    Surface(Modifier.fillMaxWidth().navigationBarsPadding(), color = GradientMid.copy(alpha = .96f), tonalElevation = 0.dp) {
-        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceAround) {
-            bottomNavItems.forEach { item ->
-                val selected = activeTab == item.label
-                val activeColor = if (item == BottomNavItem.Friends) Green else Blue
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(if (selected) activeColor.copy(alpha = .13f) else androidx.compose.ui.graphics.Color.Transparent).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { if (!selected) nav.navigate(item.route) { popUpTo(Screen.HomeEngine.route); launchSingleTop = true } }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(Modifier.width(if (selected) 22.dp else 0.dp).height(2.5.dp).clip(RoundedCornerShape(2.dp)).background(if (selected) activeColor else androidx.compose.ui.graphics.Color.Transparent))
-                        Spacer(Modifier.height(3.dp))
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(if (selected) item.iconFilled else item.iconOutlined, item.label, tint = if (selected) activeColor else TextSub, modifier = Modifier.size(21.dp))
-                            when (item) {
-                                BottomNavItem.Notifications -> { val count = friendRequestCount + if (hasIncomingConnection) 1 else 0; if (count > 0) NavBadge(count = count, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) }
-                                BottomNavItem.Home -> if (hasIncomingConnection) NavBadge(text = "⚡", color = Yellow, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp)) else if (isSharingLive) NavBadge(text = "LIVE", color = Green, modifier = Modifier.align(Alignment.TopEnd).offset(x = 14.dp, y = (-5).dp))
-                                BottomNavItem.Friends -> if (friendRequestCount > 0) NavBadge(count = friendRequestCount, color = Red, modifier = Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-5).dp))
-                                else -> Unit
-                            }
-                        }
-                        Spacer(Modifier.height(2.dp))
-                        Text(item.label, color = if (selected) activeColor else TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        bottomNavItems.forEach { item ->
+            val selected = activeTab == item.route
+            val showBadge = (item == BottomNavItem.Friends && friendRequestCount > 0) ||
+                (item == BottomNavItem.Notifications && hasIncomingConnection)
+            Box(
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(if (selected) Blue.copy(alpha = .14f) else GradientMid.copy(alpha = .55f)).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { nav.navigate(item.route) { launchSingleTop = true; restoreState = true } }.padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box {
+                        Icon(if (selected) item.iconFilled else item.iconOutlined, contentDescription = item.label, tint = if (selected) Blue else TextSub, modifier = Modifier.size(20.dp))
+                        if (showBadge) NavBadge()
                     }
+                    Spacer(Modifier.height(2.dp))
+                    Text(item.label, color = if (selected) Blue else TextSub, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }
