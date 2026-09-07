@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.with
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,11 +44,11 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.PrimaryButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -87,7 +86,6 @@ import com.linkshare.app.ui.theme.Green
 import com.linkshare.app.ui.theme.GreenSoft
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.Red
-import com.linkshare.app.ui.theme.Surface
 import com.linkshare.app.ui.theme.TextMuted
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
@@ -131,8 +129,13 @@ fun LinkoHomeExperienceScreen(
     val phase = state.phase
     val connected = phase == LinkoConnectionPhase.Connected && !providerActive
     val failed = phase == LinkoConnectionPhase.Failed
-    val recovering = phase == LinkoConnectionPhase.Reconnecting || phase.name.contains("Recover", ignoreCase = true)
-    val activeConnect = !connected && !failed && phase != LinkoConnectionPhase.Idle
+    val recovering = !failed && (
+        state.detail.contains("recover", ignoreCase = true) ||
+            state.detail.contains("reconnect", ignoreCase = true) ||
+            state.error?.contains("recover", ignoreCase = true) == true ||
+            state.error?.contains("reconnect", ignoreCase = true) == true
+        )
+    val activeConnect = !connected && !failed && !recovering && phase != LinkoConnectionPhase.Idle
 
     val mode = when {
         providerActive -> LinkoDashboardMode.Sharing
@@ -157,7 +160,6 @@ fun LinkoHomeExperienceScreen(
         health.score >= 40 -> Yellow
         else -> Red
     }
-
     val modeColor = when (mode) {
         LinkoDashboardMode.Ready -> Blue
         LinkoDashboardMode.Connecting -> Yellow
@@ -182,7 +184,6 @@ fun LinkoHomeExperienceScreen(
         LinkoDashboardMode.Failed -> state.error?.replace('_', ' ') ?: state.detail.ifBlank { "The connection could not be completed." }
         LinkoDashboardMode.Sharing -> "Your internet is available to trusted friends."
     }
-
     val ringLabel = when (mode) {
         LinkoDashboardMode.Ready -> "READY"
         LinkoDashboardMode.Connecting -> "LINKING"
@@ -200,13 +201,7 @@ fun LinkoHomeExperienceScreen(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("LINKO", color = Blue, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-                Text(
-                    auth.currentDisplayName().orEmpty().ifBlank { "YOUR CONNECTION" }.uppercase(),
-                    color = TextPrimary,
-                    fontSize = if (easyMode) 18.sp else 20.sp,
-                    fontFamily = JetBrainsMono,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text(auth.currentDisplayName().orEmpty().ifBlank { "YOUR CONNECTION" }.uppercase(), color = TextPrimary, fontSize = if (easyMode) 18.sp else 20.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TinyAction(Icons.Filled.Notifications, "Notifications", onNotifications)
@@ -217,13 +212,9 @@ fun LinkoHomeExperienceScreen(
         Spacer(Modifier.height(14.dp))
         AnimatedContent(
             targetState = mode,
-            transitionSpec = {
-                (fadeIn() + scaleIn(initialScale = 0.96f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f)).using(SizeTransform(clip = false))
-            },
+            transitionSpec = { (fadeIn() + scaleIn(initialScale = .96f)).togetherWith(fadeOut() + scaleOut(targetScale = 1.02f)).using(SizeTransform(clip = false)) },
             label = "dashboard-state",
-        ) { currentMode ->
-            DashboardHeader(currentMode, modeColor, modeTitle, modeSubtitle)
-        }
+        ) { currentMode -> DashboardHeader(currentMode, modeColor, modeTitle, modeSubtitle) }
 
         Spacer(Modifier.height(if (easyMode) 8.dp else 12.dp))
         Ring(
@@ -234,150 +225,88 @@ fun LinkoHomeExperienceScreen(
             fast = mode == LinkoDashboardMode.Connected || mode == LinkoDashboardMode.Sharing,
             incomingFlow = mode == LinkoDashboardMode.Connecting || mode == LinkoDashboardMode.Connected || mode == LinkoDashboardMode.Sharing,
             label = ringLabel,
-            onClick = {
-                if (mode == LinkoDashboardMode.Ready || mode == LinkoDashboardMode.Failed) showPowerSheet = true
-            },
+            onClick = { if (mode == LinkoDashboardMode.Ready || mode == LinkoDashboardMode.Failed) showPowerSheet = true },
         )
 
         Spacer(Modifier.height(10.dp))
-        PrimaryControl(
-            mode = mode,
-            busy = busy,
-            onClick = {
-                when (mode) {
-                    LinkoDashboardMode.Ready, LinkoDashboardMode.Failed -> showPowerSheet = true
-                    LinkoDashboardMode.Connected, LinkoDashboardMode.Sharing, LinkoDashboardMode.Connecting, LinkoDashboardMode.Recovering -> {
-                        if (!busy) {
-                            busy = true
-                            LinkoConnectionLifecycle.stop(context)
-                            LinkoProviderService.stop(context)
-                            scope.launch {
-                                kotlinx.coroutines.delay(250)
-                                busy = false
-                            }
-                        }
+        PrimaryControl(mode, busy, {
+            when (mode) {
+                LinkoDashboardMode.Ready, LinkoDashboardMode.Failed -> showPowerSheet = true
+                LinkoDashboardMode.Connected, LinkoDashboardMode.Sharing, LinkoDashboardMode.Connecting, LinkoDashboardMode.Recovering -> {
+                    if (!busy) {
+                        busy = true
+                        LinkoConnectionLifecycle.stop(context)
+                        LinkoProviderService.stop(context)
+                        scope.launch { kotlinx.coroutines.delay(250); busy = false }
                     }
                 }
-            },
-            color = modeColor,
-        )
+            }
+        }, modeColor)
 
         Spacer(Modifier.height(10.dp))
         AnimatedVisibility(visible = mode == LinkoDashboardMode.Ready && selectedFriend != null, enter = fadeIn(), exit = fadeOut()) {
-            FriendSummaryCard(
-                name = selectedFriend?.displayName.orEmpty(),
-                online = selectedFriend?.isOnline == true,
-                sharing = selectedFriend?.isSharing == true,
-                onChange = { showFriendSheet = true },
-            )
+            FriendSummaryCard(selectedFriend?.displayName.orEmpty(), selectedFriend?.isOnline == true, selectedFriend?.isSharing == true) { showFriendSheet = true }
         }
-
-        AnimatedVisibility(visible = mode == LinkoDashboardMode.Ready && selectedFriend == null, enter = fadeIn(), exit = fadeOut()) {
-            EmptyFriendCard { onFriends() }
-        }
-
-        AnimatedVisibility(visible = mode == LinkoDashboardMode.Connected, enter = fadeIn(), exit = fadeOut()) {
-            LiveCard(state, qualityText, qualityColor, onHistory)
-        }
-
-        AnimatedVisibility(visible = mode == LinkoDashboardMode.Connecting, enter = fadeIn(), exit = fadeOut()) {
-            ProgressCard(phase, state.detail, modeColor)
-        }
-
-        AnimatedVisibility(visible = mode == LinkoDashboardMode.Recovering, enter = fadeIn(), exit = fadeOut()) {
-            RecoveringCard()
-        }
-
+        AnimatedVisibility(visible = mode == LinkoDashboardMode.Ready && selectedFriend == null, enter = fadeIn(), exit = fadeOut()) { EmptyFriendCard(onFriends) }
+        AnimatedVisibility(visible = mode == LinkoDashboardMode.Connected, enter = fadeIn(), exit = fadeOut()) { LiveCard(state, qualityText, qualityColor, onHistory) }
+        AnimatedVisibility(visible = mode == LinkoDashboardMode.Connecting, enter = fadeIn(), exit = fadeOut()) { ProgressCard(phase, state.detail, modeColor) }
+        AnimatedVisibility(visible = mode == LinkoDashboardMode.Recovering, enter = fadeIn(), exit = fadeOut()) { RecoveringCard() }
         AnimatedVisibility(visible = mode == LinkoDashboardMode.Failed, enter = fadeIn(), exit = fadeOut()) {
-            FailureCard(
-                detail = state.error ?: state.detail,
-                onRetry = {
-                    if (selectedFriend != null && !busy) {
-                        busy = true
-                        LinkoEngineBridge.reconnect { result ->
-                            if (result == "connected" || result.startsWith("failed")) busy = false
-                        }
-                    } else {
-                        showPowerSheet = true
-                    }
-                },
-            )
+            FailureCard(state.error ?: state.detail) {
+                if (selectedFriend != null && !busy) {
+                    busy = true
+                    LinkoEngineBridge.reconnect { result -> if (result == "connected" || result.startsWith("failed")) busy = false }
+                } else showPowerSheet = true
+            }
         }
-
-        AnimatedVisibility(visible = mode == LinkoDashboardMode.Sharing, enter = fadeIn(), exit = fadeOut()) {
-            SharingCard(onStop = { LinkoProviderService.stop(context) })
-        }
+        AnimatedVisibility(visible = mode == LinkoDashboardMode.Sharing, enter = fadeIn(), exit = fadeOut()) { SharingCard { LinkoProviderService.stop(context) } }
 
         Spacer(Modifier.height(10.dp))
         SecurityStrip(mode)
-
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             QuickAction(Icons.Filled.People, "FRIENDS", onFriends, Modifier.weight(1f))
             QuickAction(Icons.Filled.Share, "SEND", { showPowerSheet = true }, Modifier.weight(1f))
             QuickAction(Icons.Filled.History, "HISTORY", onHistory, Modifier.weight(1f))
         }
-
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryAction(Icons.Filled.Autorenew, "RECOVERY", "Automatic", TextSub, { if (mode == LinkoDashboardMode.Failed) showPowerSheet = true })
+            SecondaryAction(Icons.Filled.Autorenew, "RECOVERY", if (recovering) "Running" else "Automatic", if (recovering) Blue else TextSub) { if (failed) showPowerSheet = true }
             SecondaryAction(Icons.Filled.Speed, "QUALITY", qualityText, qualityColor, onHistory)
         }
-
         Spacer(Modifier.height(8.dp))
-        EasyModeRow(enabled = easyMode) { easyMode = !easyMode }
+        EasyModeRow(easyMode) { easyMode = !easyMode }
         Spacer(Modifier.height(22.dp))
     }
 
     if (showPowerSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showPowerSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        ) {
-            PowerSheet(
-                mode = mode,
-                selectedFriend = selectedFriend,
-                busy = busy,
-                onDismiss = { showPowerSheet = false },
-                onConnect = {
-                    if (selectedFriend == null) {
-                        showPowerSheet = false
-                        onFriends()
-                    } else if (!busy) {
-                        busy = true
-                        showPowerSheet = false
-                        LinkoEngineBridge.connectToFriend(selectedFriend.userId, selectedFriend.displayName, selectedFriend.linkoId) { result ->
-                            if (result == "connected" || result.startsWith("failed")) busy = false
-                        }
-                    }
-                },
-                onShare = {
+        ModalBottomSheet(onDismissRequest = { showPowerSheet = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            PowerSheet(mode, selectedFriend, busy, { showPowerSheet = false }, {
+                if (selectedFriend == null) { showPowerSheet = false; onFriends() }
+                else if (!busy) {
+                    busy = true
                     showPowerSheet = false
-                    LinkoProviderService.start(context)
-                },
-                onStop = {
-                    showPowerSheet = false
-                    LinkoConnectionLifecycle.stop(context)
-                    LinkoProviderService.stop(context)
-                },
-            )
+                    LinkoEngineBridge.connectToFriend(selectedFriend.userId, selectedFriend.displayName, selectedFriend.linkoId) { result -> if (result == "connected" || result.startsWith("failed")) busy = false }
+                }
+            }, {
+                showPowerSheet = false
+                LinkoProviderService.start(context)
+            }, {
+                showPowerSheet = false
+                LinkoConnectionLifecycle.stop(context)
+                LinkoProviderService.stop(context)
+            })
         }
     }
 
     if (showFriendSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showFriendSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        ) {
+        ModalBottomSheet(onDismissRequest = { showFriendSheet = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
                 Text("CHOOSE FRIEND", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                Text("Pick who you want to connect to. LINKO handles the connection after that.", color = TextSub, fontSize = 11.sp, lineHeight = 16.sp)
+                Text("Pick who you want to connect to. LINKO handles the rest.", color = TextSub, fontSize = 11.sp, lineHeight = 16.sp)
                 Spacer(Modifier.height(16.dp))
-                ActionSheetRow(Icons.Filled.People, "Open friends", "See trusted people who are online", Blue) {
-                    showFriendSheet = false
-                    onFriends()
-                }
+                ActionSheetRow(Icons.Filled.People, "Open friends", "See trusted people who are online", Blue) { showFriendSheet = false; onFriends() }
                 Spacer(Modifier.height(10.dp))
                 ActionSheetRow(Icons.Filled.Close, "Keep current friend", selectedFriend?.displayName ?: "No friend selected", TextSub) { showFriendSheet = false }
                 Spacer(Modifier.height(20.dp))
@@ -389,10 +318,7 @@ fun LinkoHomeExperienceScreen(
 @Composable
 private fun DashboardHeader(mode: LinkoDashboardMode, color: Color, title: String, subtitle: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(
-            modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(color.copy(alpha = 0.10f)).border(1.dp, color.copy(alpha = 0.22f), RoundedCornerShape(20.dp)).padding(horizontal = 11.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.clip(RoundedCornerShape(20.dp)).background(color.copy(alpha = .10f)).border(1.dp, color.copy(alpha = .22f), RoundedCornerShape(20.dp)).padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             val icon = when (mode) {
                 LinkoDashboardMode.Ready -> Icons.Filled.PowerSettingsNew
                 LinkoDashboardMode.Connecting -> Icons.Filled.Link
@@ -420,10 +346,7 @@ private fun PrimaryControl(mode: LinkoDashboardMode, busy: Boolean, onClick: () 
         LinkoDashboardMode.Failed -> Icons.Filled.Autorenew to "TRY AGAIN"
         LinkoDashboardMode.Sharing -> Icons.Filled.StopCircle to "STOP SHARING"
     }
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(color.copy(alpha = .12f)).border(1.dp, color.copy(alpha = .28f), RoundedCornerShape(18.dp)).clickable(enabled = !busy, indication = null, interactionSource = remember { MutableInteractionSource() }) { onClick() }.padding(vertical = 14.dp, horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(color.copy(alpha = .12f)).border(1.dp, color.copy(alpha = .28f), RoundedCornerShape(18.dp)).clickable(enabled = !busy, indication = null, interactionSource = remember { MutableInteractionSource() }) { onClick() }.padding(vertical = 14.dp, horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(21.dp))
         Spacer(Modifier.width(10.dp))
         Text(if (busy) "WORKING…" else label, color = color, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -435,9 +358,7 @@ private fun PrimaryControl(mode: LinkoDashboardMode, busy: Boolean, onClick: () 
 private fun FriendSummaryCard(name: String, online: Boolean, sharing: Boolean, onChange: () -> Unit) {
     LinkoCard(Modifier.fillMaxWidth().clickable { onChange() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(CircleShape).background(if (sharing) GreenSoft else BlueSoft), contentAlignment = Alignment.Center) {
-                Text(name.take(1).uppercase(), color = if (sharing) Green else Blue, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
-            }
+            Box(Modifier.size(42.dp).clip(CircleShape).background(if (sharing) GreenSoft else BlueSoft), contentAlignment = Alignment.Center) { Text(name.take(1).uppercase(), color = if (sharing) Green else Blue, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("READY TO CONNECT", color = TextSub, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
@@ -453,9 +374,7 @@ private fun FriendSummaryCard(name: String, online: Boolean, sharing: Boolean, o
 private fun EmptyFriendCard(onOpen: () -> Unit) {
     LinkoCard(Modifier.fillMaxWidth().clickable { onOpen() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(Blue.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.People, contentDescription = null, tint = Blue, modifier = Modifier.size(20.dp))
-            }
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(Blue.copy(alpha = .10f)), contentAlignment = Alignment.Center) { Icon(Icons.Filled.People, contentDescription = null, tint = Blue, modifier = Modifier.size(20.dp)) }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("NO FRIEND SELECTED", color = TextSub, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
@@ -498,10 +417,10 @@ private fun SharingCard(onStop: () -> Unit) {
             Text("ACTIVE", color = Green, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(8.dp))
-        Text("Your internet is being shared through LINKO. Connection requests can be authorized from the provider controls.", color = TextSub, fontSize = 10.sp, lineHeight = 15.sp)
+        Text("Your internet is being shared through LINKO.", color = TextSub, fontSize = 10.sp, lineHeight = 15.sp)
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.StopCircle, contentDescription = null, tint = Red, modifier = Modifier.size(18.dp))
+            Icon(Icons.Filled.StopCircle, contentDescription = "Stop sharing", tint = Red, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("STOP SHARING", color = Red, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onStop() })
         }
@@ -526,8 +445,9 @@ private fun ProgressCard(phase: LinkoConnectionPhase, detail: String, color: Col
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            steps.forEach { (step, label) ->
-                val passed = steps.indexOfFirst { it.first == phase } >= steps.indexOfFirst { it.first == step }
+            steps.forEachIndexed { index, (step, _) ->
+                val currentIndex = steps.indexOfFirst { it.first == phase }
+                val passed = currentIndex >= index && currentIndex >= 0
                 Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(4.dp)).background(if (passed) color else TextMuted.copy(alpha = .10f)))
             }
         }
@@ -575,9 +495,7 @@ private fun SecurityStrip(mode: LinkoDashboardMode) {
     }
     LinkoCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Security, contentDescription = "Security status", tint = color, modifier = Modifier.size(18.dp))
-            }
+            Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = .10f)), contentAlignment = Alignment.Center) { Icon(Icons.Filled.Security, contentDescription = "Security status", tint = color, modifier = Modifier.size(18.dp)) }
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text("LINKO SECURE", color = color, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
@@ -589,10 +507,7 @@ private fun SecurityStrip(mode: LinkoDashboardMode) {
 
 @Composable
 private fun SecondaryAction(icon: ImageVector, title: String, value: String, color: Color, onClick: () -> Unit) {
-    Row(
-        Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Card).border(1.dp, TextMuted.copy(alpha = .11f), RoundedCornerShape(14.dp)).clickable { onClick() }.padding(11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Card).border(1.dp, TextMuted.copy(alpha = .11f), RoundedCornerShape(14.dp)).clickable { onClick() }.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = title, tint = color, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
@@ -613,10 +528,7 @@ private fun QuickAction(icon: ImageVector, label: String, onClick: () -> Unit, m
 
 @Composable
 private fun EasyModeRow(enabled: Boolean, onToggle: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(Card).border(1.dp, if (enabled) Green.copy(alpha = .25f) else TextMuted.copy(alpha = .10f), RoundedCornerShape(15.dp)).clickable { onToggle() }.padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(Card).border(1.dp, if (enabled) Green.copy(alpha = .25f) else TextMuted.copy(alpha = .10f), RoundedCornerShape(15.dp)).clickable { onToggle() }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.Speed, contentDescription = "Easy mode", tint = if (enabled) Green else Blue, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
@@ -629,17 +541,12 @@ private fun EasyModeRow(enabled: Boolean, onToggle: () -> Unit) {
 
 @Composable
 private fun TinyAction(icon: ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(38.dp).clip(CircleShape).background(Blue.copy(alpha = .08f))) {
-        Icon(icon, contentDescription = description, tint = Blue, modifier = Modifier.size(18.dp))
-    }
+    IconButton(onClick = onClick, modifier = Modifier.size(38.dp).clip(CircleShape).background(Blue.copy(alpha = .08f))) { Icon(icon, contentDescription = description, tint = Blue, modifier = Modifier.size(18.dp)) }
 }
 
 @Composable
 private fun ActionSheetRow(icon: ImageVector, title: String, subtitle: String, color: Color, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(color.copy(alpha = .08f)).border(1.dp, color.copy(alpha = .16f), RoundedCornerShape(15.dp)).clickable { onClick() }.padding(13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(15.dp)).background(color.copy(alpha = .08f)).border(1.dp, color.copy(alpha = .16f), RoundedCornerShape(15.dp)).clickable { onClick() }.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = title, tint = color, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -665,27 +572,15 @@ private fun PowerSheet(
         Spacer(Modifier.height(6.dp))
         Text("One place for the actions that change your connection.", color = TextSub, fontSize = 11.sp, lineHeight = 16.sp)
         Spacer(Modifier.height(16.dp))
-
         when (mode) {
             LinkoDashboardMode.Ready, LinkoDashboardMode.Failed -> {
-                ActionSheetRow(
-                    Icons.Filled.Link,
-                    if (selectedFriend == null) "Choose a friend" else "Connect to ${selectedFriend.displayName}",
-                    if (selectedFriend == null) "Pick a trusted friend first" else "Use their internet on this phone",
-                    Blue,
-                    onConnect,
-                )
+                ActionSheetRow(Icons.Filled.Link, if (selectedFriend == null) "Choose a friend" else "Connect to ${selectedFriend.displayName}", if (selectedFriend == null) "Pick a trusted friend first" else "Use their internet on this phone", Blue, onConnect)
                 Spacer(Modifier.height(10.dp))
                 ActionSheetRow(Icons.Filled.Share, "Send Internet", "Share this phone's internet with a trusted friend", Green, onShare)
             }
-            LinkoDashboardMode.Connected, LinkoDashboardMode.Connecting, LinkoDashboardMode.Recovering -> {
-                ActionSheetRow(Icons.Filled.LinkOff, "Disconnect", "Stop the current connection", Red, onStop)
-            }
-            LinkoDashboardMode.Sharing -> {
-                ActionSheetRow(Icons.Filled.StopCircle, "Stop sharing", "Turn off provider mode", Red, onStop)
-            }
+            LinkoDashboardMode.Connected, LinkoDashboardMode.Connecting, LinkoDashboardMode.Recovering -> ActionSheetRow(Icons.Filled.LinkOff, "Disconnect", "Stop the current connection", Red, onStop)
+            LinkoDashboardMode.Sharing -> ActionSheetRow(Icons.Filled.StopCircle, "Stop sharing", "Turn off provider mode", Red, onStop)
         }
-
         if (busy) {
             Spacer(Modifier.height(10.dp))
             Text("LINKO is processing the action…", color = TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono)
