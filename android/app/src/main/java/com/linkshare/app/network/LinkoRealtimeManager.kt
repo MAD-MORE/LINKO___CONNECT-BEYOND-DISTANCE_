@@ -134,24 +134,27 @@ object LinkoRealtimeManager {
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
-        cleanupRealtime()
+        scope.launch { cleanupRealtime() }
         LinkoDiagnosticTelemetry.recordRealtime(false, null, emptyList())
     }
 
-    private fun cleanupRealtime() {
-        runCatching {
+    private suspend fun cleanupRealtime() {
+        try {
             val realtime = client?.pluginManager?.getPlugin(Realtime)
             presenceChannel?.let { realtime?.removeChannel(it) }
             friendChannel?.let { realtime?.removeChannel(it) }
             sessionChannel?.let { realtime?.removeChannel(it) }
             realtime?.disconnect()
-        }.onFailure { Log.w(TAG, "Realtime cleanup failed: ${it.message}") }
-        presenceChannel = null
-        friendChannel = null
-        sessionChannel = null
-        client = null
-        connectedChannels.clear()
-        presenceSnapshot.clear()
+        } catch (error: Throwable) {
+            Log.w(TAG, "Realtime cleanup failed: ${error.message}", error)
+        } finally {
+            presenceChannel = null
+            friendChannel = null
+            sessionChannel = null
+            client = null
+            connectedChannels.clear()
+            presenceSnapshot.clear()
+        }
     }
 
     private suspend fun subscribeFriendEvents(supabase: SupabaseClient) {
