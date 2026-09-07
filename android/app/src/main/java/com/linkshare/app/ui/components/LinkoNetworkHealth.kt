@@ -34,7 +34,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-
 enum class LinkoNetworkHealthLevel { EXCELLENT, GOOD, WEAK, POOR, LOST }
 
 data class LinkoNetworkHealthSnapshot(
@@ -46,6 +45,9 @@ data class LinkoNetworkHealthSnapshot(
     val upKbps: Int = 0,
     val latencyMs: Int = 0,
     val message: String = "Connection lost",
+    val sessionActive: Boolean = false,
+    val vpnExpected: Boolean = false,
+    val sampledAtMs: Long = 0L,
 )
 
 object LinkoNetworkHealthMonitor {
@@ -90,6 +92,9 @@ object LinkoNetworkHealthMonitor {
         val down = capabilities?.linkDownstreamBandwidthKbps ?: 0
         val up = capabilities?.linkUpstreamBandwidthKbps ?: 0
         val connection = LinkoEngineBridge.connection.value
+        val sessionActive = connection.phase != LinkoConnectionPhase.Idle
+        val vpnExpected = connection.phase == LinkoConnectionPhase.Connected ||
+            connection.phase == LinkoConnectionPhase.Routing
         val latency = connection.latencyMs.takeIf { it > 0 } ?: 0
 
         var score = when {
@@ -101,6 +106,11 @@ object LinkoNetworkHealthMonitor {
         if (up >= 10_000) score += 12 else if (up >= 3_000) score += 8 else if (up >= 1_000) score += 4
         if (latency in 1..60) score += 15 else if (latency in 61..120) score += 9 else if (latency in 121..250) score += 3
         if (connection.phase == LinkoConnectionPhase.Failed) score = minOf(score, 20)
+
+        // A live LINKO session must have a usable underlying network. Keep the score
+        // conservative when the control plane is mid-connection or the expected VPN
+        // endpoint has disappeared from local state.
+        if (sessionActive && !available) score = minOf(score, 10)
         score = score.coerceIn(0, 100)
 
         val level = when {
@@ -110,14 +120,31 @@ object LinkoNetworkHealthMonitor {
             score > 0 -> LinkoNetworkHealthLevel.POOR
             else -> LinkoNetworkHealthLevel.LOST
         }
-        val message = when (level) {
-            LinkoNetworkHealthLevel.EXCELLENT -> "Connection is strong"
-            LinkoNetworkHealthLevel.GOOD -> "Connection is good"
-            LinkoNetworkHealthLevel.WEAK -> "Connection is slowing down"
-            LinkoNetworkHealthLevel.POOR -> "Your connection is weak"
-            LinkoNetworkHealthLevel.LOST -> "Connection lost"
+        val message = when {
+            !available -> if (sessionActive) "Network unavailable while LINKO is active" else "Connection lost"
+            connection.phase == LinkoConnectionPhase.Failed -> "LINKO needs to recover the connection"
+            vpnExpected && !sessionActive -> "Preparing protected connection"
+            else -> when (level) {
+                LinkoNetworkHealthLevel.EXCELLENT -> "Connection is strong"
+                LinkoNetworkHealthLevel.GOOD -> "Connection is good"
+                LinkoNetworkHealthLevel.WEAK -> "Connection is slowing down"
+                LinkoNetworkHealthLevel.POOR -> "Your connection is weak"
+                LinkoNetworkHealthLevel.LOST -> "Connection lost"
+            }
         }
-        _snapshot.value = LinkoNetworkHealthSnapshot(score, level, available, validated, down, up, latency, message)
+        _snapshot.value = LinkoNetworkHealthSnapshot(
+            score = score,
+            level = level,
+            available = available,
+            validated = validated,
+            downKbps = down,
+            upKbps = up,
+            latencyMs = latency,
+            message = message,
+            sessionActive = sessionActive,
+            vpnExpected = vpnExpected,
+            sampledAtMs = System.currentTimeMillis(),
+        )
     }
 }
 
