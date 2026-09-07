@@ -34,9 +34,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
-import com.linkshare.app.network.LinkoEngineConnectionState
 import com.linkshare.app.network.LinkoEngineBridge
+import com.linkshare.app.network.LinkoEngineConnectionState
 import com.linkshare.app.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -52,40 +53,40 @@ private data class ProcessModalModel(
 )
 
 private fun LinkoEngineConnectionState.toProcessModalModel(): ProcessModalModel? {
-    val phase = phase
-    val detail = detail.trim().ifBlank { "Working…" }
-    val error = error?.trim().orEmpty()
+    val currentPhase = phase
+    val detailText = detail.trim().ifBlank { "Working…" }
+    val errorText = error?.trim().orEmpty()
     val session = sessionId?.trim().orEmpty()
     val logLines = buildList {
-        add("phase=${phase.name}")
-        add("detail=${detail.take(220)}")
-        if (error.isNotBlank()) add("error=${error.take(220)}")
-        if (peerDisplayName?.isNotBlank() == true) add("peer=${peerDisplayName!!.take(120)}")
+        add("phase=${currentPhase.name}")
+        add("detail=${detailText.take(220)}")
+        if (errorText.isNotBlank()) add("error=${errorText.take(220)}")
+        peerDisplayName?.takeIf { it.isNotBlank() }?.let { add("peer=${it.take(120)}") }
         add("role=${if (isProvider) "provider" else "receiver"}")
         add("session=${if (session.isBlank()) "none" else session.take(80)}")
     }
 
-    return when (phase) {
+    return when (currentPhase) {
         LinkoConnectionPhase.Idle -> null
         LinkoConnectionPhase.Connected -> ProcessModalModel(
             kind = ProcessModalKind.Success,
             title = "CONNECTED",
-            message = detail.ifBlank { "LINKO connection is active." },
+            message = detailText,
             canRetry = false,
             logLines = logLines,
-            eventKey = "connected|$session|$detail",
+            eventKey = "connected|$session|$detailText",
         )
         LinkoConnectionPhase.Failed -> ProcessModalModel(
             kind = ProcessModalKind.Error,
             title = "CONNECTION FAILED",
-            message = error.ifBlank { detail.ifBlank { "LINKO could not complete the connection." } },
+            message = errorText.ifBlank { detailText },
             canRetry = !isProvider,
             logLines = logLines,
-            eventKey = "failed|$session|$error|$detail",
+            eventKey = "failed|$session|$errorText|$detailText",
         )
         else -> ProcessModalModel(
             kind = ProcessModalKind.Progress,
-            title = when (phase) {
+            title = when (currentPhase) {
                 LinkoConnectionPhase.Connecting -> "CONNECTING…"
                 LinkoConnectionPhase.Authenticating -> "AUTHORIZING…"
                 LinkoConnectionPhase.Signaling -> "SIGNALING…"
@@ -96,17 +97,17 @@ private fun LinkoEngineConnectionState.toProcessModalModel(): ProcessModalModel?
                 LinkoConnectionPhase.Failed -> "CONNECTION FAILED"
                 LinkoConnectionPhase.Idle -> "LINKO"
             },
-            message = detail,
+            message = detailText,
             canRetry = false,
             logLines = logLines,
-            eventKey = "progress|${phase.name}|$session|$detail",
+            eventKey = "progress|${currentPhase.name}|$session|$detailText",
         )
     }
 }
 
 @Composable
 fun LinkoProcessModalHost(modifier: Modifier = Modifier) {
-    val state by LinkoEngineBridge.connection.collectAsStateCompat()
+    val state by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
     val model = remember(state) { state.toProcessModalModel() }
     var dismissedKey by remember { mutableStateOf<String?>(null) }
     var expandedLogs by remember { mutableStateOf(false) }
@@ -258,16 +259,18 @@ private fun LinkoProcessModal(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (model.kind == ProcessModalKind.Error) {
-                            TextAction("VIEW LOGS", accent, onViewLogs)
-                            Spacer(Modifier.width(8.dp))
-                            if (model.canRetry) {
-                                FilledAction("RETRY", accent, onRetry)
+                        when (model.kind) {
+                            ProcessModalKind.Error -> {
+                                TextAction("VIEW LOGS", accent, onViewLogs)
+                                Spacer(Modifier.width(8.dp))
+                                if (model.canRetry) {
+                                    FilledAction("RETRY", accent, onRetry)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                TextAction("CLOSE", TextSub, onDismiss)
                             }
-                            Spacer(Modifier.width(8.dp))
-                            TextAction("CLOSE", TextSub, onDismiss)
-                        } else if (model.kind == ProcessModalKind.Success) {
-                            TextAction("CLOSE", TextSub, onDismiss)
+                            ProcessModalKind.Success -> TextAction("CLOSE", TextSub, onDismiss)
+                            ProcessModalKind.Progress -> Unit
                         }
                     }
                 }
@@ -300,9 +303,4 @@ private fun FilledAction(label: String, color: Color, onClick: () -> Unit) {
     ) {
         Text(label, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = JetBrainsMono)
     }
-}
-
-@Composable
-private fun LinkoEngineBridge.connection.collectAsStateCompat(): androidx.compose.runtime.State<LinkoEngineConnectionState> {
-    return androidx.lifecycle.compose.collectAsStateWithLifecycle(LinkoEngineBridge.connection)
 }
