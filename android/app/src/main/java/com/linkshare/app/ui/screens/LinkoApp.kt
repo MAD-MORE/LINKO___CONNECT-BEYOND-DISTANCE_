@@ -99,28 +99,26 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
 
-                // Home Connect opens the Friends tab so the user can choose an existing friend to connect.
-                composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.Friends.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
+                // Home Connect opens the redesigned Receiver hub; Share opens the redesigned Provider hub.
+                composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
 
-                // Friends is the main friend-list screen. Its Add Friends action opens Radar Discovery.
                 composable(Screen.Friends.route) {
                     FriendsScreen(
                         onFindFriends = { nav.navigate(Screen.FindFriends.route) },
                         onFriendTap = { nav.navigate(Screen.FriendProfile.route) }
                     )
                 }
-
-                // Friend-search radar is intentionally separate and is reached only through Add Friends.
                 composable(Screen.FindFriends.route) { FindFriendsScreen { nav.navigate(Screen.FriendProfile.route) } }
                 composable(Screen.FriendProfile.route) { RealFriendProfileScreen({ nav.navigate(Screen.RequestSent.route) }, { nav.navigate(Screen.RxSelectFriend.route) }) }
                 composable(Screen.RequestSent.route) { RequestSentScreen { nav.navigate(Screen.Friends.route) } }
                 composable(Screen.IncomingRequest.route) { IncomingRequestScreen({ nav.navigate(Screen.Friends.route) }, { nav.popBackStack() }) }
                 composable(Screen.BlockedRemoved.route) { BlockedRemovedScreen { nav.popBackStack() } }
-                composable(Screen.RxSelectFriend.route) { RxSelectFriendScreen { nav.navigate(Screen.RxConnecting.route) } }
+
+                composable(Screen.RxSelectFriend.route) { RedesignedReceiverScreen { nav.navigate(Screen.RxConnecting.route) } }
                 composable(Screen.RxRequest.route) { RxRequestScreen { nav.popBackStack() } }
                 composable(Screen.RxWaiting.route) { RxWaitingScreen { nav.popBackStack() } }
                 composable(Screen.RxApproved.route) { RxApprovedScreen { nav.navigate(Screen.RxConnecting.route) } }
-                composable(Screen.RxConnecting.route) { ConnectionStatusScreen(onConnected = {}, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
+                composable(Screen.RxConnecting.route) { ConnectionStatusScreen(onConnected = { nav.navigate(Screen.Connected.route) }, onFailed = { nav.navigate(Screen.ConnectionLost.route) }) }
                 composable(Screen.RxDirectPath.route) { RxDirectPathScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.RxRelayFallback.route) { RxRelayFallbackScreen { nav.navigate(Screen.Connected.route) } }
                 composable(Screen.Connected.route) { ConnectedScreen({ nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.HomeEngine.route) { inclusive = true } } }, { nav.navigate(Screen.NetworkQuality.route) }) }
@@ -129,7 +127,8 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.SessionDetails.route) { SessionDetailsScreen { nav.navigate(Screen.HomeEngine.route) } }
                 composable(Screen.SessionHistory.route) { SessionHistoryScreen() }
                 composable(Screen.Notifications.route) { NotificationsScreen() }
-                composable(Screen.ProviderReady.route) { ProviderReadyScreen { nav.navigate(Screen.ProviderIncoming.route) } }
+
+                composable(Screen.ProviderReady.route) { RedesignedProviderScreen { nav.navigate(Screen.ProviderLiveUsage.route) } }
                 composable(Screen.ProviderIncoming.route) { ProviderIncomingScreen({ nav.navigate(Screen.ProviderAuthorization.route) }, { LinkoEngineBridge.denyPendingProviderRequest(); nav.popBackStack() }) }
                 composable(Screen.ProviderAuthorization.route) { ProviderAuthorizationScreen { LinkoEngineBridge.approvePendingProviderRequest { if (it == "approved") nav.navigate(Screen.ProviderSharingSetup.route) } } }
                 composable(Screen.ProviderSharingSetup.route) { ProviderSharingSetupScreen { nav.navigate(Screen.ProviderSharingActive.route) } }
@@ -151,8 +150,6 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
         if (!onboarding) BottomNav(route, nav)
     }
 
-    // Global process feedback: engine state drives this once for every screen/process.
-    // The modal is non-blocking for terminal states and cannot create a second connection job.
     LinkoProcessModalHost()
 }
 
@@ -163,7 +160,7 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
     }
 }
 
-private fun appBarTitle(route: String): String? = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Choose Friend", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Connection Path", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "notifications" to "Notifications", "provider_ready" to "Provider Ready", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")[route]
+private fun appBarTitle(route: String): String? = mapOf("sign_in" to "Sign In", "sign_up" to "Create Account", "forgot_password" to "Forgot Password", "recovery_otp" to "Verify Recovery", "password_reset" to "New Password", "profile" to "Profile", "register_device" to "Register Device", "permissions" to "Permissions", "friends" to "Friends", "find_friends" to "Friends", "friend_profile" to "Friend Profile", "request_sent" to "Request Sent", "incoming_request" to "Incoming Request", "blocked_removed" to "Trust Boundaries", "rx_select_friend" to "Connect", "rx_request" to "Connection Request", "rx_waiting" to "Waiting", "rx_approved" to "Approved", "rx_connecting" to "Connecting", "rx_direct_path" to "Direct Path", "rx_relay_fallback" to "Connection Path", "connected" to "Connected", "network_quality" to "Network Quality", "usage" to "Usage", "session_details" to "Session", "session_history" to "Session History", "notifications" to "Notifications", "provider_ready" to "Share", "provider_incoming" to "Incoming Request", "provider_authorization" to "Authorize", "provider_sharing_setup" to "Sharing Setup", "provider_sharing_active" to "Sharing Active", "provider_live_usage" to "Live Usage", "connection_lost" to "Connection Lost", "reconnecting" to "Reconnecting", "network_switching" to "Network Switch", "session_expired" to "Session Expired", "key_revoked" to "Device Session Ended", "device_identity" to "Device Identity", "security_engine" to "Security Engine", "privacy" to "Privacy", "data_retention" to "Data Retention", "delete_account" to "Delete Account")[route]
 
 private sealed class BottomNavItem(val label: String, val route: String, val iconFilled: ImageVector, val iconOutlined: ImageVector) {
     object Home : BottomNavItem("HOME", Screen.HomeEngine.route, Icons.Filled.Home, Icons.Outlined.Home)
