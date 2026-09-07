@@ -16,6 +16,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import com.linkshare.app.network.LinkoConnectionLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
@@ -28,8 +33,6 @@ import com.linkshare.app.ui.theme.Red
 import com.linkshare.app.ui.theme.JetBrainsMono
 import com.linkshare.app.ui.theme.TextPrimary
 import com.linkshare.app.ui.theme.TextSub
-import androidx.compose.material3.Text
-import androidx.compose.ui.text.font.FontWeight
 
 @Composable
 fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
@@ -39,14 +42,8 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
     val failureReason = (state.error ?: state.detail).lowercase()
     val directPathFailure = failureReason.contains("direct") || failureReason.contains("ice") || failureReason.contains("candidate") || failureReason.contains("nomination") || failureReason.contains("probe")
 
-    LaunchedEffect(Unit) {
-        LinkoEngineBridge.reconnect()
-    }
-
-    // Do not navigate away on failure: the retry/stop controls on this screen must remain usable.
-    LaunchedEffect(state.phase) {
-        if (state.phase == LinkoConnectionPhase.Connected) onConnected()
-    }
+    LaunchedEffect(Unit) { LinkoEngineBridge.reconnect() }
+    LaunchedEffect(state.phase) { if (state.phase == LinkoConnectionPhase.Connected) onConnected() }
 
     val color = when (state.phase) {
         LinkoConnectionPhase.Failed -> Red
@@ -81,6 +78,9 @@ fun RealReconnectingScreen(onConnected: () -> Unit, onFailed: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        if (state.phase != LinkoConnectionPhase.Failed && state.phase != LinkoConnectionPhase.Connected) {
+            Icon(Icons.Filled.Autorenew, contentDescription = "Recovering connection", tint = Blue, modifier = Modifier.padding(bottom = 10.dp).height(28.dp))
+        }
         Ring(
             color,
             190.dp,
