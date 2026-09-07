@@ -1,1 +1,0 @@
-One-time trigger for the connection button loading recovery patch.
