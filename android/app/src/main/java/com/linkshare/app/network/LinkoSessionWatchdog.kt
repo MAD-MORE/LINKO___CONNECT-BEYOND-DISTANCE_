@@ -2,6 +2,7 @@ package com.linkshare.app.network
 
 import android.content.Context
 import android.content.Intent
+import com.linkshare.app.diagnostics.LinkoDiagnosticTelemetry
 import com.linkshare.app.provider.LinkoProviderService
 import com.linkshare.app.vpn.LinkShareVpnService
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +93,7 @@ object LinkoSessionWatchdog {
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
 
         val session = sessionResult.getOrNull()
+        val sessionState = session?.state?.trim()?.lowercase()
         val decision = resilience?.observe(
             LinkoNetworkResilience.Sample(
                 probeSucceeded = sessionResult.isSuccess,
@@ -99,30 +101,28 @@ object LinkoSessionWatchdog {
                 // LINKO does not treat an idle tunnel as packet loss. Packet loss is
                 // therefore left at zero until a real transport probe supplies it.
                 packetLossPercent = 0,
-                realtimeConnected = true,
+                realtimeConnected = LinkoDiagnosticTelemetry.snapshot.value.realtimeConnected,
             ),
         ) ?: return
 
         publishHealthDiagnostic(decision, elapsedMs)
 
-        if (decision.shouldRetry && !decision.shouldTerminate) {
+        if (sessionState !in TERMINAL_STATES && decision.shouldRetry && !decision.shouldTerminate) {
             maybeRecover(context, sessionId, decision)
         }
 
         if (session == null) return
-        when (session.state.trim().lowercase()) {
-            "failed", "denied", "expired", "revoked", "disconnected" -> {
-                if (stoppingSession != sessionId) {
-                    stoppingSession = sessionId
-                    LinkoEngineBridge.reportConnectionDiagnostic(
-                        ConnectionStage.CONNECTED,
-                        "REMOTE_SESSION_TERMINAL",
-                        "Peer session changed to ${session.state}; stopping local data plane",
-                        ConnectionSeverity.WARNING,
-                        metadata = mapOf("sessionState" to session.state),
-                    )
-                    stopLocalDataPlane(context, session.state)
-                }
+        if (sessionState in TERMINAL_STATES) {
+            if (stoppingSession != sessionId) {
+                stoppingSession = sessionId
+                LinkoEngineBridge.reportConnectionDiagnostic(
+                    ConnectionStage.CONNECTED,
+                    "REMOTE_SESSION_TERMINAL",
+                    "Peer session changed to ${session.state}; stopping local data plane",
+                    ConnectionSeverity.WARNING,
+                    metadata = mapOf("sessionState" to session.state),
+                )
+                stopLocalDataPlane(context, session.state)
             }
         }
     }
@@ -146,6 +146,7 @@ object LinkoSessionWatchdog {
                 "score" to decision.score.toString(),
                 "roundTripMs" to roundTripMs.toString(),
                 "consecutiveFailures" to decision.consecutiveFailures.toString(),
+                "realtimeConnected" to LinkoDiagnosticTelemetry.snapshot.value.realtimeConnected.toString(),
             ),
         )
     }
@@ -192,4 +193,6 @@ object LinkoSessionWatchdog {
         runCatching { context.stopService(Intent(context, LinkoProviderService::class.java)) }
         LinkoEngineBridge.reportTunnelState("stopped", "Connection ended: $reason")
     }
+
+    private val TERMINAL_STATES = setOf("failed", "denied", "expired", "revoked", "disconnected")
 }
