@@ -1,11 +1,13 @@
 package com.linkshare.app.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val LinkoColorScheme = darkColorScheme(
@@ -18,6 +20,14 @@ private val LinkoColorScheme = darkColorScheme(
     onSurface = TextPrimary,
     error = Red,
     outline = Border,
+)
+
+private val LinkoShapes = Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
 )
 
 private val LinkoTypography = Typography(
@@ -38,6 +48,7 @@ fun LinkoTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = LinkoColorScheme,
         typography = LinkoTypography,
+        shapes = LinkoShapes,
         content = content
     )
 }
