@@ -1,6 +1,5 @@
 package com.linkshare.app.ui.screens
 
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -9,19 +8,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.linkshare.app.ui.components.PrimaryButton as BasePrimaryButton
 import com.linkshare.app.ui.theme.Blue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 
 /**
  * Engine-screen PrimaryButton wrapper.
- * Every tap becomes a one-shot action: it shows loading immediately, blocks duplicate taps,
- * and automatically releases the button after the action completes, the screen is stopped,
- * or the safety timeout expires.
+ * Shows loading immediately, prevents duplicate taps, and always releases the button
+ * after navigation, lifecycle stop, failure, or the 20-second safety timeout.
  */
 @Composable
 fun PrimaryButton(
@@ -36,7 +34,7 @@ fun PrimaryButton(
     var actionLoading by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(actionLoading, lifecycleOwner) {
+    LaunchedEffect(actionLoading) {
         if (actionLoading) {
             delay(20_000L)
             actionLoading = false
@@ -63,12 +61,8 @@ fun PrimaryButton(
         onClick = {
             if (!effectiveLoading && enabled) {
                 actionLoading = true
-                try {
-                    onClick()
-                } catch (t: Throwable) {
-                    actionLoading = false
-                    throw t
-                }
+                runCatching { onClick() }
+                    .onFailure { actionLoading = false }
             }
         },
         color = color,
