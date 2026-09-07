@@ -40,8 +40,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.ui.theme.*
 import com.linkshare.app.update.LinkoUpdateManager
 
-// ── Cards ──────────────────────────────────────────────────────────────────
-
 @Composable
 fun LinkoCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
@@ -50,30 +48,30 @@ fun LinkoCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.()
             .clip(RoundedCornerShape(18.dp))
             .background(Brush.verticalGradient(listOf(Card2, Card)))
             .border(1.dp, GlassStroke, RoundedCornerShape(18.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         content = content
     )
 }
 
-/** Glassmorphic card with a coloured accent glow border — for featured/hero sections. */
 @Composable
 fun GlassCard(accentColor: Color = Blue, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(elevation = 0.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(Brush.verticalGradient(listOf(accentColor.copy(alpha = 0.08f), Card.copy(alpha = 0.95f))))
             .border(1.5.dp, accentColor.copy(alpha = 0.30f), RoundedCornerShape(20.dp))
             .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         content = content
     )
 }
 
 @Composable
 fun InfoRow(label: String, value: String, sub: String? = null, accent: Color = TextPrimary, large: Boolean = false) {
-    Row(modifier = Modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.width(2.5.dp).height(if (large) 36.dp else 28.dp).clip(RoundedCornerShape(2.dp)).background(accent.copy(alpha = 0.60f)).align(Alignment.CenterVertically))
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.width(2.5.dp).height(if (large) 36.dp else 28.dp).clip(RoundedCornerShape(2.dp)).background(accent.copy(alpha = 0.60f)))
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(label, color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp)
@@ -81,7 +79,7 @@ fun InfoRow(label: String, value: String, sub: String? = null, accent: Color = T
             AnimatedContent(targetState = value, transitionSpec = { (slideInVertically { it / 3 } + fadeIn(tween(200))).togetherWith(slideOutVertically { -it / 3 } + fadeOut(tween(150))) }, label = "infoValue") { v ->
                 Text(v, color = accent, fontSize = if (large) 22.sp else 14.sp, fontFamily = JetBrainsMono, fontWeight = if (large) FontWeight.Bold else FontWeight.Medium)
             }
-            if (sub != null) { Spacer(modifier = Modifier.height(2.dp)); Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
+            if (sub != null) { Spacer(modifier = Modifier.height(2.dp)); Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, lineHeight = 16.sp) }
         }
     }
 }
@@ -95,7 +93,7 @@ fun LinkoInput(label: String, value: String, onValueChange: (String) -> Unit, pl
         Text(label, color = labelColor, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp)
         Spacer(modifier = Modifier.height(6.dp))
         androidx.compose.material3.TextField(value = value, onValueChange = { onValueChange(it); focused = true }, placeholder = { Text(placeholder, color = TextMuted, fontFamily = JetBrainsMono, fontSize = 14.sp) }, colors = androidx.compose.material3.TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, cursorColor = Blue), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = JetBrainsMono, fontSize = 14.sp, color = TextPrimary), modifier = Modifier.fillMaxWidth().padding(0.dp), singleLine = true)
-        if (sub != null) { Spacer(modifier = Modifier.height(4.dp)); Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
+        if (sub != null) { Spacer(modifier = Modifier.height(4.dp)); Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, lineHeight = 16.sp) }
     }
 }
 
@@ -116,7 +114,6 @@ fun PrimaryButton(label: String, onClick: () -> Unit, color: Color = Blue, outli
 }
 
 @Composable fun GhostButton(label: String, onClick: () -> Unit) { Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 13.dp)) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(label, color = TextSub, fontSize = 12.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(2.dp)); Box(Modifier.width(48.dp).height(1.dp).background(TextMuted.copy(alpha = 0.50f))) } } }
-
 @Composable fun LinkoProgressBar(value: Float, max: Float, color: Color = Blue) { val pct = (value / max).coerceIn(0f, 1f); Box(modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(6.dp)).background(Border)) { Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(pct).clip(RoundedCornerShape(6.dp)).background(color)) } }
 @Composable fun RowDivider() { HorizontalDivider(color = Border, thickness = 1.dp) }
 @Composable fun Avatar(initials: String, color: Color, size: androidx.compose.ui.unit.Dp = 44.dp) { Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size).clip(CircleShape).background(color.copy(alpha = 0.13f)).border(1.5.dp, color.copy(alpha = 0.35f), CircleShape)) { Text(initials, color = color, fontSize = (size.value * 0.3f).sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold) } }
@@ -128,13 +125,13 @@ data class Friend(val name: String, val id: String, val status: String, val colo
 
 @Composable
 fun SectionLabel(text: String) {
-    Text(text = text, color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
-    if (text == "SECURITY & PRIVACY") {
-        Spacer(Modifier.height(10.dp))
-        Text("UPDATES", color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp, modifier = Modifier.padding(bottom = 4.dp))
-        UpdateSettingsCard()
-        Spacer(Modifier.height(8.dp))
-    }
+    Text(text, color = TextMuted, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.18.sp, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+}
+
+@Composable
+fun UpdateSection() {
+    SectionLabel("UPDATES")
+    UpdateSettingsCard()
 }
 
 @Composable
@@ -178,7 +175,7 @@ private fun UpdateSettingsCard() {
             else -> PrimaryButton("CHECK FOR UPDATES", { manager.checkAndOfferUpdate() }, color = Blue, outline = true, enabled = !active, loading = active)
         }
         Spacer(Modifier.height(6.dp))
-        Text("Updates are managed here. LINKO still checks for required updates during startup before opening the app.", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+        Text("Updates are managed here. LINKO still checks for required updates during startup before opening the app.", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono, lineHeight = 15.sp)
     }
 }
 
@@ -189,7 +186,7 @@ fun SettingsRow(icon: @Composable () -> Unit, label: String, sub: String? = null
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (isPressed) Card2 else Color.Transparent).then(if (onClick != null) Modifier.clickable(interactionSource = interactionSource, indication = null) { onClick() } else Modifier).padding(horizontal = 16.dp, vertical = 13.dp)) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Card2)) { icon() }
         Spacer(modifier = Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) { Text(label, color = accent, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Medium); if (sub != null) Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono) }
+        Column(modifier = Modifier.weight(1f)) { Text(label, color = accent, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Medium); if (sub != null) Text(sub, color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, lineHeight = 16.sp) }
         if (onClick != null) Text("›", color = TextMuted, fontSize = 18.sp, fontFamily = JetBrainsMono)
     }
 }
