@@ -99,15 +99,22 @@ fun LinkoApp(auth: LinkoAuth, runtime: LinkoRuntime, updateManager: com.linkshar
                 composable(Screen.RegisterDevice.route) { RegisterDeviceScreen { nav.navigate(Screen.Permissions.route) } }
                 composable(Screen.Permissions.route) { PermissionsScreen { nav.navigate(Screen.HomeEngine.route) { popUpTo(Screen.Welcome.route) { inclusive = true } } } }
 
-                // Home Connect opens the redesigned Receiver hub; Share opens the redesigned Provider hub.
-                composable(Screen.HomeEngine.route) { HomeEngineScreen({ nav.navigate(Screen.RxSelectFriend.route) }, { nav.navigate(Screen.ProviderReady.route) }) }
+                // Unified home now owns the connection state, recovery UX, live session summary,
+                // security status and fast paths into friends/history/notifications/settings.
+                composable(Screen.HomeEngine.route) {
+                    LinkoHomeExperienceScreen(
+                        onFriends = { nav.navigate(Screen.Friends.route) },
+                        onNotifications = { nav.navigate(Screen.Notifications.route) },
+                        onHistory = { nav.navigate(Screen.SessionHistory.route) },
+                        onSettings = { nav.navigate(Screen.Settings.route) },
+                        onProvider = { nav.navigate(Screen.ProviderReady.route) },
+                        onReceiver = { nav.navigate(Screen.RxSelectFriend.route) },
+                    )
+                }
 
                 composable(Screen.Friends.route) {
                     FriendsScreen(
                         onFindFriends = { nav.navigate(Screen.FindFriends.route) },
-                        // A friend tap means “connect through this friend”, so go straight to
-                        // the Receiver hub. FriendsScreen stores the tapped friend in the
-                        // shared selection before invoking this callback.
                         onFriendTap = { nav.navigate(Screen.RxSelectFriend.route) }
                     )
                 }
@@ -177,14 +184,9 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
 
 @Composable private fun BottomNav(route: String, nav: androidx.navigation.NavHostController) {
     val activeTab = activeNavTab(route)
-    val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
-    var friendRequestCount by remember { mutableStateOf(0) }
-    var hasIncomingConnection by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { LinkoRealtimeManager.events.collect { event -> when (event) {
-        is LinkoRealtimeEvent.FriendRequestReceived -> friendRequestCount += 1
-        is LinkoRealtimeEvent.IncomingConnectionRequest -> hasIncomingConnection = true
-        else -> Unit
-    } } }
+    val notifications by LinkoNotificationCenter.notifications.collectAsState()
+    val hasIncomingConnection = LinkoRealtimeManager.lastIncomingConnectionRequestId != null
+    val unreadNotificationCount = notifications.size
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -192,8 +194,7 @@ private val bottomNavItems = listOf(BottomNavItem.Home, BottomNavItem.Friends, B
     ) {
         bottomNavItems.forEach { item ->
             val selected = activeTab == item.route
-            val showBadge = (item == BottomNavItem.Friends && friendRequestCount > 0) ||
-                (item == BottomNavItem.Notifications && hasIncomingConnection)
+            val showBadge = (item == BottomNavItem.Notifications && (unreadNotificationCount > 0 || hasIncomingConnection))
             Box(
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(if (selected) Blue.copy(alpha = .14f) else GradientMid.copy(alpha = .55f)).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { nav.navigate(item.route) { launchSingleTop = true; restoreState = true } }.padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
