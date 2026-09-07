@@ -1,0 +1,108 @@
+name: One-time provider receiver UI sync
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix(provider): mirror receiver connected UI'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Mirror receiver connected-session UI on provider
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt')
+          s = p.read_text()
+          start = s.index('@Composable fun ProviderSharingActiveScreen(')
+          end = s.index('@Composable fun ProviderLiveUsageScreen(', start)
+          new_func = '''@Composable fun ProviderSharingActiveScreen(onLiveUsage: () -> Unit, onStop: () -> Unit) {
+              val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
+              val peerName = engineState.peerDisplayName?.takeIf { it.isNotBlank() } ?: "LINKO Friend"
+              val peerId = engineState.peerLinkoId?.let { "@${it.removePrefix("@")}" } ?: "@trusted_peer"
+              val totalBytes = engineState.bytesIn + engineState.bytesOut
+              val latency = engineState.latencyMs
+              val quality = when {
+                  latency in 1..49 -> "EXCELLENT" to Green
+                  latency in 50..120 -> "GOOD" to Yellow
+                  latency > 120 -> "FAIR" to Red
+                  else -> "EXCELLENT" to Green
+              }
+
+              Column(
+                  Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                  Spacer(Modifier.height(10.dp))
+                  Title("Tunnel Sharing", "Your internet is routing to your trusted friend")
+                  Spacer(Modifier.height(20.dp))
+                  Ring(Green, 180.dp, pulse = true, label = "SHARING")
+                  Spacer(Modifier.height(20.dp))
+
+                  GlassCard(accentColor = Green) {
+                      InfoRow("RECEIVER PEER", "$peerName ($peerId)", "Using your active internet gateway", Green, true)
+                      Spacer(Modifier.height(12.dp))
+                      InfoRow("DATA SHARED", formatBytes(totalBytes), "Real-time encrypted traffic", Blue, true)
+                      Spacer(Modifier.height(12.dp))
+                      InfoRow("SHARING SECURITY", "AES-256-GCM", "Protected peer connection", Green)
+                  }
+
+                  Spacer(Modifier.height(14.dp))
+                  GlassCard(accentColor = quality.second) {
+                      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                          Column(Modifier.weight(1f)) {
+                              Text("CONNECTION QUALITY", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono)
+                              Text(quality.first, color = quality.second, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                          }
+                          StatusChip(quality.first, quality.second)
+                      }
+                      Spacer(Modifier.height(12.dp))
+                      InfoRow(
+                          "ROUND-TRIP LATENCY",
+                          if (latency > 0) "${latency} ms" else "MEASURING…",
+                          "Live tunnel ping to receiver",
+                          quality.second,
+                          true
+                      )
+                  }
+
+                  Spacer(Modifier.height(18.dp))
+                  PrimaryButton("LIVE USAGE", onLiveUsage, outline = true)
+                  Spacer(Modifier.height(10.dp))
+                  PrimaryButton("STOP SHARING", { LinkoEngineBridge.disconnect(); onStop() }, color = Red)
+                  Spacer(Modifier.height(24.dp))
+              }
+          }
+
+          '''
+          p.write_text(s[:start] + new_func + s[end:])
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(provider): mirror receiver connected UI"
+          git push origin HEAD:main
+
+      - name: Remove temporary workflow
+        if: always()
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          git rm -f .github/workflows/one-time-provider-receiver-ui-sync.yml || true
+          git diff --cached --quiet || git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "chore: remove one-time provider UI sync workflow"
+          git push origin main || true
