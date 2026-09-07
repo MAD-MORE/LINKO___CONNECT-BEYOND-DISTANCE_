@@ -21,6 +21,7 @@ import com.linkshare.app.update.LinkoUpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -40,7 +41,6 @@ class MainActivity : ComponentActivity() {
     private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var statusMessage by mutableStateOf("Initializing Cryptographic Keystore…")
     private var startupFailed by mutableStateOf(false)
-    private var offlineBypass by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,7 +65,6 @@ class MainActivity : ComponentActivity() {
                         failed = startupFailed,
                         onRetry = ::startInitialization,
                         onContinueOffline = {
-                            offlineBypass = true
                             startupFailed = false
                             statusMessage = "Offline startup mode"
                         },
@@ -86,7 +85,6 @@ class MainActivity : ComponentActivity() {
         if (!::linkoRuntime.isInitialized) return
 
         startupFailed = false
-        offlineBypass = false
         statusMessage = "Initializing Cryptographic Keystore…"
 
         startupScope.launch {
@@ -116,7 +114,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        startupScope.coroutineContext.cancel()
+        startupScope.cancel()
         runCatching { linkoRuntime.stop() }
         super.onDestroy()
     }
