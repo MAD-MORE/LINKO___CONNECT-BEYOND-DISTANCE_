@@ -48,7 +48,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.PrimaryButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -69,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.network.FriendSearchResult
 import com.linkshare.app.network.LinkoConnectionLifecycle
 import com.linkshare.app.network.LinkoConnectionPhase
 import com.linkshare.app.network.LinkoEngineBridge
@@ -271,8 +271,8 @@ fun LinkoHomeExperienceScreen(
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryAction(Icons.Filled.Autorenew, "RECOVERY", if (recovering) "Running" else "Automatic", if (recovering) Blue else TextSub) { if (failed) showPowerSheet = true }
-            SecondaryAction(Icons.Filled.Speed, "QUALITY", qualityText, qualityColor, onHistory)
+            Box(Modifier.weight(1f)) { SecondaryAction(Icons.Filled.Autorenew, "RECOVERY", if (recovering) "Running" else "Automatic", if (recovering) Blue else TextSub) { if (failed) showPowerSheet = true } }
+            Box(Modifier.weight(1f)) { SecondaryAction(Icons.Filled.Speed, "QUALITY", qualityText, qualityColor, onHistory) }
         }
         Spacer(Modifier.height(8.dp))
         EasyModeRow(easyMode) { easyMode = !easyMode }
@@ -507,7 +507,7 @@ private fun SecurityStrip(mode: LinkoDashboardMode) {
 
 @Composable
 private fun SecondaryAction(icon: ImageVector, title: String, value: String, color: Color, onClick: () -> Unit) {
-    Row(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Card).border(1.dp, TextMuted.copy(alpha = .11f), RoundedCornerShape(14.dp)).clickable { onClick() }.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card).border(1.dp, TextMuted.copy(alpha = .11f), RoundedCornerShape(14.dp)).clickable { onClick() }.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, contentDescription = title, tint = color, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
@@ -560,7 +560,7 @@ private fun ActionSheetRow(icon: ImageVector, title: String, subtitle: String, c
 @Composable
 private fun PowerSheet(
     mode: LinkoDashboardMode,
-    selectedFriend: com.linkshare.app.network.FriendSearchResult?,
+    selectedFriend: FriendSearchResult?,
     busy: Boolean,
     onDismiss: () -> Unit,
     onConnect: () -> Unit,
@@ -568,9 +568,13 @@ private fun PowerSheet(
     onStop: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Text("LINKO CONTROL", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.PowerSettingsNew, contentDescription = null, tint = Blue, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("LINKO CONTROL", color = TextPrimary, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        }
         Spacer(Modifier.height(6.dp))
-        Text("One place for the actions that change your connection.", color = TextSub, fontSize = 11.sp, lineHeight = 16.sp)
+        Text("Choose one real action. LINKO handles the networking after that.", color = TextSub, fontSize = 11.sp, lineHeight = 16.sp)
         Spacer(Modifier.height(16.dp))
         when (mode) {
             LinkoDashboardMode.Ready, LinkoDashboardMode.Failed -> {
