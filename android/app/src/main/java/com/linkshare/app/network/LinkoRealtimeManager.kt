@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.linkshare.app.MainActivity
 import com.linkshare.app.R
 import com.linkshare.app.auth.LinkoAuth
+import com.linkshare.app.diagnostics.LinkoDiagnosticTelemetry
 import com.linkshare.app.provider.LinkoProviderService
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
@@ -57,6 +58,7 @@ object LinkoRealtimeManager {
     private var presenceChannel: io.github.jan.supabase.realtime.RealtimeChannel? = null
     private var auth: LinkoAuth? = null
     private var appContext: Context? = null
+    private val connectedChannels = ConcurrentHashMap.newKeySet<String>()
 
     fun currentPresence(userId: String): LinkoPresence? = presenceSnapshot[userId]
     fun currentPresenceSnapshot(): Map<String, LinkoPresence> = presenceSnapshot.toMap()
@@ -66,20 +68,23 @@ object LinkoRealtimeManager {
         appContext = context.applicationContext
         auth = LinkoAuth(appContext!!)
         runCatching { ensureNotificationChannel() }
+        LinkoDiagnosticTelemetry.recordRealtime(false, null, emptyList())
 
         scope.launch {
             var backoffMs = 1_000L
             while (started.get() && isActive) {
+                var token: String? = null
                 try {
-                    // Wait for valid access token
-                    var token = auth?.currentAccessToken()
+                    token = auth?.currentAccessToken()
                     while (started.get() && token.isNullOrBlank()) {
                         delay(1_000L)
                         token = auth?.currentAccessToken()
                     }
                     if (!started.get() || !isActive) break
 
-                    Log.i(TAG, "Initializing Supabase Realtime client...")
+                    connectedChannels.clear()
+                    LinkoDiagnosticTelemetry.recordRealtime(false, null, emptyList())
+                    Log.i(TAG, "Initializing Supabase Realtime client")
                     val supabase = createSupabaseClient(
                         supabaseUrl = com.linkshare.app.BuildConfig.LINKO_SUPABASE_URL,
                         supabaseKey = com.linkshare.app.BuildConfig.LINKO_SUPABASE_PUBLISHABLE_KEY
@@ -94,24 +99,32 @@ object LinkoRealtimeManager {
                     subscribeSessionEvents(supabase)
                     subscribePresence(supabase)
 
-                    Log.i(TAG, "Supabase Realtime connected and listening across all channels")
-                    backoffMs = 1_000L // Reset backoff on success
+                    LinkoDiagnosticTelemetry.recordRealtime(true, null, connectedChannels.toList().sorted())
+                    Log.i(TAG, "Supabase Realtime subscribed: ${connectedChannels.joinToString()}")
+                    backoffMs = 1_000L
 
-                    // Stay connected until stop or token changes
                     while (started.get() && isActive) {
                         delay(15_000L)
                         val currentToken = auth?.currentAccessToken()
-                        if (currentToken != token && !currentToken.isNullOrBlank()) {
-                            Log.i(TAG, "Access token refreshed — updating realtime auth")
-                            token = currentToken
-                            runCatching { rt.setAuth(currentToken) }
+                        if (!currentToken.isNullOrBlank() && currentToken != token) {
+                            Log.i(TAG, "Access token refreshed; rebuilding realtime channels")
+                            break
                         }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Realtime connection error: ${e.message}, reconnecting in ${backoffMs}ms", e)
-                    _events.tryEmit(LinkoRealtimeEvent.TransportError(e.message ?: "realtime_disconnected"))
-                    delay(backoffMs)
-                    backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                    val message = e.message ?: "realtime_disconnected"
+                    Log.w(TAG, "Realtime connection error: $message; reconnecting in ${backoffMs}ms", e)
+                    LinkoDiagnosticTelemetry.recordRealtime(false, message, connectedChannels.toList().sorted())
+                    _events.tryEmit(LinkoRealtimeEvent.TransportError(message))
+                    cleanupRealtime()
+                    if (started.get()) {
+                        delay(backoffMs)
+                        backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                    }
+                }
+                if (started.get() && isActive && token != null && auth?.currentAccessToken() != token) {
+                    cleanupRealtime()
+                    LinkoDiagnosticTelemetry.recordRealtime(false, "realtime_auth_refresh", emptyList())
                 }
             }
         }
@@ -121,20 +134,24 @@ object LinkoRealtimeManager {
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
-        scope.launch {
-            runCatching {
-                val realtime = client?.pluginManager?.getPlugin(Realtime)
-                presenceChannel?.let { realtime?.removeChannel(it) }
-                friendChannel?.let { realtime?.removeChannel(it) }
-                sessionChannel?.let { realtime?.removeChannel(it) }
-                realtime?.disconnect()
-            }
-            presenceChannel = null
-            friendChannel = null
-            sessionChannel = null
-            client = null
-            presenceSnapshot.clear()
-        }
+        cleanupRealtime()
+        LinkoDiagnosticTelemetry.recordRealtime(false, null, emptyList())
+    }
+
+    private fun cleanupRealtime() {
+        runCatching {
+            val realtime = client?.pluginManager?.getPlugin(Realtime)
+            presenceChannel?.let { realtime?.removeChannel(it) }
+            friendChannel?.let { realtime?.removeChannel(it) }
+            sessionChannel?.let { realtime?.removeChannel(it) }
+            realtime?.disconnect()
+        }.onFailure { Log.w(TAG, "Realtime cleanup failed: ${it.message}") }
+        presenceChannel = null
+        friendChannel = null
+        sessionChannel = null
+        client = null
+        connectedChannels.clear()
+        presenceSnapshot.clear()
     }
 
     private suspend fun subscribeFriendEvents(supabase: SupabaseClient) {
@@ -149,6 +166,8 @@ object LinkoRealtimeManager {
                 }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        connectedChannels += FRIEND_CHANNEL
+        LinkoDiagnosticTelemetry.recordRealtime(true, null, connectedChannels.toList().sorted())
     }
 
     private suspend fun subscribeSessionEvents(supabase: SupabaseClient) {
@@ -156,14 +175,15 @@ object LinkoRealtimeManager {
         sessionChannel = channel
         val flow = channel.postgresChangeFlow<PostgresAction>(schema = "public") { table = "sessions" }
         scope.launch {
-            runCatching {
-                flow.collect { action -> handleSessionChange(action) }
-            }.onFailure {
-                Log.w(TAG, "Session change flow error: ${it.message}")
-                _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error"))
-            }
+            runCatching { flow.collect { action -> handleSessionChange(action) } }
+                .onFailure {
+                    Log.w(TAG, "Session change flow error: ${it.message}")
+                    _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "session_realtime_error"))
+                }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        connectedChannels += SESSION_CHANNEL
+        LinkoDiagnosticTelemetry.recordRealtime(true, null, connectedChannels.toList().sorted())
     }
 
     private fun handleSessionChange(action: PostgresAction) {
@@ -173,30 +193,18 @@ object LinkoRealtimeManager {
         val receiverDeviceId = record.optString("receiver_device_id")
         val providerDeviceId = record.optString("provider_device_id")
         val myDeviceId = auth?.currentDeviceId().orEmpty()
-
         _events.tryEmit(LinkoRealtimeEvent.SessionStateChanged(sessionId, state))
-
         when (state) {
-            "requested" -> {
-                // If I am the provider or provider is this device, alert incoming request
-                if (providerDeviceId.isBlank() || providerDeviceId == myDeviceId) {
-                    val event = LinkoRealtimeEvent.IncomingConnectionRequest(sessionId)
-                    _events.tryEmit(event)
-                    if (!foreground) {
-                        postConnectionRequestNotification(sessionId, receiverDeviceId)
-                    }
-                }
+            "requested" -> if (providerDeviceId.isBlank() || providerDeviceId == myDeviceId) {
+                val event = LinkoRealtimeEvent.IncomingConnectionRequest(sessionId)
+                _events.tryEmit(event)
+                if (!foreground) postConnectionRequestNotification(sessionId, receiverDeviceId)
             }
-            "approved" -> {
-                // If I am the receiver, alert that provider approved
-                if (receiverDeviceId == myDeviceId && !foreground) {
-                    postNotification("⚡ Connection Request Approved", "Your friend approved the connection. Secure tunnel is starting.")
-                }
+            "approved" -> if (receiverDeviceId == myDeviceId && !foreground) {
+                postNotification("⚡ Connection Request Approved", "Your friend approved the connection. Secure tunnel is starting.")
             }
-            "denied" -> {
-                if (receiverDeviceId == myDeviceId && !foreground) {
-                    postNotification("Connection Request Declined", "Your friend declined the connection request.")
-                }
+            "denied" -> if (receiverDeviceId == myDeviceId && !foreground) {
+                postNotification("Connection Request Declined", "Your friend declined the connection request.")
             }
         }
     }
@@ -216,13 +224,19 @@ object LinkoRealtimeManager {
             }.onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_realtime_error")) }
         }
         channel.subscribe(blockUntilSubscribed = true)
+        connectedChannels += PRESENCE_CHANNEL
+        LinkoDiagnosticTelemetry.recordRealtime(true, null, connectedChannels.toList().sorted())
         val currentUserId = auth?.currentAccessToken()?.let(::tokenSubject)
         val deviceId = auth?.currentDeviceId().orEmpty()
         if (!currentUserId.isNullOrBlank()) {
             val ownPresence = LinkoPresence(currentUserId, deviceId, "online", true)
             presenceSnapshot[currentUserId] = ownPresence
             runCatching { channel.track(ownPresence) }
-                .onFailure { _events.tryEmit(LinkoRealtimeEvent.TransportError(it.message ?: "presence_track_failed")) }
+                .onFailure {
+                    val message = it.message ?: "presence_track_failed"
+                    LinkoDiagnosticTelemetry.recordRealtime(false, message, connectedChannels.toList().sorted())
+                    _events.tryEmit(LinkoRealtimeEvent.TransportError(message))
+                }
             _events.tryEmit(LinkoRealtimeEvent.PresenceChanged(ownPresence))
         }
     }
@@ -276,63 +290,30 @@ object LinkoRealtimeManager {
     private fun postConnectionRequestNotification(sessionId: String, receiverDeviceId: String, requesterName: String? = null) {
         val context = appContext ?: return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        // Action: AUTHORIZE & SHARE
         val acceptIntent = Intent(context, LinkoProviderService::class.java).apply {
             action = LinkoProviderService.ACTION_ACCEPT
             putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId)
         }
         val acceptPending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(
-                context,
-                sessionId.hashCode(),
-                acceptIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            PendingIntent.getForegroundService(context, sessionId.hashCode(), acceptIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         } else {
-            PendingIntent.getService(
-                context,
-                sessionId.hashCode(),
-                acceptIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            PendingIntent.getService(context, sessionId.hashCode(), acceptIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
-
-        // Action: DECLINE
         val declineIntent = Intent(context, LinkoProviderService::class.java).apply {
             action = LinkoProviderService.ACTION_DECLINE
             putExtra(LinkoProviderService.EXTRA_REQUEST_ID, sessionId)
         }
         val declinePending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(
-                context,
-                sessionId.hashCode() + 1,
-                declineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            PendingIntent.getForegroundService(context, sessionId.hashCode() + 1, declineIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         } else {
-            PendingIntent.getService(
-                context,
-                sessionId.hashCode() + 1,
-                declineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            PendingIntent.getService(context, sessionId.hashCode() + 1, declineIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
-
-        // Content tap: Open App & Navigate to request
         val openIntent = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("EXTRA_REQUEST_ID", sessionId)
         }
-        val openPending = PendingIntent.getActivity(
-            context,
-            sessionId.hashCode() + 2,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+        val openPending = PendingIntent.getActivity(context, sessionId.hashCode() + 2, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val displayName = requesterName ?: "A verified friend"
-
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("⚡ Connection Request")
@@ -346,7 +327,6 @@ object LinkoRealtimeManager {
             .addAction(R.drawable.ic_launcher, "AUTHORIZE & SHARE", acceptPending)
             .addAction(R.drawable.ic_launcher, "DECLINE", declinePending)
             .build()
-
         manager.notify(sessionId.hashCode(), notification)
     }
 
@@ -355,7 +335,6 @@ object LinkoRealtimeManager {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pending = PendingIntent.getActivity(context, NOTIFICATION_ID, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
@@ -364,7 +343,6 @@ object LinkoRealtimeManager {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
-
         manager.notify(NOTIFICATION_ID, notification)
     }
 
@@ -372,20 +350,12 @@ object LinkoRealtimeManager {
         val context = appContext ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        val channel = NotificationChannel(
-            NOTIFICATION_CHANNEL,
-            "LINKO Realtime Alerts",
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
+        val channel = NotificationChannel(NOTIFICATION_CHANNEL, "LINKO Realtime Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Instant alerts for friend requests and connection sharing"
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 300, 200, 300)
             val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
-                .build()
+            val audioAttributes = AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT).build()
             setSound(soundUri, audioAttributes)
         }
         manager.createNotificationChannel(channel)
@@ -400,15 +370,13 @@ object LinkoRealtimeManager {
         }
     }.getOrNull()
 
-    private fun tokenSubject(token: String): String? {
-        return runCatching {
-            val parts = token.split('.')
-            if (parts.size < 2) return@runCatching null
-            val raw = parts[1].let { it + "=".repeat((4 - it.length % 4) % 4) }
-            val payload = String(java.util.Base64.getUrlDecoder().decode(raw))
-            JSONObject(payload).optString("sub").takeIf { it.isNotBlank() }
-        }.getOrNull()
-    }
+    private fun tokenSubject(token: String): String? = runCatching {
+        val parts = token.split('.')
+        if (parts.size < 2) return@runCatching null
+        val raw = parts[1].let { it + "=".repeat((4 - it.length % 4) % 4) }
+        val payload = String(java.util.Base64.getUrlDecoder().decode(raw))
+        JSONObject(payload).optString("sub").takeIf { it.isNotBlank() }
+    }.getOrNull()
 }
 
 @Serializable
