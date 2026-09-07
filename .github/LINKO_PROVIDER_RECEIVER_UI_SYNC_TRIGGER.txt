@@ -1,0 +1,1 @@
+Trigger provider UI to mirror receiver connected-session UI.
