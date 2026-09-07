@@ -1,0 +1,202 @@
+name: LINKO Provider UI Polish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip-provider-ui-polish]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Replace provider active dashboard
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt')
+          s = p.read_text()
+          start = s.index('@Composable fun ProviderSharingActiveScreen(')
+          end = s.index('@Composable fun ProviderLiveUsageScreen(', start)
+          new_func = r'''@Composable
+fun ProviderSharingActiveScreen(onLiveUsage: () -> Unit, onStop: () -> Unit) {
+    val engineState by LinkoEngineBridge.connection.collectAsStateWithLifecycle()
+    val receiverName = engineState.peerDisplayName?.takeIf { it.isNotBlank() } ?: "LINKO FRIEND"
+    val receiverId = engineState.peerLinkoId?.takeIf { it.isNotBlank() }?.let { "@${it.removePrefix("@").uppercase()}" } ?: "CONNECTED DEVICE"
+    val downloaded = formatBytes(engineState.bytesIn)
+    val uploaded = formatBytes(engineState.bytesOut)
+    val total = formatBytes(engineState.bytesIn + engineState.bytesOut)
+    val latency = engineState.latencyMs?.let { "${it} ms" } ?: "—"
+    val quality = when {
+        engineState.latencyMs == null -> "CHECKING"
+        engineState.latencyMs <= 70 -> "EXCELLENT"
+        engineState.latencyMs <= 150 -> "GOOD"
+        engineState.latencyMs <= 300 -> "FAIR"
+        else -> "WEAK"
+    }
+    val qualityColor = when (quality) {
+        "EXCELLENT", "GOOD" -> Green
+        "FAIR" -> Blue
+        else -> Red
+    }
+    var confirmStop by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("PROVIDER DASHBOARD", color = Green, fontSize = 11.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = 0.4.sp)
+                Text("INTERNET SHARING", color = TextPrimary, fontSize = 22.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            }
+            StatusChip("● LIVE", Green)
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        GlassCard(accentColor = Green) {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(6.dp))
+                Ring(Green, 150.dp, idle = false, label = "SHARING", onClick = {})
+                Spacer(Modifier.height(10.dp))
+                Text("SHARING INTERNET", color = Green, fontSize = 14.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(3.dp))
+                Text("Your connection is being shared securely", color = TextSub, fontSize = 11.sp, fontFamily = JetBrainsMono, textAlign = TextAlign.Center)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        GlassCard(accentColor = Blue) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(Blue.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                    Text("↔", color = Blue, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("CONNECTED TO", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(receiverName, color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Text(receiverId, color = Blue, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                }
+                StatusChip("SECURE", Green)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        GlassCard(accentColor = Blue) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("LIVE USAGE", color = TextPrimary, fontSize = 16.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        Text("Updates while the connection is active", color = TextSub, fontSize = 10.sp, fontFamily = JetBrainsMono)
+                    }
+                    StatusChip("● LIVE", Blue)
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProviderMetric("↓", "DOWNLOADED", downloaded, Modifier.weight(1f))
+                    ProviderMetric("↑", "UPLOADED", uploaded, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProviderMetric("Σ", "TOTAL", total, Modifier.weight(1f))
+                    ProviderMetric("◌", "LATENCY", latency, Modifier.weight(1f))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        GlassCard(accentColor = qualityColor) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("CONNECTION HEALTH", color = TextSub, fontSize = 9.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(quality, color = qualityColor, fontSize = 18.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                }
+                Text(latency, color = TextPrimary, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Red.copy(alpha = .10f))
+                .border(1.5.dp, Red.copy(alpha = .48f), RoundedCornerShape(18.dp))
+                .clickable { confirmStop = true }
+                .padding(vertical = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("STOP SHARING", color = Red, fontSize = 13.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, letterSpacing = .5.sp)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("You can stop sharing at any time.", color = TextMuted, fontSize = 9.sp, fontFamily = JetBrainsMono, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(16.dp))
+    }
+
+    if (confirmStop) {
+        Dialog(onDismissRequest = { confirmStop = false }) {
+            Surface(shape = RoundedCornerShape(24.dp), color = GradientMid, tonalElevation = 8.dp, shadowElevation = 18.dp, modifier = Modifier.border(1.dp, Red.copy(alpha = .25f), RoundedCornerShape(24.dp))) {
+                Column(Modifier.padding(22.dp)) {
+                    Text("Stop Internet sharing?", color = TextPrimary, fontSize = 19.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text("$receiverName will immediately lose access to your shared connection.", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = JetBrainsMono)
+                    Spacer(Modifier.height(20.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(13.dp)).background(Blue.copy(alpha = .10f)).clickable { confirmStop = false }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                            Text("CANCEL", color = Blue, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        }
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(13.dp)).background(Red.copy(alpha = .12f)).clickable { confirmStop = false; onStop() }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                            Text("STOP SHARING", color = Red, fontSize = 10.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderMetric(icon: String, label: String, value: String, modifier: Modifier = Modifier) {
+    Box(modifier.clip(RoundedCornerShape(14.dp)).background(Blue.copy(alpha = .06f)).border(1.dp, Blue.copy(alpha = .12f), RoundedCornerShape(14.dp)).padding(12.dp)) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(icon, color = Blue, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(5.dp))
+                Text(label, color = TextSub, fontSize = 8.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(value, color = TextPrimary, fontSize = 15.sp, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+'''
+          p.write_text(s[:start] + new_func + s[end:])
+
+      - name: Commit and remove one-time workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/java/com/linkshare/app/ui/screens/EngineScreens.kt
+          git commit -m "feat(android): polish provider live dashboard [skip-provider-ui-polish]"
+          git rm .github/workflows/one-time-provider-ui-polish.yml
+          git commit -m "chore: remove provider UI patch workflow [skip-provider-ui-polish]"
+          git push origin main
