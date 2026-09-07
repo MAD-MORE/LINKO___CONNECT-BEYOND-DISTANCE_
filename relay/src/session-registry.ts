@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { Socket, RemoteInfo } from 'node:dgram';
+import type { RemoteInfo } from 'node:dgram';
 
 export type PeerRole = 'provider' | 'receiver';
 
@@ -31,8 +31,8 @@ export class SessionRegistry {
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(id) || token.length < 16) throw new Error('invalid_session_credentials');
     const existing = this.sessions.get(id);
     if (existing) {
-      existing.lastSeen = Date.now();
       if (!this.verify(existing, token)) throw new Error('invalid_session_token');
+      existing.lastSeen = Date.now();
       return existing;
     }
     if (this.sessions.size >= this.maxSessions) throw new Error('relay_capacity_reached');
@@ -47,6 +47,17 @@ export class SessionRegistry {
     if (!session || Date.now() - session.lastSeen > this.ttlMs || !this.verify(session, token)) return undefined;
     session.lastSeen = Date.now();
     return session;
+  }
+
+  get(id: string): RelaySession | undefined {
+    const session = this.sessions.get(id);
+    if (!session || Date.now() - session.lastSeen > this.ttlMs) return undefined;
+    return session;
+  }
+
+  isBoundTo(session: RelaySession, role: PeerRole, remote: RemoteInfo): boolean {
+    const peer = role === 'provider' ? session.provider : session.receiver;
+    return !!peer && peer.address === remote.address && peer.port === remote.port;
   }
 
   bind(session: RelaySession, role: PeerRole, remote: RemoteInfo): void {
